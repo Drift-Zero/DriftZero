@@ -60,6 +60,7 @@ _LOG_FIELDS = (
     "evaluated_rules",
     "alerts_fired",
     "alerts_resolved",
+    "removed_traces",
     "failed_models",
 )
 

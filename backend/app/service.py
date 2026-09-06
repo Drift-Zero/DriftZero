@@ -44,6 +44,7 @@ from app.db import (
     VerificationRun,
     ensure_health_policy,
     latest_snapshot,
+    purge_expired_traces,
     snapshot_timeline,
     traces_for_metric,
 )
@@ -2082,6 +2083,31 @@ class DriftZeroService:
             recovery=self.latest_recovery(session, model.id),
             incident=IncidentResponse.model_validate(incident) if incident else None,
         )
+
+    def purge_expired_traces(self, session: Session, model_id: str) -> int:
+        """Delete traces past the model's retention window.
+
+        Retention was configurable but never applied: every model carried a
+        `retention_days` nothing honoured, on the table that grows fastest and
+        holds redacted user traffic.
+
+        Deleting user data is audited. A purge that removes nothing writes no
+        event, so the trail records deletions rather than the fact that a worker
+        ran.
+        """
+
+        model = self._require_model(session, model_id)
+        removed = purge_expired_traces(session, model)
+        if removed:
+            self._audit(
+                session,
+                model_id,
+                "retention.purged",
+                "retention-worker",
+                {"removed_traces": removed, "retention_days": model.retention_days},
+            )
+        session.commit()
+        return removed
 
     def _refresh_knowledge_sources(self, session: Session, model_id: str) -> int:
         """Re-index a model's retrieval sources, and record the input change.

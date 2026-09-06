@@ -125,6 +125,20 @@ The data model, its enums, and the session dependency are documented in
 `app/database.py` re-exports the original names so existing imports keep
 working.
 
+## Background workers
+
+Unattended work runs as separate processes, not inside the API:
+
+```bash
+python -m app.alert_worker --once       # evaluate alert rules
+python -m app.retention_worker --once   # apply each model's retention window
+```
+
+Omit `--once` to loop. Retention deletes traces older than a model's
+`retention_days` and audits every deletion; the interval is
+`DRIFTZERO_RETENTION_INTERVAL_SECONDS` (default 3600). Both workers open an
+existing database and do not create the schema, so run migrations first.
+
 ## Health-score policy
 
 All dimensions are normalized to `0–100`, where higher is healthier. The `health-v1` policy uses
