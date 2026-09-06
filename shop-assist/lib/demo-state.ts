@@ -26,12 +26,24 @@ export const scenarios: Scenario[] = [
 
 export const DEFAULT_SCENARIO: ScenarioId = 'healthy';
 export const SCENARIO_KEY = 'shopassist.scenario.v1';
+export const SCENARIO_IDS: readonly ScenarioId[] = [
+  'healthy',
+  'stale_returns',
+  'inventory_mismatch',
+  'expired_promotion',
+  'outdated_warranty',
+  'shipping_conflict',
+  'recovered',
+];
+
+export function isScenarioId(value: unknown): value is ScenarioId {
+  return typeof value === 'string' && SCENARIO_IDS.includes(value as ScenarioId);
+}
 
 export function readScenario(): ScenarioId {
   if (typeof window === 'undefined') return DEFAULT_SCENARIO;
   const value = window.localStorage.getItem(SCENARIO_KEY);
-  const allowed: ScenarioId[] = ['healthy', 'stale_returns', 'inventory_mismatch', 'expired_promotion', 'outdated_warranty', 'shipping_conflict', 'recovered'];
-  return allowed.includes(value as ScenarioId) ? (value as ScenarioId) : DEFAULT_SCENARIO;
+  return isScenarioId(value) ? value : DEFAULT_SCENARIO;
 }
 
 export function writeScenario(value: ScenarioId) {

@@ -1,9 +1,11 @@
 import { sendGroqMessage } from '../../../lib/groq.ts';
+import { DEFAULT_SCENARIO, isScenarioId } from '../../../lib/demo-state.ts';
 import { buildGroundedPrompt, groundedResponseSchema, MAX_HISTORY_ENTRIES, parseGroundedResponse, resolveGroundingSources, type ChatHistoryEntry } from '../../../lib/shop-assist-prompt.ts';
 
 type ChatRequest = {
   message?: unknown;
   history?: unknown;
+  scenario?: unknown;
 };
 
 function readHistory(value: unknown): ChatHistoryEntry[] | null {
@@ -46,13 +48,18 @@ export async function POST(request: Request): Promise<Response> {
     return Response.json({ error: 'invalid_history', detail: `History must contain at most ${MAX_HISTORY_ENTRIES} valid chat messages and 120,000 characters.` }, { status: 400 });
   }
 
+  const scenario = body.scenario === undefined ? DEFAULT_SCENARIO : body.scenario;
+  if (!isScenarioId(scenario)) {
+    return Response.json({ error: 'invalid_scenario', detail: 'The selected demo scenario is not valid.' }, { status: 400 });
+  }
+
   const apiKey = process.env.GROQ_API_KEY;
   if (!apiKey) {
     return Response.json({ error: 'groq_not_configured', detail: 'The ShopAssist Groq connection is not configured.' }, { status: 503 });
   }
 
   try {
-    const prompt = buildGroundedPrompt(message, history);
+    const prompt = buildGroundedPrompt(message, history, scenario);
     const reply = await sendGroqMessage(prompt, apiKey, groundedResponseSchema);
     const grounded = parseGroundedResponse(reply.answer);
     return Response.json({ ...reply, answer: grounded.answer, sources: resolveGroundingSources(grounded.sourceIds) });

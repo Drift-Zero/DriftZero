@@ -64,7 +64,7 @@ export function ShopChat() {
     const response = await fetch('/api/chat', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ message: question, history }),
+      body: JSON.stringify({ message: question, history, scenario }),
     });
     const payload = await response.json() as AIChatReply;
     if (!response.ok || typeof payload.answer !== 'string' || !payload.answer.trim()) {

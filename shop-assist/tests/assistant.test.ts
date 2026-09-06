@@ -4,6 +4,7 @@ import test from 'node:test';
 import { answerQuestion } from '../lib/assistant.ts';
 import { extractGeminiText, GEMINI_MODEL } from '../lib/gemini.ts';
 import { createGroqRequest, extractGroqText, GROQ_MODEL } from '../lib/groq.ts';
+import { isScenarioId } from '../lib/demo-state.ts';
 import { buildGroundedPrompt, formatConversationHistory, parseGroundedResponse, selectRelevantKnowledge } from '../lib/shop-assist-prompt.ts';
 
 void test('Gemini adapter is pinned to the approved model', () => {
@@ -50,6 +51,68 @@ void test('grounding retrieval selects only facts relevant to the current questi
   assert.deepEqual(greeting.sources, []);
 });
 
+void test('grounding retrieval carries the previous topic into natural clarification questions', () => {
+  const history = [
+    { role: 'user' as const, text: 'Tell me about the Nova ANC Headphones' },
+    { role: 'assistant' as const, text: 'The Nova ANC Headphones cost $149.' },
+    { role: 'user' as const, text: 'Can I return them?' },
+    { role: 'assistant' as const, text: 'Yes, they can be returned within 14 days.' },
+  ];
+
+  for (const question of ['What does that mean?', 'Why?', 'Explain that']) {
+    const grounding = selectRelevantKnowledge(question, history);
+    assert.deepEqual(grounding.knowledge.products?.map((item) => item.id), ['nova-headphones']);
+    assert.deepEqual(Object.keys(grounding.knowledge.policies ?? {}), ['returns']);
+    assert.ok(grounding.sources.some((source) => source.id === 'returns-policy-v2.1-current'));
+  }
+});
+
+void test('grounding retrieval carries an order into a referential delivery follow-up', () => {
+  const grounding = selectRelevantKnowledge('When will it arrive?', [
+    { role: 'user', text: 'Track order DZ-2088' },
+    { role: 'assistant', text: 'Order DZ-2088 has shipped.' },
+  ]);
+
+  assert.deepEqual(grounding.knowledge.orders?.map((item) => item.id), ['DZ-2088']);
+  assert.deepEqual(grounding.knowledge.products?.map((item) => item.id), ['roam-pack']);
+  assert.equal(grounding.knowledge.policies?.shipping, undefined);
+});
+
+void test('controlled scenarios change only their relevant Groq knowledge', () => {
+  const staleReturns = selectRelevantKnowledge('Can I return headphones after 20 days?', [], 'stale_returns');
+  const healthyReturns = selectRelevantKnowledge('Can I return headphones after 20 days?', [], 'healthy');
+  const badInventory = selectRelevantKnowledge('Is the Arc Mini Speaker in stock?', [], 'inventory_mismatch');
+  const healthyInventory = selectRelevantKnowledge('Is the Arc Mini Speaker in stock?', [], 'healthy');
+  const expiredPromotion = selectRelevantKnowledge('Do you have a discount code?', [], 'expired_promotion');
+  const outdatedWarranty = selectRelevantKnowledge('Does the warranty cover accidents?', [], 'outdated_warranty');
+  const shippingConflict = selectRelevantKnowledge('How fast is standard shipping?', [], 'shipping_conflict');
+
+  assert.equal(staleReturns.knowledge.policies?.returns?.electronics, 'Electronics can be returned within 30 days.');
+  assert.equal(staleReturns.knowledge.policies?.returns?.sourceId, 'returns-policy-v1.4-retired');
+  assert.equal(healthyReturns.knowledge.policies?.returns?.electronics, 'Electronics can be returned within 14 days.');
+  assert.equal(badInventory.knowledge.products?.[0]?.stock, 14);
+  assert.equal(healthyInventory.knowledge.products?.[0]?.stock, 0);
+  assert.match(expiredPromotion.knowledge.policies?.promotions?.current ?? '', /SAVE20/);
+  assert.match(outdatedWarranty.knowledge.policies?.warranty?.electronics ?? '', /two-year.*accidental damage/i);
+  assert.match(shippingConflict.knowledge.policies?.shipping?.standard ?? '', /always arrives within two business days/i);
+});
+
+void test('every agent state is validated and included in the Groq prompt', () => {
+  for (const scenario of ['healthy', 'stale_returns', 'inventory_mismatch', 'expired_promotion', 'outdated_warranty', 'shipping_conflict', 'recovered'] as const) {
+    assert.equal(isScenarioId(scenario), true);
+    assert.match(buildGroundedPrompt('What is your return policy?', [], scenario), new RegExp(`ACTIVE DEMO STATE: ${scenario}`));
+  }
+  assert.equal(isScenarioId('invented_failure'), false);
+});
+
+void test('recovered state restores current knowledge after a controlled failure', () => {
+  const failed = selectRelevantKnowledge('Do you have a discount code?', [], 'expired_promotion');
+  const recovered = selectRelevantKnowledge('Do you have a discount code?', [], 'recovered');
+
+  assert.match(failed.knowledge.policies?.promotions?.current ?? '', /SAVE20/);
+  assert.match(recovered.knowledge.policies?.promotions?.current ?? '', /no store-wide promotion codes/i);
+});
+
 void test('Groq primary adapter is pinned to GPT-OSS 120B', () => {
   assert.equal(GROQ_MODEL, 'openai/gpt-oss-120b');
 });
@@ -93,10 +156,10 @@ void test('long conversations keep recent messages intact and preserve every ear
 void test('grounded response accepts known sources and drops invented source IDs', () => {
   const parsed = parseGroundedResponse(JSON.stringify({
     answer: 'The Nova ANC Headphones cost $149.',
-    source_ids: ['catalog-snapshot-2026-09-06', 'made-up-source'],
+    source_ids: ['catalog-snapshot-2026-09-06', 'returns-policy-v1.4-retired', 'made-up-source'],
   }));
   assert.equal(parsed.answer, 'The Nova ANC Headphones cost $149.');
-  assert.deepEqual(parsed.sourceIds, ['catalog-snapshot-2026-09-06']);
+  assert.deepEqual(parsed.sourceIds, ['catalog-snapshot-2026-09-06', 'returns-policy-v1.4-retired']);
 });
 
 void test('healthy electronics answer uses the current 14-day return window', () => {

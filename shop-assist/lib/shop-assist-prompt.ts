@@ -1,5 +1,6 @@
 import { orders, policySources, products, type Product } from '../data/catalog.ts';
 import { currentPolicyFacts, groundingSources } from '../data/store-knowledge.ts';
+import type { ScenarioId } from './demo-state.ts';
 
 export type ChatHistoryEntry = {
   role: 'user' | 'assistant';
@@ -18,6 +19,7 @@ type RelevantKnowledge = {
 
 const catalogRequestPattern = /\b(?:recommend|catalog|product list|products list|list products|what products|which products|what do you sell|show me|browse|under|below|less than)\b/;
 const clarificationPattern = /\b(?:what do you mean|explain|clarify|how so|why is that|didn't ask|did not ask|not what i asked)\b/;
+const referentialFollowUpPattern = /\b(?:this|that|it|its|those|these|them|they|mean|explain|clarify|elaborate|why|how so|what about)\b/;
 
 function includesPhrase(text: string, phrase: string): boolean {
   const escaped = phrase.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -40,6 +42,14 @@ function findLatestProducts(history: ChatHistoryEntry[]): Product[] {
   return [];
 }
 
+function findLatestOrderId(history: ChatHistoryEntry[]): string | undefined {
+  for (const entry of [...history].reverse()) {
+    const match = entry.text.match(/dz-?\d{4}/i)?.[0];
+    if (match) return match.toUpperCase().replace(/^DZ(?!-)/, 'DZ-');
+  }
+  return undefined;
+}
+
 function selectCatalogProducts(message: string): Product[] {
   const query = message.toLowerCase();
   let matches = [...products];
@@ -57,20 +67,69 @@ function compactProduct(product: Product): Omit<Product, 'aliases'> {
   return compact;
 }
 
-export function selectRelevantKnowledge(message: string, history: ChatHistoryEntry[]): { knowledge: RelevantKnowledge; sources: typeof groundingSources[number][] } {
+function applyScenarioToProducts(selectedProducts: Product[], scenario: ScenarioId): Array<Omit<Product, 'aliases'>> {
+  return selectedProducts.map((product) => {
+    const compact = compactProduct(product);
+    if (scenario === 'inventory_mismatch' && product.stock === 0) {
+      return { ...compact, stock: 14 };
+    }
+    return compact;
+  });
+}
+
+function applyScenarioToPolicies(policies: Partial<typeof currentPolicyFacts>, scenario: ScenarioId): Partial<typeof currentPolicyFacts> {
+  const adjusted = { ...policies };
+  if (scenario === 'stale_returns') {
+    if (adjusted.returns) {
+      adjusted.returns = {
+        sourceId: policySources.retiredReturns.id,
+        general: 'Unused items can be returned within 30 days.',
+        electronics: 'Electronics can be returned within 30 days.',
+        clearance: 'Unused clearance items can be returned within 30 days.',
+      };
+    }
+    if (adjusted.refunds) {
+      adjusted.refunds = {
+        sourceId: policySources.retiredReturns.id,
+        timing: 'Approved refunds reach the original payment method within two business days.',
+      };
+    }
+  }
+  if (scenario === 'outdated_warranty' && adjusted.warranty) {
+    adjusted.warranty = {
+      sourceId: policySources.warranty.id,
+      electronics: 'Electronics include a two-year replacement warranty covering defects and accidental damage.',
+    };
+  }
+  if (scenario === 'expired_promotion' && adjusted.promotions) {
+    adjusted.promotions = {
+      sourceId: policySources.promotions.id,
+      current: 'SAVE20 is active today and gives customers 20% off their order.',
+    };
+  }
+  if (scenario === 'shipping_conflict' && adjusted.shipping) {
+    adjusted.shipping = {
+      sourceId: policySources.shipping.id,
+      standard: 'Standard shipping always arrives within two business days.',
+    };
+  }
+  return adjusted;
+}
+
+export function selectRelevantKnowledge(message: string, history: ChatHistoryEntry[], scenario: ScenarioId = 'healthy'): { knowledge: RelevantKnowledge; sources: typeof groundingSources[number][] } {
   const query = message.toLowerCase();
   const recentText = history.slice(-8).map((entry) => entry.text).join(' ').toLowerCase();
-  const isClarification = clarificationPattern.test(query);
-  const topicText = isClarification ? `${recentText} ${query}` : query;
+  const carriesPreviousTopic = clarificationPattern.test(query) || referentialFollowUpPattern.test(query);
+  const topicText = carriesPreviousTopic ? `${recentText} ${query}` : query;
   const catalogRequest = catalogRequestPattern.test(query);
   let selectedProducts = catalogRequest ? selectCatalogProducts(query) : findProducts(query);
-  if (!selectedProducts.length && (/\b(?:it|its|them|they|that|this|one|price|cost|stock|available|warranty|return)\b/.test(query) || isClarification)) {
+  if (!selectedProducts.length && (/\b(?:one|price|cost|stock|available|warranty|return)\b/.test(query) || carriesPreviousTopic)) {
     selectedProducts = findLatestProducts(history);
   }
 
   const directOrderId = query.match(/dz-?\d{4}/i)?.[0].toUpperCase().replace(/^DZ(?!-)/, 'DZ-');
-  const previousOrderId = recentText.match(/dz-?\d{4}/i)?.[0].toUpperCase().replace(/^DZ(?!-)/, 'DZ-');
-  const orderId = directOrderId ?? (/\b(?:order|track|where is it|delivery status)\b/.test(query) ? previousOrderId : undefined);
+  const previousOrderId = findLatestOrderId(history);
+  const orderId = directOrderId ?? ((carriesPreviousTopic || /\b(?:order|track|delivery status)\b/.test(query)) ? previousOrderId : undefined);
   const selectedOrders = orderId ? orders.filter((order) => order.id === orderId) : [];
   for (const order of selectedOrders) {
     const product = products.find((candidate) => candidate.id === order.productId);
@@ -84,15 +143,16 @@ export function selectRelevantKnowledge(message: string, history: ChatHistoryEnt
   if (!selectedOrders.length && /\b(?:shipping|delivery|deliver|arrive)\b/.test(topicText)) policies.shipping = currentPolicyFacts.shipping;
   if (/\b(?:promotion|promo|discount|coupon|sale code|save20)\b/.test(topicText)) policies.promotions = currentPolicyFacts.promotions;
 
+  const scenarioPolicies = applyScenarioToPolicies(policies, scenario);
   const knowledge: RelevantKnowledge = {};
-  if (selectedProducts.length) knowledge.products = selectedProducts.map(compactProduct);
+  if (selectedProducts.length) knowledge.products = applyScenarioToProducts(selectedProducts, scenario);
   if (selectedOrders.length) knowledge.orders = selectedOrders;
-  if (Object.keys(policies).length) knowledge.policies = policies;
+  if (Object.keys(scenarioPolicies).length) knowledge.policies = scenarioPolicies;
 
   const sourceIds = new Set<string>();
   if (selectedProducts.length) sourceIds.add(policySources.catalog.id);
   if (selectedOrders.length) sourceIds.add('demo-orders-2026-09-06');
-  for (const policy of Object.values(policies)) sourceIds.add(policy.sourceId);
+  for (const policy of Object.values(scenarioPolicies)) sourceIds.add(policy.sourceId);
   return { knowledge, sources: groundingSources.filter((source) => sourceIds.has(source.id)) };
 }
 
@@ -132,11 +192,18 @@ export const groundedResponseSchema = {
   additionalProperties: false,
 };
 
-export function buildGroundedPrompt(message: string, history: ChatHistoryEntry[]): string {
+function scenarioInstruction(scenario: ScenarioId): string {
+  if (scenario === 'healthy') return 'ACTIVE DEMO STATE: healthy. Use the supplied current store knowledge.';
+  if (scenario === 'recovered') return 'ACTIVE DEMO STATE: recovered. Use the supplied current store knowledge; previously injected failures are no longer active.';
+  return `ACTIVE DEMO STATE: ${scenario}. This is a controlled reliability test. Use the injected store knowledge exactly as supplied, do not silently correct it from general knowledge, and do not mention the test scenario to the customer.`;
+}
+
+export function buildGroundedPrompt(message: string, history: ChatHistoryEntry[], scenario: ScenarioId = 'healthy'): string {
   const conversation = formatConversationHistory(history);
-  const grounding = selectRelevantKnowledge(message, history);
+  const grounding = selectRelevantKnowledge(message, history, scenario);
   return [
     'You are ShopAssist, a concise and friendly shopping assistant.',
+    scenarioInstruction(scenario),
     'Use only the STORE KNOWLEDGE below for product, price, stock, order, return, refund, warranty, promotion, and shipping claims.',
     'Never invent a store fact. If the knowledge does not support an answer, clearly say that you cannot verify it.',
     'Read the entire supplied conversation before answering the current customer message.',

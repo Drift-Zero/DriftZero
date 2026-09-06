@@ -29,6 +29,7 @@ export const groundingSources = [
   { id: policySources.catalog.id, label: `${policySources.catalog.title} ${policySources.catalog.version}` },
   { id: 'demo-orders-2026-09-06', label: 'Demo Orders 6 Sep snapshot' },
   { id: policySources.returns.id, label: `${policySources.returns.title} ${policySources.returns.version}` },
+  { id: policySources.retiredReturns.id, label: `${policySources.retiredReturns.title} ${policySources.retiredReturns.version}` },
   { id: policySources.warranty.id, label: `${policySources.warranty.title} ${policySources.warranty.version}` },
   { id: policySources.shipping.id, label: `${policySources.shipping.title} ${policySources.shipping.version}` },
   { id: policySources.promotions.id, label: `${policySources.promotions.title} ${policySources.promotions.version}` },
