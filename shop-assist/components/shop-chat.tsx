@@ -68,7 +68,7 @@ export function ShopChat() {
     });
     const payload = await response.json() as AIChatReply;
     if (!response.ok || typeof payload.answer !== 'string' || !payload.answer.trim()) {
-      throw new Error('Gemini chat request failed');
+      throw new Error('Groq chat request failed');
     }
     return {
       answer: payload.answer.trim(),

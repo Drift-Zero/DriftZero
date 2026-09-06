@@ -26,11 +26,12 @@ Open `http://localhost:3000` for the customer experience or
 
 ## DriftZero telemetry
 
-Every answered question produces a payload compatible with
-`POST /api/v1/models/{model_id}/telemetry`. Copy `.env.example` to `.env.local`
-and set the API URL and registered DriftZero model ID to deliver traces directly.
-If either value is absent, the latest 100 payloads are buffered in browser
-`sessionStorage` under `shopassist.telemetry.v1`.
+ShopAssist evaluates each observed answer against the current catalog and policy
+facts, buffers 20 real interactions, and then sends one evaluation window with
+20 request-level traces to `POST /api/v1/shopassist/telemetry`. Copy
+`.env.example` to `.env.local` and set `DRIFTZERO_API_URL` to point at the
+DriftZero API. If delivery is unavailable, the current batch stays buffered in
+the server process and is retried when the next interaction completes the window.
 
 The demo is explicitly simulated. It does not call a production model or modify
 an external commerce system.
