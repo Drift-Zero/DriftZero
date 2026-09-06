@@ -292,6 +292,35 @@ python3 examples/connectors/send_sample_telemetry.py --base-url http://localhost
 
 The example registers a synthetic model and submits one normalized health window. It requires no model-provider API key.
 
+## Deploying to Vercel
+
+Both web apps ship a `vercel.json`, and neither is a repository-root project, so each needs its
+own Vercel project with **Root Directory** set:
+
+| Vercel project | Root Directory | Framework |
+| --- | --- | --- |
+| Dashboard | `frontend` | Vite |
+| ShopAssist | `shop-assist` | Next.js |
+
+The API is not deployed to Vercel; it runs on Render from [`render.yaml`](render.yaml).
+
+Set these in each project's environment variables. Both default to `127.0.0.1` in code, so a
+deployment that omits them builds successfully and then fails at runtime against localhost:
+
+| Project | Variable | Value |
+| --- | --- | --- |
+| Dashboard | `VITE_API_BASE_URL` | The Render service URL, e.g. `https://driftzero-demo.onrender.com` |
+| Dashboard | `VITE_DEMO_MODE` | `false` for live data, `true` for the offline demo |
+| ShopAssist | `DRIFTZERO_API_URL` | The same Render service URL |
+| ShopAssist | `GROQ_API_KEY` | Optional; without it ShopAssist uses its local grounded fallback |
+
+`frontend/.env.local` is gitignored, so whatever the local stack writes there does not reach a
+deployment — the Vercel values are the only ones that apply.
+
+The API's `DRIFTZERO_CORS_ORIGIN_REGEX` in `render.yaml` already allows `https://*.vercel.app`.
+Recovery approval works against that deployment because it sets
+`DRIFTZERO_RECOVERY_ALLOW_LOCAL_IDENTITY=true`; leave `VITE_RECOVERY_API_KEY` unset.
+
 ## Environment variables
 
 Copy the relevant example file before changing local configuration. Never commit real credentials.
@@ -300,10 +329,14 @@ Copy the relevant example file before changing local configuration. Never commit
 - **Scoring and workers:** `DRIFTZERO_MINIMUM_SAMPLE_SIZE`, `DRIFTZERO_MINIMUM_COVERAGE`, `DRIFTZERO_FORECAST_HORIZON_MINUTES`, `DRIFTZERO_ALERT_EVALUATION_INTERVAL_SECONDS`, `DRIFTZERO_RECOVERY_WORKER_INTERVAL_SECONDS`, `DRIFTZERO_RETENTION_INTERVAL_SECONDS`
 - **Recovery:** `DRIFTZERO_RECOVERY_ALLOW_LOCAL_IDENTITY`, `DRIFTZERO_RECOVERY_OPERATOR_API_KEY`, `DRIFTZERO_RECOVERY_ADMIN_API_KEY`, `DRIFTZERO_RECOVERY_CONTROL_URL`, `DRIFTZERO_RECOVERY_CONTROL_TOKEN`
 - **Observability:** `DRIFTZERO_LOG_LEVEL`, `DRIFTZERO_OTEL_ENABLED`, `OTEL_EXPORTER_OTLP_ENDPOINT`
-- **Dashboard:** `VITE_API_BASE_URL`, `VITE_DEMO_MODE`
-- **ShopAssist:** `NEXT_PUBLIC_DRIFTZERO_API_URL`, `NEXT_PUBLIC_DRIFTZERO_MODEL_ID`, `GEMINI_API_KEY`
+- **Dashboard:** `VITE_API_BASE_URL`, `VITE_DEMO_MODE`, `VITE_RECOVERY_API_KEY`, `VITE_RECOVERY_ACTOR`, `VITE_RECOVERY_ROLE`
+- **ShopAssist:** `DRIFTZERO_API_URL`, `GROQ_API_KEY`
 
-`GEMINI_API_KEY` and DriftZero recovery credentials are server-side secrets. They must not be exposed through Vite variables, `NEXT_PUBLIC_` variables, or committed environment files.
+`GROQ_API_KEY` and DriftZero recovery credentials are server-side secrets. They must not be
+exposed through `NEXT_PUBLIC_` variables or committed environment files. Note that every
+`VITE_` variable is inlined into the dashboard's public bundle at build time, so
+`VITE_RECOVERY_API_KEY` is readable by anyone who loads the page: prefer running the API
+with `DRIFTZERO_RECOVERY_ALLOW_LOCAL_IDENTITY=true`, which needs no key.
 
 ## API overview
 
