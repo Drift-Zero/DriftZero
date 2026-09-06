@@ -1,7 +1,8 @@
 # DriftZero Product Requirements Document
 
-**Status:** Draft for approval  
-**Version:** 1.0  
+**Status:** Approved with ShopAssist demo amendment
+
+**Version:** 1.1
 **Last updated:** 2026-09-06  
 **Product:** DriftZero  
 **Tagline:** Predict. Diagnose. Recover.
@@ -18,7 +19,7 @@ The product is organized around one operational loop:
 
 DriftZero does not claim that a health score is objective truth, that a forecast guarantees an incident, or that an automated diagnosis is infallible. Every important result must show its evaluation window, sample size, traffic coverage, source, policy or evaluator version, and uncertainty. Consequential recovery is human-approved by default.
 
-The MVP is a polished, deterministic demonstration centered on **ShopAssist**, a retail support assistant whose retrieval layer serves a retired returns-policy source. The experience begins with healthy behavior, shows a credible decline, provides an evidence-backed knowledge-freshness diagnosis, guides an operator through a simulated recovery, and verifies improvement after 50 evaluation requests.
+The MVP is a polished, deterministic demonstration centered on **ShopAssist**, an e-commerce support assistant whose retrieval layer serves a retired returns-policy document. The experience begins with healthy behavior, shows a credible decline, provides an evidence-backed knowledge-freshness diagnosis, guides an operator through a simulated recovery, and verifies improvement after 50 evaluation requests. The approved scenario is specified in `docs/SHOP_ASSIST_DEMO.md`.
 
 ## 2. Current repository baseline
 
@@ -646,7 +647,7 @@ Forecast monitoring includes absolute error, bias, interval coverage, and perfor
 
 ### 20.1 Data story
 
-ShopAssist answers return-window questions using a retrieval corpus. The current policy allows 30 days, but the active index continues serving the retired 14-day source. Seeded telemetry produces health scores `92 → 87 → 74 → 61`; the 30-minute forecast is `48`. Groundedness, drift health, and semantic stability fall while safety, latency, and reliability remain stable.
+ShopAssist answers returns, refunds, and warranty questions using a retrieval corpus. Returns Policy v2.1 changes the rules for electronics, clearance items, warranties, and refund timing, but the active index can be switched to superseded v1.4. Seeded telemetry produces health scores `92 → 87 → 74 → 61`; the 30-minute forecast is `48`. Groundedness, drift health, and semantic stability fall while safety, latency, and reliability remain stable.
 
 DriftZero diagnoses `knowledge_freshness_failure` at approximately 0.87 estimated confidence and recommends:
 
@@ -660,7 +661,7 @@ The operator approves the simulated plan. The system executes it, evaluates 50 r
 
 ### 20.2 Five-minute script
 
-1. **Healthy:** show ShopAssist at 92 with strong evidence coverage.
+1. **Healthy:** show ShopAssist using Returns Policy v2.1 with strong evidence coverage.
 2. **Early warning:** advance/reset the deterministic scenario; show decline and 48 forecast with bounds.
 3. **Diagnosis:** open the incident, stale-document evidence, conflicting paraphrases, and stable safety/latency contradiction evidence.
 4. **Recovery:** inspect risks and simulation labels, approve, then execute.

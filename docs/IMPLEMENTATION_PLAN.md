@@ -178,7 +178,7 @@ Exit criteria:
 
 ### Milestone 2 — Build the frontend vertical slice
 
-**Goal:** make the existing ShopAssist story understandable and operable end to end.
+**Goal:** make the approved ShopAssist story understandable and operable end to end.
 
 Recommended stack pending approval: Next.js + TypeScript + Tailwind + accessible component primitives.
 

@@ -75,6 +75,7 @@ from app.db.models import (
     evidence_traces,
 )
 from app.db.queries import (
+    baseline_traces_before,
     ensure_default_tenant,
     ensure_health_policy,
     latest_snapshot,
@@ -149,6 +150,7 @@ __all__ = [
     "TraceStatus",
     "UtcDateTime",
     "VerificationRun",
+    "baseline_traces_before",
     "configure_database",
     "ensure_default_tenant",
     "ensure_health_policy",

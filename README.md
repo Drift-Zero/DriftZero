@@ -111,7 +111,7 @@ IMPORTANT PRODUCT CONSTRAINTS
 
 PRIMARY DEMO SCENARIO
 
-Use a retail support assistant called ShopAssist. It answers returns-policy questions using a retrieval knowledge base. A current policy extends the return window, but the retriever continues serving the retired 14-day policy. Over a simulated stream of requests:
+Use an e-commerce support assistant called ShopAssist. It answers returns, refunds, and warranty questions using a retrieval knowledge base. A newly issued returns policy changes category-specific rules, but the retriever continues serving a retired document. Over a simulated stream of requests:
 
 - health falls from 92 to 61;
 - the 30-minute forecast falls to 48;
@@ -204,7 +204,7 @@ Start Phase 1 now. Do not implement the application yet.
 - Modules: Pulse, Diagnose, Recover.
 - Primary persona: AI/ML platform or reliability engineer.
 - Secondary persona: product/support operator who can inspect incidents but may not execute high-risk recovery.
-- First scenario: ShopAssist returns-policy freshness failure.
+- First scenario: ShopAssist knowledge-freshness failure.
 
 **Exit gate:** one-sentence value proposition, target user, demo scenario, and explicit non-goals are agreed.
 
@@ -395,7 +395,7 @@ Resolve product identity
 - Treat “ModelPulse” as either an internal engine name or remove it to prevent brand confusion.
 
 Define the first credible MVP
-- Use the ShopAssist returns-policy freshness incident as the primary vertical slice.
+- Use the ShopAssist knowledge-freshness incident as the primary vertical slice.
 - Begin with seeded, deterministic telemetry.
 - Simulate recovery actions behind provider-neutral adapters.
 - Avoid attempting multiple shallow production integrations initially.
