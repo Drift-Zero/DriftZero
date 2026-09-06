@@ -12,7 +12,12 @@ import urllib.request
 
 def request(base_url: str, path: str, *, method: str = "GET", body: dict | None = None):
     payload = json.dumps(body).encode() if body is not None else None
-    headers = {"Content-Type": "application/json"} if payload else {}
+    headers = {
+        "X-DriftZero-Actor": "smoke-test",
+        "X-DriftZero-Role": "operator",
+    }
+    if payload:
+        headers["Content-Type"] = "application/json"
     req = urllib.request.Request(
         f"{base_url.rstrip('/')}{path}",
         data=payload,

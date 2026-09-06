@@ -34,7 +34,7 @@ def recovery_principal(request: Request) -> ActorRequest:
 
     local_allowed = (
         settings.recovery_allow_local_identity
-        and settings.environment.lower() in {"development", "test", "demo"}
+        and settings.environment.lower() in {"development", "test", "demo", "hackathon-demo"}
     )
     if local_allowed and not provided:
         requested_role = request.headers.get(

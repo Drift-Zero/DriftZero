@@ -14,7 +14,7 @@ Recovery worker → mock action → verification┤
 Retention worker ───────────────────────────┘
 ```
 
-The backend deliberately has no authentication, RBAC, or tenant isolation. Never attach production credentials or real recovery actions. A public deployment should exist only for the judging window.
+Recovery mutations have operator/admin API-key roles and the demo enables an explicit local identity. The backend still lacks managed OIDC and complete tenant-scoped authorization. Never attach consequential production credentials to the public hackathon deployment.
 
 ## 1. Install the minimum tools
 
@@ -64,6 +64,13 @@ Copy `.env.example` to `.env`. Never commit `.env`.
 | `DRIFTZERO_RECOVERY_WORKER_INTERVAL_SECONDS` | `2` | Recovery queue poll interval |
 | `DRIFTZERO_RECOVERY_COMMAND_LEASE_SECONDS` | `60` | Lease before an abandoned recovery can be reclaimed |
 | `DRIFTZERO_RECOVERY_COMMAND_MAX_ATTEMPTS` | `3` | Maximum command attempts |
+| `DRIFTZERO_RECOVERY_ALLOW_LOCAL_IDENTITY` | `true` | Demo-only header identity; ignored in production |
+| `DRIFTZERO_RECOVERY_VERIFICATION_REQUESTS` | `50` | Minimum post-action evidence count |
+| `DRIFTZERO_RECOVERY_VERIFICATION_COVERAGE` | `0.90` | Minimum post-action traffic coverage |
+| `DRIFTZERO_RECOVERY_OPERATOR_API_KEY` | unset | Server-side operator credential |
+| `DRIFTZERO_RECOVERY_ADMIN_API_KEY` | unset | Server-side high-risk/rollback credential |
+| `DRIFTZERO_RECOVERY_CONTROL_URL` | unset | Optional HTTPS model-gateway control plane |
+| `DRIFTZERO_RECOVERY_CONTROL_TOKEN` | unset | Server-only control-plane bearer token |
 | `DRIFTZERO_RETENTION_INTERVAL_SECONDS` | `3600` | Trace-retention worker interval |
 | `DRIFTZERO_LOG_LEVEL` | `INFO` | Structured application log level |
 | `DRIFTZERO_OTEL_ENABLED` | `false` | Optional OpenTelemetry export |
@@ -78,7 +85,7 @@ The platform-provided `PORT` is handled by the container entrypoint. Do not plac
 | `dashboard` | Static UI and same-origin reverse proxy | `GET /healthz` |
 | `api` | Registry, telemetry, scoring, diagnosis, recovery, audit | `GET /healthz` |
 | `alert-worker` | Evaluates alert rules without waiting for API traffic | Process stays running and emits JSON completion logs |
-| `recovery-worker` | Claims durable approved commands and runs the mock adapter | Command becomes `succeeded` or `failed` |
+| `recovery-worker` | Claims leased execute/verify/rollback commands and runs the configured adapter | Command becomes `succeeded`, retried, or `failed` |
 | `retention-worker` | Applies each model's configured trace-retention window | Process stays running and logs failures |
 | `driftzero-data` | Named SQLite volume shared by API and workers | API database operations |
 
@@ -105,6 +112,11 @@ The dashboard performs this exact sequence:
 5. The mock adapter enables citations, suppresses unsupported output, refreshes retrieval, routes low-confidence traffic, and queues conflicts for review.
 6. Verification simulates 50 requests and recovers health to `84.2`.
 7. The API records approval, execution, verification, and incident closure in the audit trail.
+
+The dashboard and smoke test send the local-demo actor headers. In hosted
+non-demo environments, disable `DRIFTZERO_RECOVERY_ALLOW_LOCAL_IDENTITY`, store
+operator/admin keys as secrets, and use `Authorization: Bearer ...`. The body
+cannot override the role associated with that credential.
 
 Run the same sequence without the browser:
 

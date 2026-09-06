@@ -6,6 +6,7 @@ import hashlib
 import json
 from datetime import UTC, datetime, timedelta
 from inspect import signature
+from math import ceil
 from typing import Any
 
 from sqlalchemy import delete, func, select
@@ -1322,6 +1323,9 @@ class DriftZeroService:
                         ExecutionState.SKIPPED.value
                         if aborted
                         else ExecutionState.RUNNING.value
+                    ),
+                    timeout_seconds=max(
+                        1, ceil(self.settings.recovery_control_timeout_seconds)
                     ),
                 )
                 session.add(execution)

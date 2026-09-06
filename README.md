@@ -32,7 +32,7 @@ The local stack contains:
 
 See [docs/DEVOPS_RUNBOOK.md](docs/DEVOPS_RUNBOOK.md) for setup, service wiring, logs, CI, deployment, troubleshooting, and demo recovery. See [docs/HEALTH_EVENT_SCHEMA.md](docs/HEALTH_EVENT_SCHEMA.md) for the connector contract.
 
-> **Demo boundary:** recovery is simulated. The API has no authentication, RBAC, or tenant isolation yet. Do not connect it to real model traffic or real recovery adapters, and remove any public demo deployment after judging.
+> **Demo boundary:** recovery is simulated. Recovery mutations have operator/admin API-key roles, but the project does not yet provide managed OIDC or complete tenant-scoped authorization. A real HTTPS control-plane adapter exists but is disabled unless server-side configuration is supplied. Do not attach consequential credentials to the public demo, and remove that deployment after judging.
 
 ## Project blueprint
 

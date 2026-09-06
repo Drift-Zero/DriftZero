@@ -23,6 +23,14 @@ uvicorn app.main:app --reload
 
 Open `http://127.0.0.1:8000/docs` for the interactive OpenAPI documentation.
 
+Recovery mutations are authenticated separately from read and telemetry routes.
+For a local demo only, set `DRIFTZERO_RECOVERY_ALLOW_LOCAL_IDENTITY=true` and
+send `X-DriftZero-Actor` plus `X-DriftZero-Role`. Hosted environments should set
+distinct `DRIFTZERO_RECOVERY_OPERATOR_API_KEY` and
+`DRIFTZERO_RECOVERY_ADMIN_API_KEY` secrets and send the selected secret as a
+Bearer token. The server derives the role from the matched secret; JSON identity
+fields are never trusted.
+
 Initialize or reset the deterministic CampusGPT scenario:
 
 ```bash
@@ -61,7 +69,15 @@ recovery plan.
 | `POST` | `/api/v1/alerts/{id}/resolve` | Resolve an alert with a reason |
 | `GET` | `/api/v1/models/{id}/recovery/latest` | Read the recommended playbook |
 | `POST` | `/api/v1/recovery/{id}/approve` | Record operator approval |
-| `POST` | `/api/v1/recovery/{id}/execute` | Execute and verify the approved plan |
+| `POST` | `/api/v1/recovery/{id}/reject` | Reject a recommended plan with rationale |
+| `POST` | `/api/v1/recovery/{id}/execute` | Queue idempotent execution; returns `202` |
+| `POST` | `/api/v1/recovery/{id}/cancel` | Cancel a plan that has not started |
+| `POST` | `/api/v1/recovery/{id}/verify` | Queue verification against a snapshot |
+| `POST` | `/api/v1/recovery/{id}/rollback` | Queue an idempotent rollback; returns `202` |
+| `GET` | `/api/v1/recovery/{id}/commands` | Read durable command history |
+| `GET` | `/api/v1/recovery/{id}/executions` | Read every action attempt and rollback |
+| `GET` | `/api/v1/recovery/{id}/verification` | Read the latest verification verdict |
+| `GET` | `/api/v1/recovery-commands/{id}` | Poll a queued command |
 | `GET` | `/api/v1/models/{id}/audit` | Read the model's audit history |
 
 ## Register a model
@@ -255,12 +271,39 @@ This instruments FastAPI and SQLAlchemy and exports spans through OTLP/HTTP.
 If the optional packages are absent, the service remains available and records
 an `opentelemetry.unavailable` warning instead of failing startup.
 
-## Current safety boundary
+## Recovery control
 
-Authentication and production recovery integrations are intentionally outside this initial slice.
-Do not expose the service publicly or connect consequential action adapters until authentication,
-role-based authorization, tenant isolation, secrets management, and deployment-specific rollback
-controls are implemented.
+Run the durable worker alongside the API:
+
+```bash
+python -m app.recovery_worker
+```
+
+Commands are persisted before execution, claimed with expiring leases, retried
+with stable per-action idempotency keys, and moved to terminal success or failure.
+Each action records the external operation ID, affected traffic, before/after
+configuration, configuration verification, timeout, and rollback result.
+
+The default adapter is a clearly labelled simulator. Configure a real HTTPS
+control plane only from server-side environment variables:
+
+```bash
+export DRIFTZERO_RECOVERY_CONTROL_URL=https://control.example.internal
+export DRIFTZERO_RECOVERY_CONTROL_TOKEN=replace-with-a-secret
+```
+
+The remote service must implement the allow-listed action endpoints, honor the
+`Idempotency-Key` header, and explicitly confirm the applied configuration. A
+real adapter never fabricates post-recovery telemetry: the plan remains
+`verifying` until observed traffic supplies at least 50 requests, 90% coverage,
+a healthy score, and no material quality, safety, latency, reliability, or cost
+regression.
+
+API-key roles are a deployable interim boundary, not managed user authentication.
+Before a public multi-user deployment, add OIDC sessions, tenant-scoped
+authorization, a secrets manager, adapter-specific permissions, and reviewed
+rollback runbooks. Local identity is ignored in `production` even if its flag is
+accidentally enabled.
 
 ## Verify
 

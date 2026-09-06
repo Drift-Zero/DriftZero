@@ -171,6 +171,7 @@ class TestExecution:
         assert all(
             execution.state is ExecutionState.SUCCEEDED for execution in response.executions
         )
+        assert all(execution.timeout_seconds == 10 for execution in response.executions)
 
     def test_blast_radius_is_recorded_per_action(
         self, session: Session, model: MonitoredModel

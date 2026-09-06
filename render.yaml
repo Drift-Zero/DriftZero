@@ -21,5 +21,7 @@ services:
         value: INFO
       - key: DRIFTZERO_RECOVERY_WORKER_INTERVAL_SECONDS
         value: "1"
+      - key: DRIFTZERO_RECOVERY_ALLOW_LOCAL_IDENTITY
+        value: "true"
       - key: DRIFTZERO_OTEL_ENABLED
         value: "false"

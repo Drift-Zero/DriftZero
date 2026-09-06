@@ -552,6 +552,7 @@ class RecoveryExecutionResponse(BaseModel):
     affected_traffic_pct: float | None = None
     started_at: datetime | None = None
     finished_at: datetime | None = None
+    timeout_seconds: int | None = None
     result: dict[str, object] = Field(default_factory=dict)
     error: str | None = None
     external_operation_id: str | None = None
