@@ -13,6 +13,7 @@ from enum import StrEnum
 from app.schemas import (
     ActorType,
     DiagnosisStatus,
+    EvaluatorKind,
     ExecutionState,
     HealthState,
     IncidentState,
@@ -20,6 +21,8 @@ from app.schemas import (
     RiskLevel,
     Severity,
     SignalSource,
+    StabilityKind,
+    StabilityVerdict,
     TraceStatus,
 )
 
@@ -55,26 +58,6 @@ class KnowledgeStatus(StrEnum):
     FRESH = "fresh"
     STALE = "stale"
     DISABLED = "disabled"
-
-
-class EvaluatorKind(StrEnum):
-    QUALITY = "quality"
-    GROUNDEDNESS = "groundedness"
-    SAFETY = "safety"
-    SEMANTIC_STABILITY = "semantic_stability"
-    TEMPORAL_STABILITY = "temporal_stability"
-
-
-class StabilityKind(StrEnum):
-    SEMANTIC = "semantic"
-    TEMPORAL = "temporal"
-
-
-class StabilityVerdict(StrEnum):
-    STABLE = "stable"
-    DRIFTING = "drifting"
-    CRITICAL = "critical"
-    INCONCLUSIVE = "inconclusive"
 
 
 class ReviewState(StrEnum):

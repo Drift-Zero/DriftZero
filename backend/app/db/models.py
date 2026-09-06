@@ -15,6 +15,7 @@ Two rules hold throughout:
 
 from __future__ import annotations
 
+import hashlib
 from datetime import datetime
 from typing import Any
 
@@ -166,25 +167,40 @@ class ModelVersion(IdMixin, Base):
 
     model: Mapped[MonitoredModel] = relationship(back_populates="versions")
 
+    CONTROLLED_INPUTS = (
+        "model_identifier",
+        "prompt_version",
+        "config_hash",
+        "tool_set_hash",
+        "corpus_version",
+        "evaluation_policy_version",
+    )
+
+    @classmethod
+    def fingerprint_for(cls, **inputs: str | None) -> str:
+        """Hash exactly the inputs that must hold constant across a comparison.
+
+        Anything not in ``CONTROLLED_INPUTS`` is deliberately excluded: the
+        fingerprint answers "could this answer have changed for a reason other
+        than the model itself", so widening it would make every run
+        incomparable, and narrowing it would let a changed input masquerade as
+        drift.
+        """
+
+        material = "|".join(f"{name}={inputs.get(name) or ''}" for name in cls.CONTROLLED_INPUTS)
+        return hashlib.sha256(material.encode("utf-8")).hexdigest()
+
     def comparable_with(self, other: ModelVersion) -> bool:
         """Whether two runs may be compared without attributing input changes."""
 
         return self.fingerprint == other.fingerprint
 
-    def differences(self, other: ModelVersion) -> dict[str, list[str]]:
+    def differences(self, other: ModelVersion) -> dict[str, list[str | None]]:
         """Report which controlled inputs changed between two versions."""
 
-        fields = (
-            "model_identifier",
-            "prompt_version",
-            "config_hash",
-            "tool_set_hash",
-            "corpus_version",
-            "evaluation_policy_version",
-        )
         return {
             field: [getattr(self, field), getattr(other, field)]
-            for field in fields
+            for field in self.CONTROLLED_INPUTS
             if getattr(self, field) != getattr(other, field)
         }
 
@@ -780,7 +796,11 @@ class EvaluatorVersion(IdMixin, Base):
     """
 
     __tablename__ = "evaluator_versions"
-    __table_args__ = (sa.UniqueConstraint("name", "version", name="name_version"),)
+    # One evaluator build can serve several judgement kinds, and each is a
+    # distinct pinned configuration, so kind is part of the identity.
+    __table_args__ = (
+        sa.UniqueConstraint("name", "version", "kind", name="name_version_kind"),
+    )
 
     name: Mapped[str] = mapped_column(sa.String(120))
     version: Mapped[str] = mapped_column(sa.String(40))

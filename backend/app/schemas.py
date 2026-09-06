@@ -47,6 +47,26 @@ class IncidentState(StrEnum):
     FAILED = "failed"
 
 
+class StabilityKind(StrEnum):
+    SEMANTIC = "semantic"
+    TEMPORAL = "temporal"
+
+
+class StabilityVerdict(StrEnum):
+    STABLE = "stable"
+    DRIFTING = "drifting"
+    CRITICAL = "critical"
+    INCONCLUSIVE = "inconclusive"
+
+
+class EvaluatorKind(StrEnum):
+    QUALITY = "quality"
+    GROUNDEDNESS = "groundedness"
+    SAFETY = "safety"
+    SEMANTIC_STABILITY = "semantic_stability"
+    TEMPORAL_STABILITY = "temporal_stability"
+
+
 class TraceStatus(StrEnum):
     OK = "ok"
     ERROR = "error"
@@ -169,6 +189,82 @@ class TraceResponse(BaseModel):
     quality_score: float | None = None
     safety_flags: list[str] = Field(default_factory=list)
     is_simulated: bool = False
+
+
+class ModelVersionCreate(BaseModel):
+    """The controlled inputs whose stability makes a comparison valid."""
+
+    label: str = Field(min_length=1, max_length=120)
+    model_identifier: str = Field(min_length=1, max_length=160)
+    prompt_version: str = Field(default="v1", max_length=80)
+    config_hash: str = Field(default="", max_length=64)
+    tool_set_hash: str = Field(default="", max_length=64)
+    corpus_version: str | None = Field(default=None, max_length=80)
+    evaluation_policy_version: str = Field(default="eval-v1", max_length=40)
+
+
+class ModelVersionResponse(ModelVersionCreate):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    model_id: str
+    fingerprint: str
+    active_from: datetime
+    active_to: datetime | None = None
+
+
+class StabilityClaimResponse(BaseModel):
+    """A material fact asserted by one variant."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    variant_id: str
+    claim_key: str
+    claim_text_redacted: str
+    value_text: str | None = None
+    agrees_with_baseline: bool | None = None
+    disagreement_note: str | None = None
+
+
+class StabilityVariantResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    variant_index: int
+    prompt_redacted: str
+    answer_redacted: str | None = None
+    is_baseline: bool
+    trace_id: str | None = None
+    captured_at: datetime
+
+
+class StabilityTestResponse(BaseModel):
+    """A stability evaluation, its variants, and the claims they disagreed on."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    model_id: str
+    kind: StabilityKind
+    question_redacted: str
+    stability_score: float | None = None
+    evaluator_confidence: float | None = None
+    verdict: StabilityVerdict
+    confidence_label: str = "estimated"
+    inputs_changed: bool = False
+    changed_inputs: dict[str, object] = Field(default_factory=dict)
+    model_version_id: str | None = None
+    baseline_version_id: str | None = None
+    evaluator_version_id: str | None = None
+    run_at: datetime
+    variants: list[StabilityVariantResponse] = Field(default_factory=list)
+    claims: list[StabilityClaimResponse] = Field(default_factory=list)
+
+
+class StabilityRunRequest(BaseModel):
+    question: str = Field(min_length=1)
+    variants: int = Field(default=4, ge=2, le=5)
 
 
 class TelemetryCreate(BaseModel):

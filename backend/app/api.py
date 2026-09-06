@@ -20,7 +20,12 @@ from app.schemas import (
     IncidentResponse,
     ModelCreate,
     ModelResponse,
+    ModelVersionCreate,
+    ModelVersionResponse,
     RecoveryPlanResponse,
+    StabilityKind,
+    StabilityRunRequest,
+    StabilityTestResponse,
     TelemetryCreate,
 )
 from app.service import DriftZeroService
@@ -126,6 +131,85 @@ def latest_diagnosis(
     service: ServiceDependency,
 ) -> DiagnosisResponse:
     return service.latest_diagnosis(session, model_id)
+
+
+@router.post(
+    "/models/{model_id}/versions",
+    response_model=ModelVersionResponse,
+    status_code=status.HTTP_201_CREATED,
+    tags=["pulse"],
+)
+def register_model_version(
+    model_id: str,
+    payload: ModelVersionCreate,
+    session: SessionDependency,
+    service: ServiceDependency,
+) -> ModelVersionResponse:
+    """Declare the controlled inputs a temporal comparison must hold constant."""
+
+    return service.register_model_version(session, model_id, payload)
+
+
+@router.get(
+    "/models/{model_id}/versions",
+    response_model=list[ModelVersionResponse],
+    tags=["pulse"],
+)
+def list_model_versions(
+    model_id: str,
+    session: SessionDependency,
+    service: ServiceDependency,
+) -> list[ModelVersionResponse]:
+    return service.list_model_versions(session, model_id)
+
+
+@router.post(
+    "/models/{model_id}/stability/semantic",
+    response_model=StabilityTestResponse,
+    status_code=status.HTTP_201_CREATED,
+    tags=["evaluate"],
+)
+def run_semantic_stability(
+    model_id: str,
+    payload: StabilityRunRequest,
+    session: SessionDependency,
+    service: ServiceDependency,
+) -> StabilityTestResponse:
+    """Ask one question several ways and check whether the facts agree."""
+
+    return service.run_semantic_stability(session, model_id, payload)
+
+
+@router.post(
+    "/models/{model_id}/stability/temporal",
+    response_model=StabilityTestResponse,
+    status_code=status.HTTP_201_CREATED,
+    tags=["evaluate"],
+)
+def run_temporal_stability(
+    model_id: str,
+    payload: StabilityRunRequest,
+    session: SessionDependency,
+    service: ServiceDependency,
+) -> StabilityTestResponse:
+    """Re-ask a controlled question, comparing only when the inputs held."""
+
+    return service.run_temporal_stability(session, model_id, payload)
+
+
+@router.get(
+    "/models/{model_id}/stability",
+    response_model=list[StabilityTestResponse],
+    tags=["evaluate"],
+)
+def list_stability_tests(
+    model_id: str,
+    session: SessionDependency,
+    service: ServiceDependency,
+    kind: StabilityKind | None = None,
+    limit: Annotated[int, Query(ge=1, le=100)] = 20,
+) -> list[StabilityTestResponse]:
+    return service.list_stability_tests(session, model_id, kind=kind, limit=limit)
 
 
 @router.get(

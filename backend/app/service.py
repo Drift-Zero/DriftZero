@@ -18,13 +18,18 @@ from app.database import (
 )
 from app.db import (
     DiagnosisEvidence,
+    EvaluatorVersion,
     HealthForecastRecord,
     Incident,
     KnowledgeDocument,
     KnowledgeSource,
     KnowledgeStatus,
+    ModelVersion,
     RecoveryActionRecord,
     RecoveryExecution,
+    StabilityClaim,
+    StabilityTest,
+    StabilityVariant,
     Trace,
     VerificationRun,
     ensure_health_policy,
@@ -33,6 +38,7 @@ from app.db import (
     traces_for_metric,
 )
 from app.diagnosis import diagnose_change
+from app.evaluation import EvaluatorAdapter, SimulatedEvaluator
 from app.recovery import RecoveryAdapter, SimulatedRecoveryAdapter, build_playbook
 from app.redaction import REDACTION_POLICY_VERSION, content_hash, redact
 from app.schemas import (
@@ -43,6 +49,7 @@ from app.schemas import (
     DiagnosisResponse,
     DiagnosisStatus,
     DimensionScores,
+    EvaluatorKind,
     EvidenceItem,
     ExecutionState,
     HealthForecastRecordResponse,
@@ -53,6 +60,8 @@ from app.schemas import (
     IncidentState,
     ModelCreate,
     ModelResponse,
+    ModelVersionCreate,
+    ModelVersionResponse,
     RecoveryAction,
     RecoveryExecutionResponse,
     RecoveryPlanResponse,
@@ -60,6 +69,10 @@ from app.schemas import (
     RiskLevel,
     Severity,
     SignalSource,
+    StabilityKind,
+    StabilityRunRequest,
+    StabilityTestResponse,
+    StabilityVerdict,
     TelemetryCreate,
     TraceCreate,
     VerificationRunResponse,
@@ -92,9 +105,11 @@ class DriftZeroService:
         self,
         settings: Settings,
         recovery_adapter: RecoveryAdapter | None = None,
+        evaluator: EvaluatorAdapter | None = None,
     ) -> None:
         self.settings = settings
         self.recovery_adapter = recovery_adapter or SimulatedRecoveryAdapter()
+        self.evaluator = evaluator or SimulatedEvaluator()
 
     def create_model(self, session: Session, payload: ModelCreate) -> ModelResponse:
         existing = session.scalar(select(MonitoredModel).where(MonitoredModel.name == payload.name))
@@ -582,6 +597,353 @@ class DriftZeroService:
         session.add(run)
         session.flush()
         return run
+
+    # ---------------------------------------------------------------- #
+    # Model versions and the signature stability evaluations
+    # ---------------------------------------------------------------- #
+
+    def register_model_version(
+        self,
+        session: Session,
+        model_id: str,
+        payload: ModelVersionCreate,
+    ) -> ModelVersionResponse:
+        """Record a new set of controlled inputs, retiring the previous one.
+
+        Re-registering identical inputs returns the existing version rather than
+        creating a duplicate, so a caller that re-declares its configuration on
+        every boot does not fragment the comparison history.
+        """
+
+        self._require_model(session, model_id)
+        fingerprint = ModelVersion.fingerprint_for(**payload.model_dump())
+
+        existing = session.scalar(
+            select(ModelVersion).where(
+                ModelVersion.model_id == model_id,
+                ModelVersion.fingerprint == fingerprint,
+            )
+        )
+        if existing is not None:
+            return ModelVersionResponse.model_validate(existing)
+
+        now = datetime.now(UTC)
+        current = self._active_model_version(session, model_id)
+        if current is not None:
+            current.active_to = now
+
+        version = ModelVersion(
+            model_id=model_id,
+            fingerprint=fingerprint,
+            active_from=now,
+            **payload.model_dump(),
+        )
+        session.add(version)
+        session.flush()
+        self._audit(
+            session,
+            model_id,
+            "model_version.registered",
+            "system",
+            {"version_id": version.id, "label": version.label, "fingerprint": fingerprint},
+        )
+        session.commit()
+        return ModelVersionResponse.model_validate(version)
+
+    def list_model_versions(
+        self, session: Session, model_id: str
+    ) -> list[ModelVersionResponse]:
+        self._require_model(session, model_id)
+        records = session.scalars(
+            select(ModelVersion)
+            .where(ModelVersion.model_id == model_id)
+            .order_by(ModelVersion.active_from.desc())
+        ).all()
+        return [ModelVersionResponse.model_validate(record) for record in records]
+
+    @staticmethod
+    def _active_model_version(session: Session, model_id: str) -> ModelVersion | None:
+        return session.scalar(
+            select(ModelVersion)
+            .where(ModelVersion.model_id == model_id, ModelVersion.active_to.is_(None))
+            .order_by(ModelVersion.active_from.desc())
+            .limit(1)
+        )
+
+    def _ensure_evaluator_version(
+        self, session: Session, kind: EvaluatorKind
+    ) -> EvaluatorVersion:
+        """Pin the evaluator that produced a judgement, so it can be replayed."""
+
+        record = session.scalar(
+            select(EvaluatorVersion).where(
+                EvaluatorVersion.name == self.evaluator.name,
+                EvaluatorVersion.version == self.evaluator.version,
+                EvaluatorVersion.kind == kind.value,
+            )
+        )
+        if record is None:
+            record = EvaluatorVersion(
+                name=self.evaluator.name,
+                version=self.evaluator.version,
+                kind=kind.value,
+                provider=self.evaluator.provider,
+                config={"simulation": self.evaluator.simulation},
+            )
+            session.add(record)
+            session.flush()
+        return record
+
+    # Agreement thresholds for a stability verdict. Published rather than
+    # buried so a "critical" reading can be argued with.
+    _STABLE_AT = 90.0
+    _DRIFTING_AT = 70.0
+
+    @classmethod
+    def _verdict(cls, score: float | None) -> StabilityVerdict:
+        if score is None:
+            return StabilityVerdict.INCONCLUSIVE
+        if score >= cls._STABLE_AT:
+            return StabilityVerdict.STABLE
+        if score >= cls._DRIFTING_AT:
+            return StabilityVerdict.DRIFTING
+        return StabilityVerdict.CRITICAL
+
+    def run_semantic_stability(
+        self,
+        session: Session,
+        model_id: str,
+        payload: StabilityRunRequest,
+    ) -> StabilityTestResponse:
+        """Ask the same question several ways and see whether the facts agree.
+
+        Agreement is judged on extracted claims rather than wording, so a
+        differently phrased answer asserting the same deadline counts as stable.
+        The first variant is the baseline the others are compared against.
+        """
+
+        self._require_model(session, model_id)
+        version = self._active_model_version(session, model_id)
+        evaluator = self._ensure_evaluator_version(session, EvaluatorKind.SEMANTIC_STABILITY)
+        corpus_version = version.corpus_version if version else None
+
+        test = StabilityTest(
+            model_id=model_id,
+            model_version_id=version.id if version else None,
+            evaluator_version_id=evaluator.id,
+            kind=StabilityKind.SEMANTIC.value,
+            question_redacted=redact(payload.question) or "",
+            question_hash=content_hash(payload.question) or "",
+            run_at=datetime.now(UTC),
+        )
+        session.add(test)
+        session.flush()
+
+        prompts = self.evaluator.paraphrase(payload.question, payload.variants)
+        answers = [
+            self.evaluator.answer(
+                question=payload.question, corpus_version=corpus_version, variant_index=index
+            )
+            for index in range(len(prompts))
+        ]
+        self._store_variants(session, test, prompts, answers)
+
+        baseline_claims = answers[0].claims if answers else {}
+        agreements = self._compare_claims(session, test, answers, baseline_claims)
+        score = round(100.0 * sum(agreements) / len(agreements), 1) if agreements else None
+
+        test.stability_score = score
+        test.evaluator_confidence = 0.8 if len(answers) >= 3 else 0.5
+        test.verdict = self._verdict(score).value
+        session.flush()
+        self._audit(
+            session,
+            model_id,
+            "stability.semantic_evaluated",
+            "evaluation-engine",
+            {"test_id": test.id, "score": score, "verdict": test.verdict},
+        )
+        session.commit()
+        return self._stability_response(test)
+
+    def run_temporal_stability(
+        self,
+        session: Session,
+        model_id: str,
+        payload: StabilityRunRequest,
+    ) -> StabilityTestResponse:
+        """Re-ask a controlled question and compare it with the previous run.
+
+        A changed answer only means drift when the inputs held constant. If the
+        fingerprint moved, the difference is attributed to the changed input and
+        the verdict is inconclusive -- reporting it as drift would be exactly
+        the mistake the product is meant to avoid.
+        """
+
+        self._require_model(session, model_id)
+        version = self._active_model_version(session, model_id)
+        evaluator = self._ensure_evaluator_version(session, EvaluatorKind.TEMPORAL_STABILITY)
+        question_hash = content_hash(payload.question) or ""
+
+        previous = session.scalar(
+            select(StabilityTest)
+            .where(
+                StabilityTest.model_id == model_id,
+                StabilityTest.kind == StabilityKind.TEMPORAL.value,
+                StabilityTest.question_hash == question_hash,
+            )
+            .order_by(StabilityTest.run_at.desc())
+            .limit(1)
+        )
+        baseline_version = (
+            session.get(ModelVersion, previous.model_version_id)
+            if previous and previous.model_version_id
+            else None
+        )
+
+        test = StabilityTest(
+            model_id=model_id,
+            model_version_id=version.id if version else None,
+            baseline_version_id=baseline_version.id if baseline_version else None,
+            evaluator_version_id=evaluator.id,
+            kind=StabilityKind.TEMPORAL.value,
+            question_redacted=redact(payload.question) or "",
+            question_hash=question_hash,
+            run_at=datetime.now(UTC),
+        )
+        session.add(test)
+        session.flush()
+
+        answer = self.evaluator.answer(
+            question=payload.question,
+            corpus_version=version.corpus_version if version else None,
+        )
+        self._store_variants(session, test, [payload.question], [answer])
+
+        if previous is None:
+            test.verdict = StabilityVerdict.INCONCLUSIVE.value
+            test.evaluator_confidence = 0.3
+            note = "no_baseline"
+        elif baseline_version is not None and version is not None and not version.comparable_with(
+            baseline_version
+        ):
+            # Attribute the change rather than calling it drift.
+            test.inputs_changed = True
+            test.changed_inputs = baseline_version.differences(version)
+            test.verdict = StabilityVerdict.INCONCLUSIVE.value
+            test.evaluator_confidence = 0.9
+            note = "inputs_changed"
+        else:
+            baseline_claims = {
+                claim.claim_key: claim.value_text or ""
+                for claim in session.scalars(
+                    select(StabilityClaim).where(StabilityClaim.test_id == previous.id)
+                ).all()
+            }
+            agreements = self._compare_claims(session, test, [answer], baseline_claims)
+            score = round(100.0 * sum(agreements) / len(agreements), 1) if agreements else None
+            test.stability_score = score
+            test.verdict = self._verdict(score).value
+            test.evaluator_confidence = 0.75
+            note = "compared"
+
+        session.flush()
+        self._audit(
+            session,
+            model_id,
+            "stability.temporal_evaluated",
+            "evaluation-engine",
+            {
+                "test_id": test.id,
+                "verdict": test.verdict,
+                "inputs_changed": test.inputs_changed,
+                "note": note,
+            },
+        )
+        session.commit()
+        return self._stability_response(test)
+
+    @staticmethod
+    def _store_variants(
+        session: Session,
+        test: StabilityTest,
+        prompts: list[str],
+        answers: list[object],
+    ) -> None:
+        for index, (prompt, answer) in enumerate(zip(prompts, answers, strict=False)):
+            session.add(
+                StabilityVariant(
+                    test_id=test.id,
+                    variant_index=index,
+                    prompt_redacted=redact(prompt) or "",
+                    answer_redacted=redact(answer.text),
+                    is_baseline=index == 0,
+                )
+            )
+        session.flush()
+
+    def _compare_claims(
+        self,
+        session: Session,
+        test: StabilityTest,
+        answers: list[object],
+        baseline_claims: dict[str, str],
+    ) -> list[bool]:
+        """Persist each asserted fact and whether it matched the baseline."""
+
+        variants = {
+            variant.variant_index: variant
+            for variant in session.scalars(
+                select(StabilityVariant).where(StabilityVariant.test_id == test.id)
+            ).all()
+        }
+        agreements: list[bool] = []
+
+        for index, answer in enumerate(answers):
+            variant = variants.get(index)
+            if variant is None:
+                continue
+            for key, value in answer.claims.items():
+                expected = baseline_claims.get(key)
+                agrees = expected is None or expected == value
+                if index > 0 or not baseline_claims:
+                    agreements.append(agrees)
+                session.add(
+                    StabilityClaim(
+                        test_id=test.id,
+                        variant_id=variant.id,
+                        claim_key=key,
+                        claim_text_redacted=redact(answer.text) or "",
+                        value_text=value,
+                        agrees_with_baseline=agrees,
+                        disagreement_note=(
+                            None if agrees else f"baseline said {expected!r}, this said {value!r}"
+                        ),
+                    )
+                )
+        session.flush()
+        return agreements
+
+    def list_stability_tests(
+        self,
+        session: Session,
+        model_id: str,
+        *,
+        kind: StabilityKind | None = None,
+        limit: int = 20,
+    ) -> list[StabilityTestResponse]:
+        self._require_model(session, model_id)
+        statement = select(StabilityTest).where(StabilityTest.model_id == model_id)
+        if kind is not None:
+            statement = statement.where(StabilityTest.kind == kind.value)
+        records = session.scalars(
+            statement.order_by(StabilityTest.run_at.desc()).limit(limit)
+        ).all()
+        return [self._stability_response(record) for record in records]
+
+    @staticmethod
+    def _stability_response(record: StabilityTest) -> StabilityTestResponse:
+        return StabilityTestResponse.model_validate(record)
 
     def audit_events(self, session: Session, model_id: str) -> list[AuditEventResponse]:
         self._require_model(session, model_id)
