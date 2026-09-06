@@ -1069,12 +1069,21 @@ class DriftZeroService:
                     incident_id=plan.incident_id,
                 )
 
+            if outcome.succeeded and record.code in self._CORPUS_REFRESH_ACTIONS:
+                # Likewise: an action that reports it refreshed the corpus has
+                # to leave the corpus refreshed, or the recovery is asserting a
+                # fix that anyone inspecting the source can see did not happen.
+                self._refresh_knowledge_sources(session, plan.model_id)
+
             executions.append(execution)
 
         return executions
 
     # Playbook steps whose entire purpose is to put a human in the loop.
     _REVIEW_ROUTING_ACTIONS = frozenset({"queue_human_review", "route_human_review"})
+
+    # Playbook steps that re-index the retrieval corpus.
+    _CORPUS_REFRESH_ACTIONS = frozenset({"refresh_retrieval_index"})
 
     def _rollback_actions(
         self,
@@ -2073,6 +2082,108 @@ class DriftZeroService:
             recovery=self.latest_recovery(session, model.id),
             incident=IncidentResponse.model_validate(incident) if incident else None,
         )
+
+    def _refresh_knowledge_sources(self, session: Session, model_id: str) -> int:
+        """Re-index a model's retrieval sources, and record the input change.
+
+        The failure being repaired is that the superseding document was never
+        indexed, so the retriever kept returning the older one. Stamping
+        ``indexed_at`` on the newest document is therefore the actual fix; the
+        source's status and version follow from it.
+
+        ``is_stale`` on the superseded document is deliberately left alone. That
+        document really was superseded -- a historical fact about it, not a
+        symptom to be cleared.
+
+        Returns the number of sources refreshed.
+        """
+
+        sources = session.scalars(
+            select(KnowledgeSource).where(KnowledgeSource.model_id == model_id)
+        ).all()
+        if not sources:
+            return 0
+
+        now = datetime.now(UTC)
+        refreshed = 0
+        for source in sources:
+            newest = session.scalar(
+                select(KnowledgeDocument)
+                .where(
+                    KnowledgeDocument.source_id == source.id,
+                    KnowledgeDocument.is_stale.is_(False),
+                )
+                .order_by(KnowledgeDocument.published_at.desc())
+                .limit(1)
+            )
+            previous_version = source.corpus_version
+            if newest is not None:
+                newest.indexed_at = now
+                source.corpus_version = self._corpus_version_for(newest, previous_version)
+
+            source.status = KnowledgeStatus.FRESH.value
+            source.last_refreshed_at = now
+            refreshed += 1
+
+            version_id = self._register_corpus_version(session, model_id, source.corpus_version)
+            self._audit(
+                session,
+                model_id,
+                "knowledge.refreshed",
+                "recovery-adapter",
+                {
+                    "source_id": source.id,
+                    "previous_corpus_version": previous_version,
+                    "corpus_version": source.corpus_version,
+                    "indexed_document_id": newest.id if newest else None,
+                    "model_version_id": version_id,
+                },
+            )
+
+        session.flush()
+        return refreshed
+
+    @staticmethod
+    def _corpus_version_for(document: KnowledgeDocument, fallback: str) -> str:
+        """Derive the corpus version now being served from the indexed document."""
+
+        if document.published_at is not None:
+            return document.published_at.date().isoformat()
+        return fallback
+
+    def _register_corpus_version(
+        self,
+        session: Session,
+        model_id: str,
+        corpus_version: str,
+    ) -> str | None:
+        """Record that a controlled input moved when the corpus was re-indexed.
+
+        Without this the active version keeps advertising the old corpus, and a
+        later temporal comparison would believe the inputs held constant while
+        the retrieval corpus underneath it had changed -- reporting model drift
+        for a change the system itself made. Registering the new version is what
+        lets that comparison correctly report an attributed input change.
+
+        Returns the new version id, or None when the model has no active version
+        to derive one from.
+        """
+
+        active = self._active_model_version(session, model_id)
+        if active is None or active.corpus_version == corpus_version:
+            return None
+
+        payload = ModelVersionCreate(
+            label=f"{active.label}+corpus-{corpus_version}",
+            model_identifier=active.model_identifier,
+            prompt_version=active.prompt_version,
+            corpus_version=corpus_version,
+            evaluation_policy_version=active.evaluation_policy_version,
+            actor="recovery-adapter",
+        )
+        model = session.get(MonitoredModel, model_id)
+        version = self._create_model_version(session, model, payload)
+        return version.id
 
     def _seed_knowledge_corpus(
         self,
