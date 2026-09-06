@@ -1,98 +1,14 @@
 <!doctype html>
 <html lang="en">
   <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <meta name="description" content="DriftZero hackathon reliability control plane" />
-    <title>DriftZero | Predict. Diagnose. Recover.</title>
-    <link rel="stylesheet" href="/styles.css" />
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#08090b" />
+    <meta name="description" content="DriftZero AI reliability monitoring dashboard" />
+    <title>DriftZero · AI Reliability</title>
   </head>
   <body>
-    <header class="topbar">
-      <div>
-        <span class="eyebrow">AI RELIABILITY CONTROL PLANE</span>
-        <h1>Drift<span>Zero</span></h1>
-      </div>
-      <div class="connection"><i id="connection-dot"></i><span id="connection-text">Connecting</span></div>
-    </header>
-
-    <main>
-      <section class="hero">
-        <div>
-          <p class="kicker">Predict. Diagnose. Recover.</p>
-          <h2>Catch model degradation before users do.</h2>
-          <p class="lede">A deterministic CampusGPT simulation: stale knowledge causes failures, DriftZero finds the cause, and an operator approves a safe recovery.</p>
-        </div>
-        <button id="reset-button" class="button secondary">Reset demo</button>
-      </section>
-
-      <p id="notice" class="notice" role="status" aria-live="polite"></p>
-
-      <section class="grid metrics">
-        <article class="panel score-panel">
-          <div class="panel-label">CURRENT HEALTH</div>
-          <div class="score-row"><strong id="health-score">--</strong><span>/100</span></div>
-          <div id="health-state" class="status-pill neutral">WAITING</div>
-          <p id="sample-note">No telemetry loaded</p>
-        </article>
-        <article class="panel">
-          <div class="panel-label">30-MIN FORECAST</div>
-          <strong id="forecast-score" class="metric-value">--</strong>
-          <p id="forecast-range">Waiting for a health timeline</p>
-        </article>
-        <article class="panel">
-          <div class="panel-label">LIKELY CAUSE</div>
-          <strong id="cause" class="cause">--</strong>
-          <p id="confidence">Diagnosis not available</p>
-        </article>
-        <article class="panel">
-          <div class="panel-label">RECOVERY STATE</div>
-          <strong id="recovery-state" class="metric-value compact">--</strong>
-          <p id="recovery-note">Human approval is required</p>
-        </article>
-      </section>
-
-      <section class="grid detail-grid">
-        <article class="panel span-two">
-          <div class="panel-heading">
-            <div><span class="step">01</span><h3>Pulse</h3></div>
-            <span>Health trajectory</span>
-          </div>
-          <div id="trajectory" class="trajectory"></div>
-        </article>
-
-        <article class="panel">
-          <div class="panel-heading">
-            <div><span class="step">02</span><h3>Diagnose</h3></div>
-          </div>
-          <ul id="evidence" class="list"><li>Waiting for evidence</li></ul>
-        </article>
-
-        <article class="panel span-two">
-          <div class="panel-heading">
-            <div><span class="step">03</span><h3>Recover</h3></div>
-            <span class="simulated">SIMULATION ONLY</span>
-          </div>
-          <ol id="actions" class="actions"><li>Waiting for playbook</li></ol>
-          <div class="button-row">
-            <button id="approve-button" class="button" disabled>Approve playbook</button>
-            <button id="execute-button" class="button danger" disabled>Execute & verify</button>
-          </div>
-        </article>
-
-        <article class="panel">
-          <div class="panel-heading"><div><h3>Incident</h3></div></div>
-          <dl class="incident">
-            <div><dt>Model</dt><dd id="model-name">--</dd></div>
-            <div><dt>Severity</dt><dd id="severity">--</dd></div>
-            <div><dt>Status</dt><dd id="incident-state">--</dd></div>
-            <div><dt>Trough</dt><dd id="trough">--</dd></div>
-          </dl>
-        </article>
-      </section>
-    </main>
-
-    <footer>Hackathon demo • synthetic telemetry • mock recovery adapter • no production credentials</footer>
-    <script src="/app.js" defer></script>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

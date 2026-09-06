@@ -1,0 +1,4 @@
+import { ArrowDown,ArrowUp,Minus } from 'lucide-react'
+import type { MetricValue } from '../../types/dashboard'
+
+export function MetricCard({metric}:{metric:MetricValue}){const change=metric.value!==null&&metric.previous!=null?metric.value-metric.previous:null;const tone=metric.value===null?'neutral':metric.value>=85?'positive':metric.value>=65?'warning':'negative';return <article className="metric-card"><div><span>{metric.label}</span>{change===null?<Minus size={13}/>:change>=0?<ArrowUp size={13}/>:<ArrowDown size={13}/>}</div><strong className={tone}>{metric.value===null?'—':Math.round(metric.value)}{metric.suffix??''}</strong><div className="metric-track"><i className={tone} style={{width:`${metric.value??0}%`}}/></div><small>{change===null?'No prior sample':`${change>=0?'+':''}${Math.round(change)} since baseline`}</small></article>}
