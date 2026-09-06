@@ -15,8 +15,18 @@ from app.database import (
     MonitoredModel,
     RecoveryPlan,
 )
+from app.db import (
+    DiagnosisEvidence,
+    KnowledgeDocument,
+    KnowledgeSource,
+    KnowledgeStatus,
+    Trace,
+    ensure_health_policy,
+    traces_for_metric,
+)
 from app.diagnosis import diagnose_change
 from app.recovery import RecoveryAdapter, SimulatedRecoveryAdapter, build_playbook
+from app.redaction import REDACTION_POLICY_VERSION, content_hash, redact
 from app.schemas import (
     ActorRequest,
     AuditEventResponse,
@@ -36,8 +46,13 @@ from app.schemas import (
     RiskLevel,
     SignalSource,
     TelemetryCreate,
+    TraceCreate,
 )
-from app.scoring import calculate_health, forecast_health
+from app.scoring import DIMENSION_WEIGHTS, calculate_health, forecast_health
+
+# Mirrors the boundaries in scoring.classify_health so a stored snapshot can
+# show the thresholds it was judged against.
+HEALTH_THRESHOLDS = {"healthy": 80.0, "warning": 65.0}
 
 
 class ServiceError(Exception):
@@ -174,6 +189,7 @@ class DriftZeroService:
         )
         session.add(diagnosis)
         session.flush()
+        self._record_evidence(session, diagnosis, latest, result.evidence)
 
         playbook = build_playbook(result.probable_cause)
         plan = RecoveryPlan(
@@ -351,6 +367,7 @@ class DriftZeroService:
         session.add(model)
         session.flush()
         now = datetime.now(UTC)
+        stale_document = self._seed_knowledge_corpus(session, model.id, now)
         demo_points = [
             (
                 now - timedelta(minutes=90),
@@ -409,7 +426,7 @@ class DriftZeroService:
                 ),
             ),
         ]
-        for observed_at, dimensions in demo_points:
+        for index, (observed_at, dimensions) in enumerate(demo_points):
             self._record_telemetry(
                 session,
                 model.id,
@@ -419,6 +436,7 @@ class DriftZeroService:
                     sample_size=100,
                     coverage=0.95,
                     source=SignalSource.SIMULATED,
+                    traces=self._demo_traces(observed_at, index, stale_document.external_ref),
                 ),
             )
         self._audit(
@@ -426,7 +444,11 @@ class DriftZeroService:
             model.id,
             "demo.reset",
             "demo-seeder",
-            {"scenario": "knowledge_freshness_failure", "snapshots": 4},
+            {
+                "scenario": "knowledge_freshness_failure",
+                "snapshots": len(demo_points),
+                "stale_document": stale_document.external_ref,
+            },
         )
         session.commit()
 
@@ -437,6 +459,147 @@ class DriftZeroService:
             diagnosis=diagnosis,
             recovery=self.latest_recovery(session, model.id),
         )
+
+    def _seed_knowledge_corpus(
+        self,
+        session: Session,
+        model_id: str,
+        now: datetime,
+    ) -> KnowledgeDocument:
+        """Seed the corpus behind the CampusGPT failure.
+
+        A new fee policy was published, but the retriever kept serving the
+        superseded one. Modelling both documents and the link between them is
+        what turns "the retriever served stale documents" into something a user
+        can verify rather than a claim they have to accept.
+
+        Returns the stale document, which the seeded traces cite.
+        """
+
+        source = KnowledgeSource(
+            model_id=model_id,
+            name="Examination Policy Corpus",
+            kind="corpus",
+            corpus_version="2026-01-14",
+            status=KnowledgeStatus.STALE,
+            document_count=2,
+            last_refreshed_at=now - timedelta(days=21),
+        )
+        session.add(source)
+        session.flush()
+
+        current = KnowledgeDocument(
+            source_id=source.id,
+            external_ref="policy/exam-fee-2026-03",
+            title="Examination Fee Policy (effective 2026-03-01)",
+            content_hash=content_hash("exam fee deadline 2026-03-28") or "",
+            published_at=now - timedelta(days=3),
+            indexed_at=None,
+            is_stale=False,
+        )
+        session.add(current)
+        session.flush()
+
+        stale = KnowledgeDocument(
+            source_id=source.id,
+            external_ref="policy/exam-fee-2025-11",
+            title="Examination Fee Policy (superseded)",
+            content_hash=content_hash("exam fee deadline 2026-02-14") or "",
+            published_at=now - timedelta(days=120),
+            indexed_at=now - timedelta(days=21),
+            is_stale=True,
+            superseded_by_id=current.id,
+        )
+        session.add(stale)
+        session.flush()
+        return stale
+
+    @staticmethod
+    def _demo_traces(observed_at: datetime, step: int, stale_ref: str) -> list[TraceCreate]:
+        """Build the requests underlying one demo window.
+
+        Deterministic by construction -- no random source -- because the README
+        requires the scenario to behave identically every time it is presented.
+        Groundedness falls and unsupported claims rise with each step, so the
+        traces tell the same story the aggregate scores do.
+        """
+
+        groundedness = (92.0, 81.0, 55.0, 30.0)[step]
+        quality = (90.0, 87.0, 74.0, 61.0)[step]
+        # By the final window most answers assert a deadline nothing supports.
+        unsupported = (0, 1, 2, 3)[step]
+
+        questions = (
+            "When is the examination fee deadline this semester?",
+            "Can I still pay the exam fee after the due date?",
+            "What is the last date to pay examination fees?",
+            "Has the exam fee deadline been extended? Reply to me at student@campus.edu",
+        )
+
+        traces: list[TraceCreate] = []
+        for offset, question in enumerate(questions):
+            cites_stale = step >= 1
+            traces.append(
+                TraceCreate(
+                    occurred_at=observed_at - timedelta(seconds=90 - offset * 20),
+                    request_id=f"campus-{step}-{offset}",
+                    question=question,
+                    answer=(
+                        "The examination fee deadline is 14 February 2026."
+                        if cites_stale
+                        else "The examination fee deadline is 28 March 2026."
+                    ),
+                    provider="demo-adapter",
+                    latency_ms=310 + offset * 5 + step * 12,
+                    input_tokens=48 + offset,
+                    output_tokens=64 + offset,
+                    cost_usd=0.0009,
+                    retrieved_document_ids=[stale_ref] if cites_stale else [],
+                    citation_count=0 if step == 3 else 1,
+                    unsupported_claim_count=unsupported,
+                    groundedness_score=max(0.0, groundedness - offset * 1.5),
+                    quality_score=max(0.0, quality - offset * 1.0),
+                    is_simulated=True,
+                )
+            )
+        return traces
+
+    def _record_evidence(
+        self,
+        session: Session,
+        diagnosis: Diagnosis,
+        snapshot: HealthSnapshot,
+        items: list[EvidenceItem],
+    ) -> None:
+        """Store each observation as a row, linked to the requests behind it.
+
+        The JSON column on the diagnosis stays populated for existing readers,
+        but these rows are canonical: they are queryable and they carry the
+        drill-down to individual traces. Contradicting evidence is stored the
+        same way as supporting evidence, because it is meant to be shown rather
+        than filtered out.
+        """
+
+        for item in items:
+            evidence = DiagnosisEvidence(
+                diagnosis_id=diagnosis.id,
+                reason_code=item.reason_code,
+                metric=item.metric,
+                summary=item.summary,
+                baseline_value=item.baseline_value,
+                current_value=item.current_value,
+                change=item.change,
+                supports_diagnosis=item.supports_diagnosis,
+            )
+            evidence.traces = traces_for_metric(
+                session,
+                snapshot.model_id,
+                metric=item.metric,
+                start=snapshot.window_start,
+                end=snapshot.window_end,
+            )
+            session.add(evidence)
+        session.flush()
 
     def _record_telemetry(
         self,
@@ -451,22 +614,103 @@ class DriftZeroService:
             minimum_sample_size=self.settings.minimum_sample_size,
             minimum_coverage=self.settings.minimum_coverage,
         )
+        traces = self._record_traces(session, model_id, payload.traces)
+        window_start, window_end = self._evaluation_window(payload, traces)
+        policy = ensure_health_policy(
+            session,
+            version=score.policy_version,
+            weights=DIMENSION_WEIGHTS,
+            thresholds=HEALTH_THRESHOLDS,
+            minimum_sample_size=self.settings.minimum_sample_size,
+            minimum_coverage=self.settings.minimum_coverage,
+        )
+
         record = HealthSnapshot(
             model_id=model_id,
             observed_at=payload.observed_at,
+            window_start=window_start,
+            window_end=window_end,
             **payload.dimensions.model_dump(),
             score=score.score,
             state=score.state.value,
             confidence=score.confidence,
             sample_size=payload.sample_size,
+            trace_count=len(traces),
             coverage=payload.coverage,
             policy_version=score.policy_version,
+            policy_id=policy.id,
             source=payload.source.value,
             missing_dimensions=score.missing_dimensions,
         )
         session.add(record)
         session.flush()
         return record
+
+    def _record_traces(
+        self,
+        session: Session,
+        model_id: str,
+        payloads: list[TraceCreate],
+    ) -> list[Trace]:
+        """Persist request-level traces, redacting text on the way in.
+
+        Only the redacted rendering is stored; the hash is taken over the
+        original so repeated questions stay correlatable without retaining what
+        was asked.
+        """
+
+        traces: list[Trace] = []
+        for item in payloads:
+            trace = Trace(
+                model_id=model_id,
+                occurred_at=item.occurred_at,
+                request_id=item.request_id,
+                question_redacted=redact(item.question),
+                answer_redacted=redact(item.answer),
+                prompt_hash=content_hash(item.question),
+                answer_hash=content_hash(item.answer),
+                redaction_policy_version=REDACTION_POLICY_VERSION,
+                provider=item.provider,
+                status=item.status.value,
+                error_code=item.error_code,
+                latency_ms=item.latency_ms,
+                input_tokens=item.input_tokens,
+                output_tokens=item.output_tokens,
+                cost_usd=item.cost_usd,
+                retrieved_document_ids=list(item.retrieved_document_ids),
+                citation_count=item.citation_count,
+                unsupported_claim_count=item.unsupported_claim_count,
+                groundedness_score=item.groundedness_score,
+                quality_score=item.quality_score,
+                safety_flags=list(item.safety_flags),
+                is_simulated=item.is_simulated,
+            )
+            session.add(trace)
+            traces.append(trace)
+
+        if traces:
+            session.flush()
+        return traces
+
+    def _evaluation_window(
+        self,
+        payload: TelemetryCreate,
+        traces: list[Trace],
+    ) -> tuple[datetime, datetime]:
+        """Return the period a score covers.
+
+        Every score has to state its window. When traces are supplied the window
+        is exactly the traffic they span; otherwise it falls back to the
+        configured horizon ending at the observation, so the window is never
+        left unstated.
+        """
+
+        if traces:
+            times = [trace.occurred_at for trace in traces]
+            return min(times), max(times)
+
+        horizon = timedelta(minutes=self.settings.forecast_horizon_minutes)
+        return payload.observed_at - horizon, payload.observed_at
 
     @staticmethod
     def _require_model(session: Session, model_id: str) -> MonitoredModel:
@@ -509,6 +753,9 @@ class DriftZeroService:
             id=record.id,
             model_id=record.model_id,
             observed_at=record.observed_at,
+            window_start=record.window_start,
+            window_end=record.window_end,
+            trace_count=record.trace_count,
             dimensions=cls._dimensions_from_record(record),
             score=record.score,
             state=HealthState(record.state),
@@ -538,9 +785,33 @@ class DriftZeroService:
             probable_cause=record.probable_cause,
             confidence=record.confidence,
             status=DiagnosisStatus(record.status),
-            evidence=[EvidenceItem.model_validate(item) for item in record.evidence],
+            evidence=DriftZeroService._evidence_items(record),
             created_at=record.created_at,
         )
+
+    @staticmethod
+    def _evidence_items(record: Diagnosis) -> list[EvidenceItem]:
+        """Prefer stored evidence rows, which carry the trace drill-down.
+
+        Falls back to the JSON column so diagnoses written before evidence rows
+        existed still render.
+        """
+
+        if record.evidence_items:
+            return [
+                EvidenceItem(
+                    reason_code=item.reason_code,
+                    metric=item.metric,
+                    summary=item.summary,
+                    baseline_value=item.baseline_value,
+                    current_value=item.current_value,
+                    change=item.change,
+                    supports_diagnosis=item.supports_diagnosis,
+                    trace_ids=[trace.id for trace in item.traces],
+                )
+                for item in record.evidence_items
+            ]
+        return [EvidenceItem.model_validate(item) for item in record.evidence]
 
     @staticmethod
     def _recovery_response(record: RecoveryPlan) -> RecoveryPlanResponse:

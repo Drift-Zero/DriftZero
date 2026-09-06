@@ -16,6 +16,7 @@ from app.schemas import (
     RecoveryState,
     RiskLevel,
     SignalSource,
+    TraceStatus,
 )
 
 __all__ = [
@@ -50,13 +51,6 @@ class KnowledgeStatus(StrEnum):
     FRESH = "fresh"
     STALE = "stale"
     DISABLED = "disabled"
-
-
-class TraceStatus(StrEnum):
-    OK = "ok"
-    ERROR = "error"
-    TIMEOUT = "timeout"
-    FILTERED = "filtered"
 
 
 class Severity(StrEnum):

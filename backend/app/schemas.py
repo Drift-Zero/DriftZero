@@ -28,6 +28,13 @@ class SignalSource(StrEnum):
     SIMULATED = "simulated"
 
 
+class TraceStatus(StrEnum):
+    OK = "ok"
+    ERROR = "error"
+    TIMEOUT = "timeout"
+    FILTERED = "filtered"
+
+
 class DiagnosisStatus(StrEnum):
     OPEN = "open"
     RESOLVED = "resolved"
@@ -74,18 +81,75 @@ class ModelResponse(ModelCreate):
     created_at: datetime
 
 
+class TraceCreate(BaseModel):
+    """One observed request/response interaction.
+
+    ``question`` and ``answer`` are redacted before storage and only the
+    redacted rendering is persisted, alongside a hash of the original.
+    """
+
+    occurred_at: datetime = Field(default_factory=utc_now)
+    request_id: str | None = Field(default=None, max_length=120)
+    question: str | None = None
+    answer: str | None = None
+    provider: str | None = Field(default=None, max_length=80)
+    status: TraceStatus = TraceStatus.OK
+    error_code: str | None = Field(default=None, max_length=80)
+    latency_ms: int | None = Field(default=None, ge=0)
+    input_tokens: int | None = Field(default=None, ge=0)
+    output_tokens: int | None = Field(default=None, ge=0)
+    cost_usd: float | None = Field(default=None, ge=0)
+    retrieved_document_ids: list[str] = Field(default_factory=list)
+    citation_count: int = Field(default=0, ge=0)
+    unsupported_claim_count: int = Field(default=0, ge=0)
+    groundedness_score: Score | None = None
+    quality_score: Score | None = None
+    safety_flags: list[str] = Field(default_factory=list)
+    is_simulated: bool = False
+
+
+class TraceResponse(BaseModel):
+    """A stored trace. Never carries raw prompt or response text."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    model_id: str
+    occurred_at: datetime
+    request_id: str | None = None
+    question_redacted: str | None = None
+    answer_redacted: str | None = None
+    prompt_hash: str | None = None
+    answer_hash: str | None = None
+    redaction_policy_version: str
+    provider: str | None = None
+    status: TraceStatus
+    latency_ms: int | None = None
+    retrieved_document_ids: list[str] = Field(default_factory=list)
+    citation_count: int = 0
+    unsupported_claim_count: int = 0
+    groundedness_score: float | None = None
+    quality_score: float | None = None
+    safety_flags: list[str] = Field(default_factory=list)
+    is_simulated: bool = False
+
+
 class TelemetryCreate(BaseModel):
     observed_at: datetime = Field(default_factory=utc_now)
     dimensions: DimensionScores
     sample_size: int = Field(ge=1)
     coverage: float = Field(ge=0, le=1)
     source: SignalSource = SignalSource.OBSERVED
+    traces: list[TraceCreate] = Field(default_factory=list)
 
 
 class HealthSnapshotResponse(BaseModel):
     id: str
     model_id: str
     observed_at: datetime
+    window_start: datetime | None = None
+    window_end: datetime | None = None
+    trace_count: int = 0
     dimensions: DimensionScores
     score: float | None
     state: HealthState
@@ -121,6 +185,7 @@ class EvidenceItem(BaseModel):
     current_value: float | None = None
     change: float | None = None
     supports_diagnosis: bool
+    trace_ids: list[str] = Field(default_factory=list)
 
 
 class DiagnosisResponse(BaseModel):

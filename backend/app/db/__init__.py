@@ -73,10 +73,13 @@ from app.db.models import (
 )
 from app.db.queries import (
     ensure_default_tenant,
+    ensure_health_policy,
     latest_snapshot,
     purge_expired_traces,
     reset_all_data,
     snapshot_timeline,
+    traces_for_metric,
+    traces_in_window,
 )
 from app.db.session import (
     Database,
@@ -142,6 +145,7 @@ __all__ = [
     "VerificationRun",
     "configure_database",
     "ensure_default_tenant",
+    "ensure_health_policy",
     "enum_column",
     "evidence_traces",
     "get_database",
@@ -152,5 +156,7 @@ __all__ = [
     "reset_all_data",
     "reset_database",
     "snapshot_timeline",
+    "traces_for_metric",
+    "traces_in_window",
     "utc_now",
 ]

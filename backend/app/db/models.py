@@ -559,7 +559,12 @@ class DiagnosisEvidence(IdMixin, Base):
     created_at: Mapped[datetime] = mapped_column(default=utc_now)
 
     diagnosis: Mapped[Diagnosis] = relationship(back_populates="evidence_items")
-    traces: Mapped[list[Trace]] = relationship(secondary=evidence_traces)
+    # The link table records which requests demonstrate this evidence, not a
+    # ranking, so read them back in a stable chronological order rather than
+    # whatever order the join happens to produce.
+    traces: Mapped[list[Trace]] = relationship(
+        secondary=evidence_traces, order_by="Trace.occurred_at"
+    )
 
 
 # --------------------------------------------------------------------------- #

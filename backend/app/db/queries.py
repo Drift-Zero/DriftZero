@@ -12,7 +12,8 @@ import sqlalchemy as sa
 from sqlalchemy.orm import Session
 
 from app.db.base import DEFAULT_TENANT_ID, DEFAULT_TENANT_SLUG, Base, utc_now
-from app.db.models import HealthSnapshot, MonitoredModel, Tenant, Trace
+from app.db.enums import TraceStatus
+from app.db.models import HealthPolicy, HealthSnapshot, MonitoredModel, Tenant, Trace
 
 
 def ensure_default_tenant(session: Session) -> Tenant:
@@ -96,3 +97,114 @@ def reset_all_data(session: Session, *, preserve: frozenset[str] = frozenset({"t
             session.execute(sa.delete(table))
     session.flush()
     ensure_default_tenant(session)
+
+
+def ensure_health_policy(
+    session: Session,
+    *,
+    version: str,
+    weights: dict[str, float],
+    thresholds: dict[str, float],
+    minimum_sample_size: int,
+    minimum_coverage: float,
+) -> HealthPolicy:
+    """Upsert the scoring policy a snapshot was scored under.
+
+    A score is meaningless without the weights and gates behind it, so the
+    policy is persisted rather than left implicit in the scoring module. Weights
+    are refreshed on every call so the stored row cannot drift from the code
+    that is actually scoring.
+    """
+
+    policy = session.scalar(sa.select(HealthPolicy).where(HealthPolicy.version == version))
+    if policy is None:
+        policy = HealthPolicy(version=version)
+        session.add(policy)
+
+    policy.weights = dict(weights)
+    policy.thresholds = dict(thresholds)
+    policy.minimum_sample_size = minimum_sample_size
+    policy.minimum_coverage = minimum_coverage
+    policy.is_active = True
+    session.flush()
+    return policy
+
+
+def traces_in_window(
+    session: Session,
+    model_id: str,
+    start: datetime | None,
+    end: datetime | None,
+) -> list[Trace]:
+    """Return the traces a snapshot's evaluation window covers, oldest first."""
+
+    statement = sa.select(Trace).where(Trace.model_id == model_id)
+    if start is not None:
+        statement = statement.where(Trace.occurred_at >= start)
+    if end is not None:
+        statement = statement.where(Trace.occurred_at <= end)
+    return list(session.scalars(statement.order_by(Trace.occurred_at)).all())
+
+
+# Evidence metrics are health dimension names. Each maps to the ordering that
+# surfaces the requests actually demonstrating that metric, so a claim about
+# groundedness drills down to unsupported answers rather than an arbitrary
+# sample of traffic.
+_METRIC_ORDERING: dict[str, tuple[sa.UnaryExpression, ...]] = {
+    "groundedness": (
+        Trace.unsupported_claim_count.desc(),
+        Trace.groundedness_score.asc().nulls_last(),
+    ),
+    "quality": (Trace.quality_score.asc().nulls_last(),),
+    "semantic_stability": (Trace.unsupported_claim_count.desc(),),
+    "temporal_stability": (Trace.unsupported_claim_count.desc(),),
+    "drift": (Trace.unsupported_claim_count.desc(),),
+    "latency": (Trace.latency_ms.desc().nulls_last(),),
+    "reliability": (Trace.occurred_at.desc(),),
+    "safety": (Trace.occurred_at.desc(),),
+}
+
+_DEFAULT_ORDERING = (
+    Trace.groundedness_score.asc().nulls_last(),
+    Trace.occurred_at.desc(),
+)
+
+
+def traces_for_metric(
+    session: Session,
+    model_id: str,
+    *,
+    metric: str,
+    start: datetime | None,
+    end: datetime | None,
+    limit: int = 5,
+) -> list[Trace]:
+    """Return the traces that best demonstrate ``metric`` within a window.
+
+    This is the drill-down path: a diagnosis says groundedness fell, and these
+    are the requests where it fell.
+
+    Safety is filtered in Python rather than SQL because testing a JSON array
+    for emptiness has no portable spelling across SQLite and PostgreSQL, and a
+    window holds few enough traces that it is not worth a dialect branch. An
+    unflagged request is not evidence of a safety regression, so if nothing was
+    flagged the evidence links to nothing.
+    """
+
+    statement = sa.select(Trace).where(Trace.model_id == model_id)
+    if start is not None:
+        statement = statement.where(Trace.occurred_at >= start)
+    if end is not None:
+        statement = statement.where(Trace.occurred_at <= end)
+
+    if metric == "reliability":
+        statement = statement.where(Trace.status != TraceStatus.OK)
+
+    ordering = _METRIC_ORDERING.get(metric, _DEFAULT_ORDERING)
+    statement = statement.order_by(*ordering)
+
+    if metric == "safety":
+        flagged = [trace for trace in session.scalars(statement).all() if trace.safety_flags]
+        return flagged[:limit]
+
+    return list(session.scalars(statement.limit(limit)).all())

@@ -293,16 +293,41 @@ Left as-is deliberately — that file belongs to the API layer.
 
 ## Currently wired
 
-`app/service.py` uses five tables: `monitored_models`, `health_snapshots`,
-`diagnoses`, `recovery_plans` and `audit_events`. The rest are available and
-migrated. The highest-value ones to adopt next, in order:
+`app/service.py` writes `monitored_models`, `traces`, `health_snapshots`,
+`health_policies`, `diagnoses`, `diagnosis_evidence`, `evidence_traces`,
+`knowledge_sources`, `knowledge_documents`, `recovery_plans` and `audit_events`.
 
-1. **`traces`** — nothing else unlocks trace drill-down, and evidence without it
-   is a claim with nothing underneath.
-2. **`incidents`** — needed for "recent incidents" on the fleet view, and it is
+**Traces and the drill-down.** `TelemetryCreate.traces` is optional; when
+supplied, `_record_telemetry` redacts and stores each one, derives the
+snapshot's `window_start`/`window_end` from the traffic they span, and records
+`trace_count`. With no traces the window falls back to the configured horizon
+ending at the observation, so a score always states its period. `policy_id`
+links the snapshot to the `health-v1` row, so the weights behind a score are
+visible.
+
+`diagnose_latest` then writes one `diagnosis_evidence` row per observation and
+links it, through `evidence_traces`, to the traces that demonstrate its metric
+(`traces_for_metric`). Contradicting evidence is stored the same way as
+supporting evidence. `EvidenceItem.trace_ids` exposes the drill-down on the
+existing diagnosis response, so no extra route is needed.
+
+Note that the stored link is a *set* of relevant traces, not a ranking: the
+association table has no rank column, and `DiagnosisEvidence.traces` reads back
+in chronological order.
+
+**Redaction is enforced at the boundary.** `app/redaction.py` masks emails,
+identifiers and phone numbers before storage and hashes the *original*, so
+repeated questions stay correlatable without retaining what was asked. Every
+trace records the `redaction_policy_version` that produced it. Do not add a
+column for raw prompt or response content.
+
+Still unwired, in the order worth adopting next:
+
+1. **`incidents`** — needed for "recent incidents" on the fleet view, and it is
    what groups a diagnosis with its recovery and verification.
-3. **`recovery_actions` + `recovery_executions`** — per-action execution, so
+2. **`recovery_actions` + `recovery_executions`** — per-action execution, so
    partial failure and rollback are recorded rather than collapsed into a single
    `executed_at`.
-4. **`diagnosis_evidence` + `evidence_traces`** — queryable supporting and
-   contradicting evidence, linked to the requests behind it.
+3. **`verification_runs`** — records the threshold, window, request count and
+   no-regression checks that define a successful recovery.
+4. **`model_versions` + `stability_*`** — the signature evaluations.
