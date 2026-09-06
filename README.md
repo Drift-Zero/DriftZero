@@ -269,6 +269,13 @@ Keep a deterministic reset control, preloaded seed data, and a fallback recordin
 
 ---
 
+## Repository documentation
+
+- [`backend/README.md`](backend/README.md) — service setup, endpoints and verification.
+- [`docs/DATA_MODEL.md`](docs/DATA_MODEL.md) — the data model, its enums, migrations and the session contract.
+
+---
+
 ## MVP scope
 
 ### Must have
