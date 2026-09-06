@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from enum import StrEnum
 from typing import Annotated
 
@@ -12,7 +12,7 @@ Score = Annotated[float, Field(ge=0, le=100)]
 
 
 def utc_now() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 class HealthState(StrEnum):
@@ -177,4 +177,3 @@ class DemoResetResponse(BaseModel):
     health: HealthTimelineResponse
     diagnosis: DiagnosisResponse
     recovery: RecoveryPlanResponse
-
