@@ -19,6 +19,7 @@ from app.database import (
 )
 from app.db import (
     DEFAULT_TENANT_ID,
+    ActorType,
     DiagnosisEvidence,
     Incident,
     KnowledgeDocument,
@@ -31,6 +32,7 @@ from app.db import (
     traces_for_metric,
 )
 from app.diagnosis import diagnose_change
+from app.observability import get_request_id
 from app.recovery import RecoveryAdapter, SimulatedRecoveryAdapter, build_playbook
 from app.redaction import REDACTION_POLICY_VERSION, content_hash, redact
 from app.schemas import (
@@ -1255,14 +1257,72 @@ class DriftZeroService:
         actor: str,
         details: dict[str, object],
     ) -> None:
+        entity_type, entity_id = DriftZeroService._audit_entity(
+            model_id,
+            event_type,
+            details,
+        )
         session.add(
             AuditEvent(
                 model_id=model_id,
                 event_type=event_type,
                 actor=actor,
+                actor_type=DriftZeroService._actor_type(actor),
+                entity_type=entity_type,
+                entity_id=entity_id,
+                reason=str(details["summary"]) if details.get("summary") else None,
+                request_id=get_request_id(),
                 details=details,
             )
         )
+
+    @staticmethod
+    def _actor_type(actor: str) -> ActorType:
+        normalized = actor.strip().lower()
+        system_actors = {
+            "demo-seeder",
+            "diagnosis-engine",
+            "ingestion",
+            "pulse-engine",
+            "recovery-adapter",
+            "system",
+            "verification-engine",
+        }
+        if normalized in system_actors or normalized.endswith("-engine"):
+            return ActorType.SYSTEM
+        if normalized.endswith("-bot") or normalized.startswith("agent:"):
+            return ActorType.AGENT
+        return ActorType.HUMAN
+
+    @staticmethod
+    def _audit_entity(
+        model_id: str,
+        event_type: str,
+        details: dict[str, object],
+    ) -> tuple[str, str]:
+        prefix = event_type.partition(".")[0]
+        entity_type = {
+            "demo": "model",
+            "diagnosis": "diagnosis",
+            "incident": "incident",
+            "model": "model",
+            "recovery": "recovery_plan",
+            "telemetry": "health_snapshot",
+        }.get(prefix, "model")
+        if prefix == "model" and details.get("version_id"):
+            entity_type = "model_version"
+        id_keys = {
+            "diagnosis": ("diagnosis_id",),
+            "incident": ("incident_id",),
+            "model": ("version_id",),
+            "recovery": ("plan_id",),
+            "telemetry": ("snapshot_id",),
+        }.get(prefix, ())
+        entity_id = next(
+            (str(details[key]) for key in id_keys if details.get(key)),
+            model_id,
+        )
+        return entity_type, entity_id
 
     @staticmethod
     def _model_response(record: MonitoredModel) -> ModelResponse:
@@ -1360,6 +1420,11 @@ class DriftZeroService:
             model_id=record.model_id,
             event_type=record.event_type,
             actor=record.actor,
+            actor_type=record.actor_type.value,
+            entity_type=record.entity_type,
+            entity_id=record.entity_id,
+            reason=record.reason,
+            request_id=record.request_id,
             details=record.details,
             created_at=record.created_at,
         )
