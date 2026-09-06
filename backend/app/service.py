@@ -108,6 +108,7 @@ from app.schemas import (
     ReviewState,
     RiskLevel,
     Severity,
+    ShopAssistTelemetryCreate,
     SignalSource,
     StabilityKind,
     StabilityRunRequest,
@@ -141,6 +142,10 @@ class InvalidTransition(ServiceError):
 
 
 class AuthorizationDenied(ServiceError):
+    pass
+
+
+class TelemetryIngestionError(ServiceError):
     pass
 
 
@@ -432,6 +437,30 @@ class DriftZeroService:
         session.commit()
         return self._snapshot_response(record)
 
+    def record_shopassist_telemetry(
+        self,
+        session: Session,
+        payload: ShopAssistTelemetryCreate,
+    ) -> HealthSnapshotResponse:
+        """Resolve ShopAssist server-side and accept one evidence-qualified window."""
+
+        model = session.scalar(
+            select(MonitoredModel).where(
+                MonitoredModel.tenant_id == DEFAULT_TENANT_ID,
+                MonitoredModel.name == "ShopAssist",
+            )
+        )
+        if model is None:
+            raise ResourceNotFound(
+                "ShopAssist is not initialized. Run POST /api/v1/demo/reset first."
+            )
+        if payload.sample_size < self.settings.minimum_sample_size:
+            raise TelemetryIngestionError(
+                "ShopAssist telemetry window requires at least "
+                f"{self.settings.minimum_sample_size} samples; received {payload.sample_size}."
+            )
+        return self.record_telemetry(session, model.id, payload)
+
     def health_timeline(
         self,
         session: Session,
@@ -464,7 +493,7 @@ class DriftZeroService:
         )
 
     def diagnose_latest(self, session: Session, model_id: str) -> DiagnosisResponse:
-        self._require_model(session, model_id)
+        model = self._require_model(session, model_id)
         snapshots = list(
             session.scalars(
                 select(HealthSnapshot)
@@ -489,6 +518,22 @@ class DriftZeroService:
             self._dimensions_from_record(baseline),
             self._dimensions_from_record(latest),
         )
+        evidence = list(result.evidence)
+        if model.name == "ShopAssist" and result.probable_cause == "knowledge_freshness_failure":
+            evidence.append(
+                EvidenceItem(
+                    reason_code="RETIRED_RETURN_POLICY_RETRIEVED",
+                    metric="groundedness",
+                    summary=(
+                        "ShopAssist traces cite the retired 14-day returns policy while the "
+                        "current approved policy allows returns within 30 days."
+                    ),
+                    baseline_value=baseline.groundedness,
+                    current_value=latest.groundedness,
+                    change=round(latest.groundedness - baseline.groundedness, 1),
+                    supports_diagnosis=True,
+                )
+            )
         incident = self._open_incident(session, model_id)
         diagnosis = Diagnosis(
             model_id=model_id,
@@ -497,11 +542,11 @@ class DriftZeroService:
             probable_cause=result.probable_cause,
             confidence=result.confidence,
             status=DiagnosisStatus.OPEN.value,
-            evidence=[item.model_dump(mode="json") for item in result.evidence],
+            evidence=[item.model_dump(mode="json") for item in evidence],
         )
         session.add(diagnosis)
         session.flush()
-        self._record_evidence(session, diagnosis, latest, result.evidence)
+        self._record_evidence(session, diagnosis, latest, evidence)
         self._advance_incident(session, incident, IncidentState.DIAGNOSING)
 
         playbook = build_playbook(result.probable_cause)
@@ -2340,22 +2385,46 @@ class DriftZeroService:
         return [self._audit_response(record) for record in records]
 
     def reset_demo(self, session: Session) -> DemoResetResponse:
-        existing = session.scalar(
-            select(MonitoredModel).where(MonitoredModel.name == "CampusGPT")
+        if self.settings.environment.strip().lower() in {"production", "prod"}:
+            raise AuthorizationDenied("Demo reset is disabled in production environments.")
+
+        existing_ids = list(
+            session.scalars(
+                select(MonitoredModel.id).where(
+                    MonitoredModel.name.in_(["CampusGPT", "ShopAssist"])
+                )
+            ).all()
         )
-        if existing:
-            session.execute(delete(MonitoredModel).where(MonitoredModel.id == existing.id))
+        if existing_ids:
+            session.execute(delete(MonitoredModel).where(MonitoredModel.id.in_(existing_ids)))
             session.commit()
 
         model = MonitoredModel(
-            name="CampusGPT",
+            name="ShopAssist",
             provider="demo-adapter",
             environment="simulation",
+            description=(
+                "Retail support assistant answering returns and refund policy questions."
+            ),
         )
         session.add(model)
         session.flush()
         now = datetime.now(UTC)
-        stale_document = self._seed_knowledge_corpus(session, model.id, now)
+        self._create_model_version(
+            session,
+            model,
+            ModelVersionCreate(
+                label="shopassist-demo-v1",
+                model_identifier="shopassist-retail-assistant",
+                prompt_version="returns-support-v3",
+                configuration={"temperature": 0.2, "citation_required": False},
+                tools=["catalog-search", "returns-policy-retriever"],
+                corpus_version="returns-policy-2026-06-01",
+                evaluation_policy_version="shopassist-returns-v1",
+                actor="demo-seeder",
+            ),
+        )
+        retired_document = self._seed_knowledge_corpus(session, model.id, now)
         demo_points = [
             (
                 now - timedelta(minutes=90),
@@ -2424,7 +2493,9 @@ class DriftZeroService:
                     sample_size=100,
                     coverage=0.95,
                     source=SignalSource.SIMULATED,
-                    traces=self._demo_traces(observed_at, index, stale_document.external_ref),
+                    traces=self._demo_traces(
+                        observed_at, index, retired_document.external_ref
+                    ),
                 ),
             )
         self._audit(
@@ -2433,9 +2504,10 @@ class DriftZeroService:
             "demo.reset",
             "demo-seeder",
             {
-                "scenario": "knowledge_freshness_failure",
+                "scenario": "shopassist_return_policy_freshness_failure",
                 "snapshots": len(demo_points),
-                "stale_document": stale_document.external_ref,
+                "retired_policy": retired_document.external_ref,
+                "minimum_sample_size": self.settings.minimum_sample_size,
             },
         )
         session.commit()
@@ -2512,8 +2584,11 @@ class DriftZeroService:
             if newest is not None:
                 newest.indexed_at = now
                 source.corpus_version = self._corpus_version_for(newest, previous_version)
-
-            source.status = KnowledgeStatus.FRESH.value
+                source.status = KnowledgeStatus.FRESH.value
+            else:
+                # A source containing only superseded policy must not be made
+                # healthy by a refresh. Remove it from serving instead.
+                source.status = KnowledgeStatus.DISABLED.value
             source.last_refreshed_at = now
             refreshed += 1
 
@@ -2583,34 +2658,43 @@ class DriftZeroService:
         model_id: str,
         now: datetime,
     ) -> KnowledgeDocument:
-        """Seed the corpus behind the CampusGPT failure.
+        """Seed the current and retired policy sources behind ShopAssist's failure.
 
-        A new fee policy was published, but the retriever kept serving the
-        superseded one. Modelling both documents and the link between them is
+        A new returns policy was published, but the retriever kept serving the
+        retired one. Modelling both documents and the link between them is
         what turns "the retriever served stale documents" into something a user
         can verify rather than a claim they have to accept.
 
         Returns the stale document, which the seeded traces cite.
         """
 
-        source = KnowledgeSource(
+        current_source = KnowledgeSource(
             model_id=model_id,
-            name="Examination Policy Corpus",
+            name="ShopAssist Returns Policy — Current",
             kind="corpus",
-            corpus_version="2026-01-14",
-            status=KnowledgeStatus.STALE,
-            document_count=2,
-            last_refreshed_at=now - timedelta(days=21),
+            corpus_version="returns-policy-2026-09-01",
+            status=KnowledgeStatus.FRESH,
+            document_count=1,
+            last_refreshed_at=None,
         )
-        session.add(source)
+        retired_source = KnowledgeSource(
+            model_id=model_id,
+            name="ShopAssist Returns Policy — Retired",
+            kind="corpus",
+            corpus_version="returns-policy-2026-06-01",
+            status=KnowledgeStatus.STALE,
+            document_count=1,
+            last_refreshed_at=now - timedelta(days=45),
+        )
+        session.add_all([current_source, retired_source])
         session.flush()
 
         current = KnowledgeDocument(
-            source_id=source.id,
-            external_ref="policy/exam-fee-2026-03",
-            title="Examination Fee Policy (effective 2026-03-01)",
-            content_hash=content_hash("exam fee deadline 2026-03-28") or "",
-            published_at=now - timedelta(days=3),
+            source_id=current_source.id,
+            external_ref="policy/returns-2026-09-current",
+            title="ShopAssist Returns Policy (current: 30-day window)",
+            content_hash=content_hash("returns accepted within 30 days of delivery") or "",
+            published_at=datetime(2026, 9, 1, tzinfo=UTC),
             indexed_at=None,
             is_stale=False,
         )
@@ -2618,12 +2702,12 @@ class DriftZeroService:
         session.flush()
 
         stale = KnowledgeDocument(
-            source_id=source.id,
-            external_ref="policy/exam-fee-2025-11",
-            title="Examination Fee Policy (superseded)",
-            content_hash=content_hash("exam fee deadline 2026-02-14") or "",
-            published_at=now - timedelta(days=120),
-            indexed_at=now - timedelta(days=21),
+            source_id=retired_source.id,
+            external_ref="policy/returns-2026-06-retired",
+            title="ShopAssist Returns Policy (retired: 14-day window)",
+            content_hash=content_hash("returns accepted within 14 days of delivery") or "",
+            published_at=datetime(2026, 6, 1, tzinfo=UTC),
+            indexed_at=now - timedelta(days=45),
             is_stale=True,
             superseded_by_id=current.id,
         )
@@ -2647,10 +2731,10 @@ class DriftZeroService:
         unsupported = (0, 1, 2, 3)[step]
 
         questions = (
-            "When is the examination fee deadline this semester?",
-            "Can I still pay the exam fee after the due date?",
-            "What is the last date to pay examination fees?",
-            "Has the exam fee deadline been extended? Reply to me at student@campus.edu",
+            "How long do I have to return an item?",
+            "Can I return this order after 14 days?",
+            "What is the current returns window?",
+            "Was the returns policy extended? Reply to me at shopper@example.com",
         )
 
         traces: list[TraceCreate] = []
@@ -2659,12 +2743,12 @@ class DriftZeroService:
             traces.append(
                 TraceCreate(
                     occurred_at=observed_at - timedelta(seconds=90 - offset * 20),
-                    request_id=f"campus-{step}-{offset}",
+                    request_id=f"shopassist-{step}-{offset}",
                     question=question,
                     answer=(
-                        "The examination fee deadline is 14 February 2026."
+                        "Items may be returned within 14 days from delivery."
                         if cites_stale
-                        else "The examination fee deadline is 28 March 2026."
+                        else "Items may be returned within 30 days from delivery."
                     ),
                     provider="demo-adapter",
                     latency_ms=310 + offset * 5 + step * 12,

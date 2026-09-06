@@ -1,6 +1,8 @@
+import sqlalchemy as sa
 from fastapi.testclient import TestClient
 
 from app.config import Settings
+from app.db import KnowledgeDocument, KnowledgeSource, ModelVersion
 from app.main import create_app
 from app.recovery_worker import process_recovery_commands
 
@@ -22,7 +24,7 @@ def make_client() -> TestClient:
     )
 
 
-def test_campus_demo_runs_from_warning_to_verified_recovery() -> None:
+def test_shopassist_demo_runs_from_warning_to_verified_recovery() -> None:
     with make_client() as client:
         healthcheck = client.get("/healthz")
         assert healthcheck.status_code == 200
@@ -34,6 +36,7 @@ def test_campus_demo_runs_from_warning_to_verified_recovery() -> None:
 
         model_id = demo["model"]["id"]
         plan_id = demo["recovery"]["id"]
+        assert demo["model"]["name"] == "ShopAssist"
         assert [snapshot["score"] for snapshot in demo["health"]["snapshots"]] == [
             92.0,
             87.0,
@@ -45,6 +48,9 @@ def test_campus_demo_runs_from_warning_to_verified_recovery() -> None:
         assert demo["diagnosis"]["probable_cause"] == "knowledge_freshness_failure"
         assert demo["diagnosis"]["confidence"] == 0.87
         assert demo["diagnosis"]["confidence_label"] == "estimated"
+        assert "RETIRED_RETURN_POLICY_RETRIEVED" in {
+            item["reason_code"] for item in demo["diagnosis"]["evidence"]
+        }
         assert demo["recovery"]["state"] == "recommended"
         assert demo["recovery"]["simulation"] is True
         assert len(demo["recovery"]["actions"]) == 5
@@ -91,6 +97,7 @@ def test_campus_demo_runs_from_warning_to_verified_recovery() -> None:
         recovery = client.get(f"/api/v1/recovery/{plan_id}")
         assert recovery.json()["state"] == "recovered"
         assert recovery.json()["verified_at"] is not None
+        assert recovery.json()["verification"]["observed_requests"] == 50
 
         timeline = client.get(f"/api/v1/models/{model_id}/health")
         assert timeline.status_code == 200
@@ -121,8 +128,76 @@ def test_demo_reset_is_repeatable_and_replaces_previous_scenario() -> None:
         assert second.status_code == 200
         models = client.get("/api/v1/models")
         assert models.status_code == 200
-        assert [model["name"] for model in models.json()] == ["CampusGPT"]
+        assert [model["name"] for model in models.json()] == ["ShopAssist"]
         assert first.json()["model"]["id"] != second.json()["model"]["id"]
+
+        model_id = second.json()["model"]["id"]
+        versions = client.get(f"/api/v1/models/{model_id}/versions")
+        assert versions.status_code == 200
+        assert versions.json()[0]["label"] == "shopassist-demo-v1"
+        assert versions.json()[0]["evaluation_policy_version"] == "shopassist-returns-v1"
+
+        with client.app.state.database.session_factory() as session:
+            sources = session.scalars(
+                sa.select(KnowledgeSource).where(KnowledgeSource.model_id == model_id)
+            ).all()
+            documents = session.scalars(
+                sa.select(KnowledgeDocument)
+                .join(KnowledgeSource)
+                .where(KnowledgeSource.model_id == model_id)
+            ).all()
+            version = session.scalar(
+                sa.select(ModelVersion).where(ModelVersion.model_id == model_id)
+            )
+        assert {source.status for source in sources} == {"fresh", "stale"}
+        assert {document.is_stale for document in documents} == {False, True}
+        assert version is not None
+
+
+def test_shopassist_server_side_telemetry_enforces_twenty_sample_window() -> None:
+    with make_client() as client:
+        client.post("/api/v1/demo/reset")
+        dimensions = {
+            "quality": 90,
+            "groundedness": 90,
+            "semantic_stability": 90,
+            "temporal_stability": 90,
+            "safety": 95,
+            "drift": 90,
+            "reliability": 95,
+            "latency": 90,
+            "cost": 90,
+        }
+
+        rejected = client.post(
+            "/api/v1/shopassist/telemetry",
+            json={"dimensions": dimensions, "sample_size": 19, "coverage": 0.95},
+        )
+        assert rejected.status_code == 422
+        assert rejected.json() == {
+            "error": "telemetry_ingestion_failed",
+            "detail": "ShopAssist telemetry window requires at least 20 samples; received 19.",
+        }
+
+        accepted = client.post(
+            "/api/v1/shopassist/telemetry",
+            json={"dimensions": dimensions, "sample_size": 20, "coverage": 0.95},
+        )
+        assert accepted.status_code == 201
+        assert accepted.json()["sample_size"] == 20
+        assert accepted.json()["score"] is not None
+
+
+def test_demo_reset_is_forbidden_in_production() -> None:
+    app = create_app(Settings(database_url="sqlite://", environment="production"))
+    with TestClient(app) as client:
+        response = client.post("/api/v1/demo/reset")
+
+    assert response.status_code == 403
+    assert response.json() == {
+        "error": "forbidden",
+        "detail": "Demo reset is disabled in production environments.",
+    }
 
 
 def test_unknown_resources_return_stable_error_contract() -> None:

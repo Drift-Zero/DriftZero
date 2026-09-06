@@ -25,6 +25,7 @@ from app.service import (
     InvalidTransition,
     ResourceConflict,
     ResourceNotFound,
+    TelemetryIngestionError,
 )
 
 
@@ -63,7 +64,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             {"name": "recover", "description": "Approved recovery playbooks."},
             {"name": "alerts", "description": "Rules, alert lifecycle, and notifications."},
             {"name": "audit", "description": "Immutable operator action history."},
-            {"name": "demo", "description": "Deterministic CampusGPT scenario."},
+            {"name": "demo", "description": "Deterministic ShopAssist scenario."},
         ],
     )
     application.state.settings = runtime_settings
@@ -105,6 +106,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return JSONResponse(
             status_code=status.HTTP_403_FORBIDDEN,
             content={"error": "forbidden", "detail": str(exc)},
+        )
+
+    @application.exception_handler(TelemetryIngestionError)
+    async def telemetry_handler(_: Request, exc: TelemetryIngestionError) -> JSONResponse:
+        return JSONResponse(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            content={"error": "telemetry_ingestion_failed", "detail": str(exc)},
         )
 
     if runtime_settings.frontend_dir:

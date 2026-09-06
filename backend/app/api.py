@@ -47,6 +47,7 @@ from app.schemas import (
     ReviewDecisionRequest,
     ReviewQueueItemResponse,
     ReviewState,
+    ShopAssistTelemetryCreate,
     StabilityKind,
     StabilityRunRequest,
     StabilityTestResponse,
@@ -215,6 +216,29 @@ def record_telemetry(
     service: ServiceDependency,
 ) -> HealthSnapshotResponse:
     return service.record_telemetry(session, model_id, payload)
+
+
+@router.post(
+    "/shopassist/telemetry",
+    response_model=HealthSnapshotResponse,
+    status_code=status.HTTP_201_CREATED,
+    tags=["pulse"],
+)
+@router.post(
+    "/integrations/shopassist/telemetry",
+    response_model=HealthSnapshotResponse,
+    status_code=status.HTTP_201_CREATED,
+    tags=["pulse"],
+    include_in_schema=False,
+)
+def record_shopassist_telemetry(
+    payload: ShopAssistTelemetryCreate,
+    session: SessionDependency,
+    service: ServiceDependency,
+) -> HealthSnapshotResponse:
+    """Server-owned telemetry proxy for the ShopAssist demo deployment."""
+
+    return service.record_shopassist_telemetry(session, payload)
 
 
 @router.get(

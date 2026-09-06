@@ -426,6 +426,15 @@ class TelemetryCreate(BaseModel):
     traces: list[TraceCreate] = Field(default_factory=list)
 
 
+class ShopAssistTelemetryCreate(TelemetryCreate):
+    """A server-side ShopAssist telemetry window.
+
+    The route resolves the demo model on the server, so clients never choose a
+    model ID or write directly to storage. The service also enforces the demo's
+    minimum evidence gate before accepting the window.
+    """
+
+
 class HealthSnapshotResponse(BaseModel):
     id: str
     model_id: str

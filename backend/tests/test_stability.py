@@ -21,8 +21,8 @@ from app.schemas import (
 )
 from app.service import DriftZeroService
 
-QUESTION = StabilityRunRequest(question="When is the examination fee deadline?", variants=4)
-SUPERSEDED_CORPUS = "2026-01-14"
+QUESTION = StabilityRunRequest(question="How long do I have to return an item?", variants=4)
+SUPERSEDED_CORPUS = "returns-policy-2026-06-01"
 
 
 def _service() -> DriftZeroService:
@@ -32,7 +32,7 @@ def _service() -> DriftZeroService:
 def _version(corpus: str | None, label: str = "v1") -> ModelVersionCreate:
     return ModelVersionCreate(
         label=label,
-        model_identifier="campus-gpt",
+        model_identifier="shopassist-retail-assistant",
         prompt_version="v1",
         corpus_version=corpus,
     )
@@ -89,7 +89,7 @@ class TestSemanticStability:
         disagreeing = [claim for claim in claims if claim.agrees_with_baseline is False]
         assert disagreeing
         # Agreement is judged on the extracted fact, not the wording.
-        assert all(claim.claim_key == "exam_fee_deadline" for claim in claims)
+        assert all(claim.claim_key == "return_window" for claim in claims)
         assert all(claim.disagreement_note for claim in disagreeing)
 
     def test_variants_are_persisted_with_a_baseline(

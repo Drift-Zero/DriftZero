@@ -12,15 +12,15 @@ import hashlib
 from dataclasses import dataclass, field
 from typing import Protocol
 
-# Fee deadlines by corpus version, for the CampusGPT scenario. The superseding
-# policy moved the date; the retriever kept serving the older corpus.
-DEMO_DEADLINES: dict[str, str] = {
-    "2026-03-01": "28 March 2026",
-    "2026-01-14": "14 February 2026",
+# Return windows by corpus version, for the ShopAssist scenario. The current
+# policy extended the window; the retriever kept serving the retired policy.
+DEMO_RETURN_WINDOWS: dict[str, str] = {
+    "returns-policy-2026-09-01": "30 days from delivery",
+    "returns-policy-2026-06-01": "14 days from delivery",
 }
-CURRENT_CORPUS_VERSION = "2026-03-01"
+CURRENT_CORPUS_VERSION = "returns-policy-2026-09-01"
 
-CLAIM_DEADLINE = "exam_fee_deadline"
+CLAIM_RETURN_WINDOW = "return_window"
 
 
 @dataclass(frozen=True, slots=True)
@@ -96,19 +96,19 @@ class SimulatedEvaluator:
     def answer(
         self, *, question: str, corpus_version: str | None, variant_index: int = 0
     ) -> GeneratedAnswer:
-        current = DEMO_DEADLINES[CURRENT_CORPUS_VERSION]
+        current = DEMO_RETURN_WINDOWS[CURRENT_CORPUS_VERSION]
 
         if corpus_version == CURRENT_CORPUS_VERSION:
             value = current
-        elif corpus_version in DEMO_DEADLINES:
+        elif corpus_version in DEMO_RETURN_WINDOWS:
             # A stale corpus does not fail uniformly: some paraphrases retrieve
             # the superseded document and some fall through to the current one.
-            stale = DEMO_DEADLINES[corpus_version]
+            stale = DEMO_RETURN_WINDOWS[corpus_version]
             value = stale if (variant_index + _digest(question)) % 2 == 0 else current
         else:
             value = current if _digest(question, corpus_version) % 2 == 0 else "unknown"
 
         return GeneratedAnswer(
-            text=f"The examination fee deadline is {value}.",
-            claims={CLAIM_DEADLINE: value},
+            text=f"Items may be returned within {value}.",
+            claims={CLAIM_RETURN_WINDOW: value},
         )
