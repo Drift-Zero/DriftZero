@@ -6,6 +6,7 @@ from datetime import timedelta
 
 from app.config import Settings
 from app.db import Database, RecoveryCommand, utc_now
+from app.recovery import SimulatedRecoveryAdapter
 from app.recovery_worker import _claim_next, process_recovery_commands
 from app.schemas import (
     ActorRequest,
@@ -18,6 +19,27 @@ from app.schemas import (
     TelemetryCreate,
 )
 from app.service import DriftZeroService
+
+
+class ObservedVerificationAdapter(SimulatedRecoveryAdapter):
+    """Applies demo actions but requires genuine telemetry for verification."""
+
+    simulation = False
+
+    def execute(self, *, model_id: str, plan_id: str) -> None:
+        del model_id, plan_id
+        return None
+
+
+class FlakyAdapter(SimulatedRecoveryAdapter):
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def execute_action(self, **kwargs):
+        self.calls += 1
+        if self.calls == 1:
+            raise RuntimeError("temporary control-plane outage")
+        return super().execute_action(**kwargs)
 
 
 def _queued(database: Database, service: DriftZeroService):
@@ -114,4 +136,77 @@ def test_enqueue_is_idempotent() -> None:
         )
 
     assert replay.id == command_id
+    database.dispose()
+
+
+def test_real_adapter_waits_for_observed_telemetry_before_resolution() -> None:
+    database = Database("sqlite://")
+    database.create_schema()
+    service = DriftZeroService(Settings(), recovery_adapter=ObservedVerificationAdapter())
+    plan_id, _ = _queued(database, service)
+
+    execution = process_recovery_commands(database, service, limit=1)
+    assert execution.succeeded == 1
+    with database.session_factory() as session:
+        assert service.get_recovery(session, plan_id).state is RecoveryState.VERIFYING
+
+        plan = service.get_recovery(session, plan_id)
+        service.record_telemetry(
+            session,
+            plan.model_id,
+            TelemetryCreate(
+                observed_at=utc_now() + timedelta(seconds=1),
+                dimensions=DimensionScores(
+                    quality=90,
+                    groundedness=90,
+                    semantic_stability=90,
+                    temporal_stability=90,
+                    safety=95,
+                    drift=90,
+                    reliability=90,
+                    latency=90,
+                    cost=90,
+                ),
+                sample_size=50,
+                coverage=0.95,
+                source=SignalSource.OBSERVED,
+            ),
+        )
+
+    verification = process_recovery_commands(database, service, limit=1)
+
+    assert verification.succeeded == 1
+    with database.session_factory() as session:
+        recovered = service.get_recovery(session, plan_id)
+        assert recovered.state is RecoveryState.RECOVERED
+        assert recovered.verification.observed_requests == 50
+        assert recovered.verification.observed_coverage == 0.95
+    database.dispose()
+
+
+def test_worker_retries_with_the_same_persisted_action_attempt() -> None:
+    database = Database("sqlite://")
+    database.create_schema()
+    adapter = FlakyAdapter()
+    service = DriftZeroService(Settings(), recovery_adapter=adapter)
+    plan_id, command_id = _queued(database, service)
+
+    first = process_recovery_commands(database, service, limit=1)
+    assert first.retried == 1
+    with database.session_factory() as session:
+        command = session.get(RecoveryCommand, command_id)
+        command.available_at = utc_now() - timedelta(seconds=1)
+        session.commit()
+
+    second = process_recovery_commands(database, service, limit=1)
+
+    assert second.succeeded == 1
+    with database.session_factory() as session:
+        command = session.get(RecoveryCommand, command_id)
+        assert command.attempt == 2
+        recovery = service.get_recovery(session, plan_id)
+        assert recovery.state is RecoveryState.RECOVERED
+        assert len({execution.id for execution in recovery.executions}) == len(
+            recovery.executions
+        )
     database.dispose()

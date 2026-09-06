@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 from datetime import UTC, datetime, timedelta
+from inspect import signature
 from typing import Any
 
 from sqlalchemy import delete, func, select
@@ -51,7 +52,7 @@ from app.db import (
 from app.diagnosis import diagnose_change
 from app.evaluation import EvaluatorAdapter, SimulatedEvaluator
 from app.observability import get_request_id
-from app.recovery import RecoveryAdapter, RecoveryPolicy, SimulatedRecoveryAdapter, build_playbook
+from app.recovery import RecoveryAdapter, RecoveryPolicy, build_playbook, build_recovery_adapter
 from app.redaction import REDACTION_POLICY_VERSION, content_hash, redact
 from app.schemas import (
     ActorRequest,
@@ -97,6 +98,7 @@ from app.schemas import (
     RecoveryExecutionResponse,
     RecoveryPlanResponse,
     RecoveryState,
+    RecoveryVerifyRequest,
     RegistrationCheck,
     RegistrationStatusResponse,
     ReviewDecisionRequest,
@@ -144,7 +146,7 @@ class DriftZeroService:
         evaluator: EvaluatorAdapter | None = None,
     ) -> None:
         self.settings = settings
-        self.recovery_adapter = recovery_adapter or SimulatedRecoveryAdapter()
+        self.recovery_adapter = recovery_adapter or build_recovery_adapter(settings)
         self.recovery_policy = RecoveryPolicy()
         self.evaluator = evaluator or SimulatedEvaluator()
         self.alert_evaluator = AlertEvaluator()
@@ -650,6 +652,49 @@ class DriftZeroService:
         session.commit()
         return RecoveryCommandResponse.model_validate(command)
 
+    def enqueue_verification(
+        self,
+        session: Session,
+        plan_id: str,
+        payload: RecoveryVerifyRequest,
+    ) -> RecoveryCommandResponse:
+        plan = self._require_plan(session, plan_id)
+        self._authorize_recovery(plan, payload)
+        if plan.state != RecoveryState.VERIFYING.value:
+            raise InvalidTransition("Recovery must be awaiting verification.")
+        snapshot = session.get(HealthSnapshot, payload.snapshot_id)
+        if snapshot is None or snapshot.model_id != plan.model_id:
+            raise ResourceNotFound("Verification snapshot not found for this model.")
+        existing = session.scalar(
+            select(RecoveryCommand).where(
+                RecoveryCommand.idempotency_key == payload.idempotency_key
+            )
+        )
+        if existing is not None:
+            if existing.plan_id != plan.id or existing.command_type != RecoveryCommandType.VERIFY:
+                raise ResourceConflict("Idempotency key belongs to a different command.")
+            return RecoveryCommandResponse.model_validate(existing)
+
+        command = self._new_verification_command(
+            plan,
+            snapshot,
+            actor=payload.actor,
+            role=payload.role,
+            idempotency_key=payload.idempotency_key,
+            reason=payload.reason,
+        )
+        session.add(command)
+        session.flush()
+        self._audit(
+            session,
+            plan.model_id,
+            "recovery.verification_queued",
+            payload.actor,
+            {"plan_id": plan.id, "command_id": command.id, "snapshot_id": snapshot.id},
+        )
+        session.commit()
+        return RecoveryCommandResponse.model_validate(command)
+
     def recovery_executions(
         self, session: Session, plan_id: str
     ) -> list[RecoveryExecutionResponse]:
@@ -785,29 +830,37 @@ class DriftZeroService:
             if plan.state not in {
                 RecoveryState.APPROVED.value,
                 RecoveryState.QUEUED.value,
+                RecoveryState.EXECUTING.value,
             }:
                 return self._recovery_response(plan)
         if plan.state == RecoveryState.RECOVERED.value:
             return self._recovery_response(plan)
-        if plan.state not in {RecoveryState.APPROVED.value, RecoveryState.QUEUED.value}:
+        if plan.state not in {
+            RecoveryState.APPROVED.value,
+            RecoveryState.QUEUED.value,
+            RecoveryState.EXECUTING.value,
+        }:
             raise InvalidTransition("Recovery must be approved before execution.")
 
         max_traffic_pct = getattr(payload, "max_traffic_pct", 100.0)
         self._validate_blast_radius(session, plan, max_traffic_pct)
 
+        resuming = plan.state == RecoveryState.EXECUTING.value
         plan.state = RecoveryState.EXECUTING.value
         plan.idempotency_key = idempotency_key
-        plan.executed_at = datetime.now(UTC)
-        plan.version += 1
+        if not resuming:
+            plan.executed_at = datetime.now(UTC)
+            plan.version += 1
         incident = self._open_incident(session, plan.model_id)
         self._advance_incident(session, incident, IncidentState.VERIFYING)
-        self._audit(
-            session,
-            plan.model_id,
-            "recovery.execution_started",
-            payload.actor,
-            {"plan_id": plan.id, "simulation": plan.simulation},
-        )
+        if not resuming:
+            self._audit(
+                session,
+                plan.model_id,
+                "recovery.execution_started",
+                payload.actor,
+                {"plan_id": plan.id, "simulation": plan.simulation},
+            )
         session.flush()
 
         baseline_snapshot = latest_snapshot(session, plan.model_id)
@@ -854,6 +907,20 @@ class DriftZeroService:
             plan.state = RecoveryState.VERIFYING.value
             plan.version += 1
             result = self.recovery_adapter.execute(model_id=plan.model_id, plan_id=plan.id)
+            if result is None:
+                self._audit(
+                    session,
+                    plan.model_id,
+                    "recovery.verification_pending",
+                    "recovery-worker",
+                    {
+                        "plan_id": plan.id,
+                        "required_requests": self.settings.recovery_verification_requests,
+                        "required_coverage": self.settings.recovery_verification_coverage,
+                    },
+                )
+                session.commit()
+                return self._recovery_response(plan)
             snapshot = self._record_telemetry(
                 session,
                 plan.model_id,
@@ -914,14 +981,14 @@ class DriftZeroService:
         except Exception:
             session.rollback()
             failed_plan = self._require_plan(session, plan_id)
-            failed_plan.state = RecoveryState.FAILED.value
-            failed_plan.failure_reason = "Recovery adapter raised an exception."
+            failed_plan.state = RecoveryState.QUEUED.value
+            failed_plan.failure_reason = "Recovery execution was interrupted and will be retried."
             failed_plan.version += 1
             self._audit(
                 session,
                 failed_plan.model_id,
-                "recovery.failed",
-                "recovery-adapter",
+                "recovery.execution_interrupted",
+                "recovery-worker",
                 {"plan_id": failed_plan.id},
             )
             session.commit()
@@ -981,6 +1048,155 @@ class DriftZeroService:
         session.commit()
         return self._recovery_response(plan)
 
+    def verify_recovery(
+        self,
+        session: Session,
+        plan_id: str,
+        snapshot_id: str,
+    ) -> RecoveryPlanResponse:
+        plan = self._require_plan(session, plan_id)
+        if plan.state in {RecoveryState.RECOVERED.value, RecoveryState.FAILED.value}:
+            return self._recovery_response(plan)
+        if plan.state != RecoveryState.VERIFYING.value:
+            raise InvalidTransition("Recovery is not awaiting verification.")
+        snapshot = session.get(HealthSnapshot, snapshot_id)
+        if snapshot is None or snapshot.model_id != plan.model_id:
+            raise ResourceNotFound("Verification snapshot not found for this model.")
+        if plan.executed_at is not None and snapshot.observed_at <= plan.executed_at:
+            raise InvalidTransition("Verification requires telemetry observed after execution.")
+
+        baseline = session.scalar(
+            select(HealthSnapshot)
+            .where(
+                HealthSnapshot.model_id == plan.model_id,
+                HealthSnapshot.observed_at < (plan.executed_at or snapshot.observed_at),
+            )
+            .order_by(HealthSnapshot.observed_at.desc())
+            .limit(1)
+        )
+        incident = session.get(Incident, plan.incident_id) if plan.incident_id else None
+        verification = self._verify(
+            session,
+            plan,
+            incident,
+            baseline,
+            snapshot,
+            evaluated_requests=snapshot.sample_size,
+        )
+        recovered = bool(verification.passed)
+        plan.state = (
+            RecoveryState.RECOVERED.value if recovered else RecoveryState.FAILED.value
+        )
+        plan.verified_at = datetime.now(UTC)
+        plan.version += 1
+        if recovered:
+            if incident is not None:
+                self._close_incident(session, incident, snapshot, resolved=True)
+            diagnosis = session.get(Diagnosis, plan.diagnosis_id)
+            if diagnosis:
+                diagnosis.status = DiagnosisStatus.RESOLVED.value
+        else:
+            executions = [
+                execution
+                for action in plan.action_items
+                for execution in action.executions
+            ]
+            self._rollback_actions(session, plan, executions, "verification-engine")
+            plan.rolled_back_at = datetime.now(UTC)
+            if incident is not None:
+                self._close_incident(session, incident, snapshot, resolved=False)
+        self._audit(
+            session,
+            plan.model_id,
+            "recovery.verified",
+            "verification-engine",
+            {
+                "plan_id": plan.id,
+                "snapshot_id": snapshot.id,
+                "verification_run_id": verification.id,
+                "outcome": plan.state,
+            },
+        )
+        session.commit()
+        return self._recovery_response(plan)
+
+    def fail_recovery_after_retries(
+        self,
+        session: Session,
+        plan_id: str,
+        reason: str,
+    ) -> RecoveryPlanResponse:
+        """Terminally fail a command after its durable retry budget is exhausted."""
+
+        plan = self._require_plan(session, plan_id)
+        if plan.state in {
+            RecoveryState.RECOVERED.value,
+            RecoveryState.FAILED.value,
+            RecoveryState.ROLLED_BACK.value,
+        }:
+            return self._recovery_response(plan)
+        executions = [
+            execution
+            for action in plan.action_items
+            for execution in action.executions
+        ]
+        self._rollback_actions(session, plan, executions, "recovery-worker")
+        uncertain = [
+            execution.id
+            for execution in executions
+            if ExecutionState(execution.state) is ExecutionState.RUNNING
+        ]
+        if uncertain:
+            self._queue_for_review(
+                session,
+                plan.model_id,
+                reason="Recovery action outcome is uncertain after worker failure.",
+                incident_id=plan.incident_id,
+            )
+        plan.state = RecoveryState.FAILED.value
+        plan.failure_reason = reason
+        plan.rolled_back_at = datetime.now(UTC)
+        plan.version += 1
+        incident = session.get(Incident, plan.incident_id) if plan.incident_id else None
+        snapshot = latest_snapshot(session, plan.model_id)
+        if incident is not None and snapshot is not None:
+            self._close_incident(session, incident, snapshot, resolved=False)
+        self._audit(
+            session,
+            plan.model_id,
+            "recovery.retry_exhausted",
+            "recovery-worker",
+            {"plan_id": plan.id, "reason": reason, "uncertain_execution_ids": uncertain},
+        )
+        session.commit()
+        return self._recovery_response(plan)
+
+    def _new_verification_command(
+        self,
+        plan: RecoveryPlan,
+        snapshot: HealthSnapshot,
+        *,
+        actor: str,
+        role: ActorRole,
+        idempotency_key: str,
+        reason: str | None = None,
+    ) -> RecoveryCommand:
+        now = datetime.now(UTC)
+        return RecoveryCommand(
+            plan_id=plan.id,
+            command_type=RecoveryCommandType.VERIFY.value,
+            state=RecoveryCommandState.PENDING.value,
+            idempotency_key=idempotency_key,
+            actor=actor,
+            actor_role=role.value,
+            reason=reason,
+            max_traffic_pct=0.0,
+            max_attempts=self.settings.recovery_command_max_attempts,
+            requested_at=now,
+            available_at=now,
+            snapshot_id=snapshot.id,
+        )
+
     def _authorize_recovery(self, plan: RecoveryPlan, payload: ActorRequest) -> None:
         decision = self.recovery_policy.authorize(
             risk=RiskLevel(plan.risk),
@@ -1023,22 +1239,46 @@ class DriftZeroService:
         aborted = False
 
         for record in self._plan_actions(session, plan.id):
-            execution = RecoveryExecution(
-                action_id=record.id,
-                plan_id=plan.id,
-                actor=actor,
-                actor_type=ActorType.HUMAN.value,
-                reason=f"Executing playbook step {record.order}: {record.code}",
-                state=ExecutionState.SKIPPED.value if aborted else ExecutionState.RUNNING.value,
-            )
-            session.add(execution)
+            execution = max(record.executions, key=lambda item: item.attempt, default=None)
+            if execution is not None:
+                existing_state = ExecutionState(execution.state)
+                if existing_state is ExecutionState.SUCCEEDED:
+                    executions.append(execution)
+                    continue
+                if existing_state in {
+                    ExecutionState.FAILED,
+                    ExecutionState.SKIPPED,
+                    ExecutionState.ROLLED_BACK,
+                }:
+                    executions.append(execution)
+                    aborted = True
+                    continue
+            else:
+                execution = RecoveryExecution(
+                    action_id=record.id,
+                    plan_id=plan.id,
+                    actor=actor,
+                    actor_type=ActorType.HUMAN.value,
+                    reason=f"Executing playbook step {record.order}: {record.code}",
+                    state=(
+                        ExecutionState.SKIPPED.value
+                        if aborted
+                        else ExecutionState.RUNNING.value
+                    ),
+                )
+                session.add(execution)
 
             if aborted:
                 session.flush()
                 executions.append(execution)
                 continue
 
-            execution.started_at = datetime.now(UTC)
+            execution.started_at = execution.started_at or datetime.now(UTC)
+            session.flush()
+            # Persist intent before crossing the privileged adapter boundary.
+            # A crashed worker therefore leaves a reclaimable RUNNING record
+            # with a stable idempotency key instead of losing what it attempted.
+            session.commit()
             action = RecoveryAction(
                 order=record.order,
                 code=record.code,
@@ -1047,18 +1287,29 @@ class DriftZeroService:
                 risk=RiskLevel(record.risk),
                 reversible=record.reversible,
             )
-            outcome = self.recovery_adapter.execute_action(
-                model_id=plan.model_id, plan_id=plan.id, action=action
+            outcome = self._invoke_adapter_action(
+                "execute_action",
+                model_id=plan.model_id,
+                plan_id=plan.id,
+                action=action,
+                execution_id=execution.id,
             )
             execution.finished_at = datetime.now(UTC)
             execution.affected_traffic_pct = outcome.affected_traffic_pct
             execution.result = dict(outcome.detail)
             execution.error = outcome.error
+            execution.external_operation_id = outcome.external_operation_id
+            execution.config_before = dict(outcome.config_before)
+            execution.config_after = dict(outcome.config_after)
+            execution.configuration_verified_at = (
+                datetime.now(UTC) if outcome.configuration_verified else None
+            )
             execution.state = (
                 ExecutionState.SUCCEEDED.value if outcome.succeeded else ExecutionState.FAILED.value
             )
             aborted = not outcome.succeeded
             session.flush()
+            session.commit()
 
             if outcome.succeeded and record.code in self._REVIEW_ROUTING_ACTIONS:
                 # The playbook said to involve a human; that only means something
@@ -1109,8 +1360,12 @@ class DriftZeroService:
                 risk=RiskLevel(record.risk),
                 reversible=record.reversible,
             )
-            outcome = self.recovery_adapter.rollback_action(
-                model_id=plan.model_id, plan_id=plan.id, action=action
+            outcome = self._invoke_adapter_action(
+                "rollback_action",
+                model_id=plan.model_id,
+                plan_id=plan.id,
+                action=action,
+                execution_id=execution.id,
             )
             execution.rollback_result = dict(outcome.detail)
             if outcome.succeeded:
@@ -1124,6 +1379,7 @@ class DriftZeroService:
                     "error": outcome.error,
                 }
             session.flush()
+            session.commit()
         self._audit(
             session,
             plan.model_id,
@@ -1139,10 +1395,39 @@ class DriftZeroService:
             },
         )
 
+    def _invoke_adapter_action(
+        self,
+        method_name: str,
+        *,
+        model_id: str,
+        plan_id: str,
+        action: RecoveryAction,
+        execution_id: str,
+    ) -> Any:
+        """Call v2 adapters while preserving compatibility with v1 integrations."""
+
+        method = getattr(self.recovery_adapter, method_name)
+        kwargs: dict[str, object] = {
+            "model_id": model_id,
+            "plan_id": plan_id,
+            "action": action,
+        }
+        if "execution_id" in signature(method).parameters:
+            kwargs["execution_id"] = execution_id
+        return method(**kwargs)
+
     # Dimensions that must not get worse for a recovery to count, and how much
     # slack to allow before calling a movement a regression.
-    _NO_REGRESSION_METRICS = ("safety", "latency", "reliability")
-    _REGRESSION_TOLERANCE = 2.0
+    _NO_REGRESSION_METRICS = ("quality", "safety", "latency", "reliability", "cost")
+    _REGRESSION_TOLERANCE = {
+        "quality": 2.0,
+        "safety": 2.0,
+        "latency": 2.0,
+        "reliability": 2.0,
+        # Cost is naturally noisier across a mitigation window; a ten-point
+        # normalized movement is the materiality boundary for recovery-v2.
+        "cost": 10.0,
+    }
 
     def _verify(
         self,
@@ -1163,11 +1448,17 @@ class DriftZeroService:
         """
 
         threshold = HEALTH_THRESHOLDS["healthy"]
+        required_requests = self.settings.recovery_verification_requests
+        required_coverage = self.settings.recovery_verification_coverage
         checks: list[dict[str, Any]] = []
         for metric in self._NO_REGRESSION_METRICS:
             before = getattr(baseline, metric, None) if baseline else None
             after = getattr(snapshot, metric, None)
-            passed = before is None or after is None or after >= before - self._REGRESSION_TOLERANCE
+            passed = (
+                before is None
+                or after is None
+                or after >= before - self._REGRESSION_TOLERANCE[metric]
+            )
             checks.append(
                 {
                     "metric": metric,
@@ -1178,14 +1469,23 @@ class DriftZeroService:
             )
 
         cleared = snapshot.score is not None and snapshot.score >= threshold
-        passed = cleared and all(check["passed"] for check in checks)
+        enough_requests = evaluated_requests >= required_requests
+        enough_coverage = snapshot.coverage >= required_coverage
+        passed = (
+            cleared
+            and enough_requests
+            and enough_coverage
+            and all(check["passed"] for check in checks)
+        )
 
         run = VerificationRun(
             plan_id=plan.id,
             incident_id=incident.id if incident else None,
             snapshot_id=snapshot.id,
-            required_requests=evaluated_requests,
+            required_requests=required_requests,
             observed_requests=evaluated_requests,
+            required_coverage=required_coverage,
+            observed_coverage=snapshot.coverage,
             threshold=threshold,
             baseline_score=(
                 incident.baseline_score if incident else (baseline.score if baseline else None)
@@ -2351,7 +2651,7 @@ class DriftZeroService:
         model_id: str,
         snapshot: HealthSnapshot,
         *,
-        allow_verifying_resolution: bool = True,
+        allow_verifying_resolution: bool = False,
     ) -> Incident | None:
         """Open, deepen or resolve the incident this snapshot implies.
 
@@ -2540,7 +2840,7 @@ class DriftZeroService:
         model_id: str,
         payload: TelemetryCreate,
         *,
-        allow_verifying_resolution: bool = True,
+        allow_verifying_resolution: bool = False,
     ) -> HealthSnapshot:
         score = calculate_health(
             payload.dimensions,
@@ -2588,7 +2888,59 @@ class DriftZeroService:
             allow_verifying_resolution=allow_verifying_resolution,
         )
         self._evaluate_alert_rules(session, record, incident)
+        self._queue_recovery_verification(session, record)
         return record
+
+    def _queue_recovery_verification(
+        self,
+        session: Session,
+        snapshot: HealthSnapshot,
+    ) -> None:
+        """Queue real post-action evidence once its sample gates are satisfied."""
+
+        if SignalSource(snapshot.source) is SignalSource.SIMULATED:
+            return
+        if (
+            snapshot.sample_size < self.settings.recovery_verification_requests
+            or snapshot.coverage < self.settings.recovery_verification_coverage
+        ):
+            return
+        plan = session.scalar(
+            select(RecoveryPlan)
+            .where(
+                RecoveryPlan.model_id == snapshot.model_id,
+                RecoveryPlan.state == RecoveryState.VERIFYING.value,
+            )
+            .order_by(RecoveryPlan.executed_at.desc())
+            .limit(1)
+        )
+        if plan is None or (plan.executed_at and snapshot.observed_at <= plan.executed_at):
+            return
+        idempotency_key = f"verify:{plan.id}:{snapshot.id}"
+        existing = session.scalar(
+            select(RecoveryCommand.id).where(
+                RecoveryCommand.idempotency_key == idempotency_key
+            )
+        )
+        if existing is not None:
+            return
+        command = self._new_verification_command(
+            plan,
+            snapshot,
+            actor="verification-engine",
+            role=ActorRole.SERVICE,
+            idempotency_key=idempotency_key,
+            reason="Post-recovery telemetry met verification evidence gates.",
+        )
+        session.add(command)
+        session.flush()
+        self._audit(
+            session,
+            plan.model_id,
+            "recovery.verification_queued",
+            "verification-engine",
+            {"plan_id": plan.id, "command_id": command.id, "snapshot_id": snapshot.id},
+        )
 
     def _store_forecast(
         self,

@@ -2,10 +2,17 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Protocol
+import json
+from dataclasses import dataclass, field
+from typing import TYPE_CHECKING, Protocol
+from urllib.error import HTTPError, URLError
+from urllib.parse import urlparse
+from urllib.request import Request, urlopen
 
 from app.schemas import ActorRole, DimensionScores, RecoveryAction, RiskLevel
+
+if TYPE_CHECKING:
+    from app.config import Settings
 
 RECOVERY_POLICY_VERSION = "recovery-v2"
 
@@ -66,6 +73,10 @@ class RecoveryActionResult:
     affected_traffic_pct: float
     detail: dict[str, object]
     error: str | None = None
+    external_operation_id: str | None = None
+    configuration_verified: bool = True
+    config_before: dict[str, object] = field(default_factory=dict)
+    config_after: dict[str, object] = field(default_factory=dict)
 
 
 @dataclass(frozen=True, slots=True)
@@ -83,14 +94,24 @@ class RecoveryAdapter(Protocol):
 
     def estimate_traffic_pct(self, *, action: RecoveryAction) -> float: ...
 
-    def execute(self, *, model_id: str, plan_id: str) -> RecoveryExecutionResult: ...
+    def execute(self, *, model_id: str, plan_id: str) -> RecoveryExecutionResult | None: ...
 
     def execute_action(
-        self, *, model_id: str, plan_id: str, action: RecoveryAction
+        self,
+        *,
+        model_id: str,
+        plan_id: str,
+        action: RecoveryAction,
+        execution_id: str,
     ) -> RecoveryActionResult: ...
 
     def rollback_action(
-        self, *, model_id: str, plan_id: str, action: RecoveryAction
+        self,
+        *,
+        model_id: str,
+        plan_id: str,
+        action: RecoveryAction,
+        execution_id: str,
     ) -> RecoveryActionResult: ...
 
 
@@ -120,17 +141,30 @@ class SimulatedRecoveryAdapter:
         return SIMULATED_TRAFFIC_SHARE.get(action.code, 100.0)
 
     def execute_action(
-        self, *, model_id: str, plan_id: str, action: RecoveryAction
+        self,
+        *,
+        model_id: str,
+        plan_id: str,
+        action: RecoveryAction,
+        execution_id: str = "simulation",
     ) -> RecoveryActionResult:
         del model_id, plan_id
         return RecoveryActionResult(
             succeeded=True,
             affected_traffic_pct=self.estimate_traffic_pct(action=action),
             detail={"simulated": True, "code": action.code},
+            external_operation_id=execution_id,
+            config_before={"enabled": False},
+            config_after={"enabled": True},
         )
 
     def rollback_action(
-        self, *, model_id: str, plan_id: str, action: RecoveryAction
+        self,
+        *,
+        model_id: str,
+        plan_id: str,
+        action: RecoveryAction,
+        execution_id: str = "simulation",
     ) -> RecoveryActionResult:
         del model_id, plan_id
         if not action.reversible:
@@ -139,11 +173,15 @@ class SimulatedRecoveryAdapter:
                 affected_traffic_pct=0.0,
                 detail={"simulated": True, "code": action.code},
                 error="Action is not reversible.",
+                external_operation_id=execution_id,
             )
         return RecoveryActionResult(
             succeeded=True,
             affected_traffic_pct=self.estimate_traffic_pct(action=action),
             detail={"simulated": True, "code": action.code, "rolled_back": True},
+            external_operation_id=execution_id,
+            config_before={"enabled": True},
+            config_after={"enabled": False},
         )
 
     def execute(self, *, model_id: str, plan_id: str) -> RecoveryExecutionResult:
@@ -164,6 +202,157 @@ class SimulatedRecoveryAdapter:
             coverage=0.98,
             summary="Simulated safeguards restored health after 50 evaluation requests.",
         )
+
+
+class ControlPlaneHttpAdapter:
+    """Production adapter for an HTTPS model gateway or feature-flag control plane.
+
+    The remote service must honor ``Idempotency-Key`` and return the resulting
+    configuration. DriftZero does not consider an action successful unless the
+    remote service explicitly confirms that the desired configuration is active.
+    """
+
+    simulation = False
+
+    def __init__(
+        self,
+        base_url: str,
+        token: str,
+        *,
+        timeout_seconds: float = 10.0,
+        allow_insecure_http: bool = False,
+    ) -> None:
+        parsed = urlparse(base_url)
+        if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+            raise ValueError("Recovery control URL must be an absolute HTTP(S) URL.")
+        if parsed.scheme != "https" and not allow_insecure_http:
+            raise ValueError("Production recovery control requires HTTPS.")
+        if not token:
+            raise ValueError("Recovery control token is required.")
+        self.base_url = base_url.rstrip("/")
+        self._token = token
+        self.timeout_seconds = timeout_seconds
+
+    def estimate_traffic_pct(self, *, action: RecoveryAction) -> float:
+        return SIMULATED_TRAFFIC_SHARE.get(action.code, 100.0)
+
+    def execute_action(
+        self,
+        *,
+        model_id: str,
+        plan_id: str,
+        action: RecoveryAction,
+        execution_id: str,
+    ) -> RecoveryActionResult:
+        return self._invoke(
+            "apply",
+            model_id=model_id,
+            plan_id=plan_id,
+            action=action,
+            execution_id=execution_id,
+        )
+
+    def rollback_action(
+        self,
+        *,
+        model_id: str,
+        plan_id: str,
+        action: RecoveryAction,
+        execution_id: str,
+    ) -> RecoveryActionResult:
+        if not action.reversible:
+            return RecoveryActionResult(
+                succeeded=False,
+                affected_traffic_pct=0.0,
+                detail={},
+                error="Action is not reversible.",
+            )
+        return self._invoke(
+            "rollback",
+            model_id=model_id,
+            plan_id=plan_id,
+            action=action,
+            execution_id=f"rollback:{execution_id}",
+        )
+
+    def execute(self, *, model_id: str, plan_id: str) -> None:
+        del model_id, plan_id
+        # Real health evidence must arrive through telemetry. A control-plane
+        # acknowledgement must never be fabricated into a healthy score.
+        return None
+
+    def _invoke(
+        self,
+        operation: str,
+        *,
+        model_id: str,
+        plan_id: str,
+        action: RecoveryAction,
+        execution_id: str,
+    ) -> RecoveryActionResult:
+        if action.code not in SIMULATED_TRAFFIC_SHARE:
+            return RecoveryActionResult(
+                succeeded=False,
+                affected_traffic_pct=0.0,
+                detail={},
+                error=f"Action '{action.code}' is not allow-listed.",
+            )
+        payload = {
+            "model_id": model_id,
+            "plan_id": plan_id,
+            "execution_id": execution_id,
+            "action": action.model_dump(mode="json"),
+        }
+        request = Request(
+            f"{self.base_url}/v1/recovery/actions/{action.code}/{operation}",
+            data=json.dumps(payload).encode("utf-8"),
+            headers={
+                "Authorization": f"Bearer {self._token}",
+                "Content-Type": "application/json",
+                "Idempotency-Key": execution_id,
+            },
+            method="POST",
+        )
+        try:
+            with urlopen(request, timeout=self.timeout_seconds) as response:  # noqa: S310
+                body = json.loads(response.read().decode("utf-8"))
+        except (HTTPError, URLError, TimeoutError, json.JSONDecodeError) as exc:
+            return RecoveryActionResult(
+                succeeded=False,
+                affected_traffic_pct=0.0,
+                detail={},
+                error=f"Control plane request failed: {type(exc).__name__}",
+            )
+
+        verified = body.get("configuration_verified") is True
+        succeeded = body.get("succeeded") is True and verified
+        return RecoveryActionResult(
+            succeeded=succeeded,
+            affected_traffic_pct=float(body.get("affected_traffic_pct", 0.0)),
+            detail=dict(body.get("detail") or {}),
+            error=(None if succeeded else str(body.get("error") or "Configuration not verified.")),
+            external_operation_id=(
+                str(body["external_operation_id"])
+                if body.get("external_operation_id")
+                else None
+            ),
+            configuration_verified=verified,
+            config_before=dict(body.get("config_before") or {}),
+            config_after=dict(body.get("config_after") or {}),
+        )
+
+
+def build_recovery_adapter(settings: Settings) -> RecoveryAdapter:
+    """Select simulation unless an explicit production control plane is configured."""
+
+    if not settings.recovery_control_url:
+        return SimulatedRecoveryAdapter()
+    return ControlPlaneHttpAdapter(
+        settings.recovery_control_url,
+        settings.recovery_control_token or "",
+        timeout_seconds=settings.recovery_control_timeout_seconds,
+        allow_insecure_http=settings.recovery_allow_insecure_http,
+    )
 
 
 def build_playbook(probable_cause: str) -> Playbook:

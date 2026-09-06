@@ -40,6 +40,7 @@ from app.schemas import (
     RecoveryExecuteRequest,
     RecoveryExecutionResponse,
     RecoveryPlanResponse,
+    RecoveryVerifyRequest,
     RegistrationStatusResponse,
     ReviewDecisionRequest,
     ReviewQueueItemResponse,
@@ -407,6 +408,21 @@ def recovery_verification(
     service: ServiceDependency,
 ) -> VerificationRunResponse:
     return service.recovery_verification(session, plan_id)
+
+
+@router.post(
+    "/recovery/{plan_id}/verify",
+    response_model=RecoveryCommandResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+    tags=["recover"],
+)
+def enqueue_recovery_verification(
+    plan_id: str,
+    payload: RecoveryVerifyRequest,
+    session: SessionDependency,
+    service: ServiceDependency,
+) -> RecoveryCommandResponse:
+    return service.enqueue_verification(session, plan_id, payload)
 
 
 @router.post(

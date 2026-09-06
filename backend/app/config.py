@@ -32,6 +32,12 @@ class Settings:
     recovery_command_lease_seconds: int = 60
     recovery_command_max_attempts: int = 3
     retention_interval_seconds: int = 3600
+    recovery_verification_requests: int = 50
+    recovery_verification_coverage: float = 0.90
+    recovery_control_url: str | None = None
+    recovery_control_token: str | None = None
+    recovery_control_timeout_seconds: float = 10.0
+    recovery_allow_insecure_http: bool = False
     log_level: str = "INFO"
     log_file: str | None = None
     log_file_max_bytes: int = 10_485_760
@@ -103,6 +109,42 @@ class Settings:
                         str(defaults.retention_interval_seconds),
                     )
                 ),
+            ),
+            recovery_verification_requests=max(
+                1,
+                int(
+                    os.getenv(
+                        "DRIFTZERO_RECOVERY_VERIFICATION_REQUESTS",
+                        str(defaults.recovery_verification_requests),
+                    )
+                ),
+            ),
+            recovery_verification_coverage=min(
+                1.0,
+                max(
+                    0.0,
+                    float(
+                        os.getenv(
+                            "DRIFTZERO_RECOVERY_VERIFICATION_COVERAGE",
+                            str(defaults.recovery_verification_coverage),
+                        )
+                    ),
+                ),
+            ),
+            recovery_control_url=os.getenv("DRIFTZERO_RECOVERY_CONTROL_URL") or None,
+            recovery_control_token=os.getenv("DRIFTZERO_RECOVERY_CONTROL_TOKEN") or None,
+            recovery_control_timeout_seconds=max(
+                0.1,
+                float(
+                    os.getenv(
+                        "DRIFTZERO_RECOVERY_CONTROL_TIMEOUT_SECONDS",
+                        str(defaults.recovery_control_timeout_seconds),
+                    )
+                ),
+            ),
+            recovery_allow_insecure_http=_environment_bool(
+                "DRIFTZERO_RECOVERY_ALLOW_INSECURE_HTTP",
+                defaults.recovery_allow_insecure_http,
             ),
             log_level=os.getenv("DRIFTZERO_LOG_LEVEL", defaults.log_level),
             log_file=os.getenv("DRIFTZERO_LOG_FILE") or defaults.log_file,

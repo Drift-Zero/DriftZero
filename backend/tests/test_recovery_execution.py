@@ -89,7 +89,7 @@ class SecondActionFailsAdapter(_AdapterBase):
     """Fails the second step, so the rest of the playbook must not run."""
 
     def execute_action(
-        self, *, model_id: str, plan_id: str, action: object
+        self, *, model_id: str, plan_id: str, action: object, execution_id: str
     ) -> RecoveryActionResult:
         if action.order == 2:
             return RecoveryActionResult(
@@ -98,7 +98,12 @@ class SecondActionFailsAdapter(_AdapterBase):
                 detail={},
                 error="adapter refused",
             )
-        return super().execute_action(model_id=model_id, plan_id=plan_id, action=action)
+        return super().execute_action(
+            model_id=model_id,
+            plan_id=plan_id,
+            action=action,
+            execution_id=execution_id,
+        )
 
 
 class IrreversibleAdapter(_AdapterBase):
@@ -107,9 +112,9 @@ class IrreversibleAdapter(_AdapterBase):
     dimensions = CRITICAL
 
     def rollback_action(
-        self, *, model_id: str, plan_id: str, action: object
+        self, *, model_id: str, plan_id: str, action: object, execution_id: str
     ) -> RecoveryActionResult:
-        del model_id, plan_id, action
+        del model_id, plan_id, action, execution_id
         return RecoveryActionResult(
             succeeded=False,
             affected_traffic_pct=0.0,
@@ -211,10 +216,14 @@ class TestVerification:
         assert run.threshold == 80.0
         assert run.required_requests == 50
         assert run.observed_requests == 50
+        assert run.required_coverage == 0.9
+        assert run.observed_coverage == 0.98
         assert {check["metric"] for check in run.no_regression_checks} == {
+            "quality",
             "safety",
             "latency",
             "reliability",
+            "cost",
         }
 
     def test_a_safety_regression_fails_recovery_despite_a_good_score(

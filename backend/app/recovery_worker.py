@@ -28,6 +28,7 @@ class RecoveryWorkerSummary:
     processed: int
     succeeded: int
     failed: int
+    retried: int
 
 
 def _claim_next(database: Database, settings: Settings) -> str | None:
@@ -83,6 +84,40 @@ def _finish_command(
         session.commit()
 
 
+def _retry_or_fail_command(
+    database: Database,
+    service: DriftZeroService,
+    command_id: str,
+    error: str,
+) -> bool:
+    """Schedule another idempotent attempt, or terminally fail the plan."""
+
+    with database.session_factory() as session:
+        command = session.get(RecoveryCommand, command_id)
+        if command is None:
+            return False
+        if command.attempt < command.max_attempts:
+            command.state = RecoveryCommandState.PENDING.value
+            command.error = error
+            command.available_at = datetime.now(UTC) + timedelta(
+                seconds=min(60, 2 ** max(0, command.attempt - 1))
+            )
+            command.lease_expires_at = None
+            session.commit()
+            return True
+        plan_id = command.plan_id
+
+    _finish_command(
+        database,
+        command_id,
+        state=RecoveryCommandState.FAILED,
+        error=error,
+    )
+    with database.session_factory() as session:
+        service.fail_recovery_after_retries(session, plan_id, error)
+    return False
+
+
 def process_recovery_commands(
     database: Database,
     service: DriftZeroService,
@@ -91,7 +126,7 @@ def process_recovery_commands(
 ) -> RecoveryWorkerSummary:
     """Claim and process a bounded batch without losing failures."""
 
-    processed = succeeded = failed = 0
+    processed = succeeded = failed = retried = 0
     logger = logging.getLogger("driftzero.recovery_worker")
     for _ in range(limit):
         command_id = _claim_next(database, service.settings)
@@ -117,8 +152,12 @@ def process_recovery_commands(
             with database.session_factory() as session:
                 if command_type is RecoveryCommandType.EXECUTE:
                     service.execute_recovery(session, plan_id, payload)
-                else:
+                elif command_type is RecoveryCommandType.ROLLBACK:
                     service.rollback_recovery(session, plan_id, payload)
+                else:
+                    if command.snapshot_id is None:
+                        raise ValueError("Verification command is missing snapshot_id.")
+                    service.verify_recovery(session, plan_id, command.snapshot_id)
             _finish_command(
                 database,
                 command_id,
@@ -126,13 +165,11 @@ def process_recovery_commands(
             )
             succeeded += 1
         except Exception as exc:  # command failure must not stop the queue
-            _finish_command(
-                database,
-                command_id,
-                state=RecoveryCommandState.FAILED,
-                error=f"{type(exc).__name__}: {exc}",
-            )
-            failed += 1
+            error = f"{type(exc).__name__}: {exc}"
+            if _retry_or_fail_command(database, service, command_id, error):
+                retried += 1
+            else:
+                failed += 1
             logger.exception(
                 "recovery_command.failed",
                 extra={
@@ -142,7 +179,12 @@ def process_recovery_commands(
                 },
             )
 
-    return RecoveryWorkerSummary(processed=processed, succeeded=succeeded, failed=failed)
+    return RecoveryWorkerSummary(
+        processed=processed,
+        succeeded=succeeded,
+        failed=failed,
+        retried=retried,
+    )
 
 
 def run_worker(
@@ -167,6 +209,7 @@ def run_worker(
                         "processed": summary.processed,
                         "succeeded": summary.succeeded,
                         "failed": summary.failed,
+                        "retried": summary.retried,
                     },
                 )
             if once:

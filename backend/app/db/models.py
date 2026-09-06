@@ -676,6 +676,9 @@ class RecoveryCommand(IdMixin, Base):
     lease_expires_at: Mapped[datetime | None] = mapped_column()
     completed_at: Mapped[datetime | None] = mapped_column()
     error: Mapped[str | None] = mapped_column(sa.Text())
+    snapshot_id: Mapped[str | None] = mapped_column(
+        sa.String(36), sa.ForeignKey("health_snapshots.id", ondelete="SET NULL")
+    )
 
     plan: Mapped[RecoveryPlan] = relationship(back_populates="commands")
 
@@ -748,6 +751,10 @@ class RecoveryExecution(IdMixin, Base):
     timeout_seconds: Mapped[int | None] = mapped_column()
     result: Mapped[dict[str, Any]] = mapped_column(default=dict)
     error: Mapped[str | None] = mapped_column(sa.Text())
+    external_operation_id: Mapped[str | None] = mapped_column(sa.String(160))
+    configuration_verified_at: Mapped[datetime | None] = mapped_column()
+    config_before: Mapped[dict[str, Any]] = mapped_column(default=dict)
+    config_after: Mapped[dict[str, Any]] = mapped_column(default=dict)
     rolled_back_at: Mapped[datetime | None] = mapped_column()
     rollback_result: Mapped[dict[str, Any]] = mapped_column(default=dict)
     created_at: Mapped[datetime] = mapped_column(default=utc_now)
@@ -766,6 +773,14 @@ class VerificationRun(IdMixin, Base):
     __tablename__ = "verification_runs"
     __table_args__ = (
         sa.CheckConstraint("required_requests >= 1", name="required_requests_positive"),
+        sa.CheckConstraint(
+            "required_coverage >= 0 AND required_coverage <= 1",
+            name="required_coverage_range",
+        ),
+        sa.CheckConstraint(
+            "observed_coverage >= 0 AND observed_coverage <= 1",
+            name="observed_coverage_range",
+        ),
     )
 
     plan_id: Mapped[str] = mapped_column(
@@ -779,6 +794,8 @@ class VerificationRun(IdMixin, Base):
     )
     required_requests: Mapped[int] = mapped_column(default=50)
     observed_requests: Mapped[int] = mapped_column(default=0)
+    required_coverage: Mapped[float] = mapped_column(default=0.9)
+    observed_coverage: Mapped[float] = mapped_column(default=0.0)
     threshold: Mapped[float] = mapped_column(default=80.0)
     baseline_score: Mapped[float | None] = mapped_column()
     post_score: Mapped[float | None] = mapped_column()

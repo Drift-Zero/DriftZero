@@ -62,15 +62,15 @@ class FailingRecoveryAdapter:
     simulation = True
 
     def execute_action(
-        self, *, model_id: str, plan_id: str, action: object
+        self, *, model_id: str, plan_id: str, action: object, execution_id: str
     ) -> RecoveryActionResult:
-        del model_id, plan_id, action
+        del model_id, plan_id, action, execution_id
         return RecoveryActionResult(succeeded=True, affected_traffic_pct=50.0, detail={})
 
     def rollback_action(
-        self, *, model_id: str, plan_id: str, action: object
+        self, *, model_id: str, plan_id: str, action: object, execution_id: str
     ) -> RecoveryActionResult:
-        del model_id, plan_id, action
+        del model_id, plan_id, action, execution_id
         return RecoveryActionResult(succeeded=True, affected_traffic_pct=50.0, detail={})
 
     def execute(self, *, model_id: str, plan_id: str) -> RecoveryExecutionResult:

@@ -171,6 +171,7 @@ class ExecutionState(StrEnum):
 class RecoveryCommandType(StrEnum):
     EXECUTE = "execute"
     ROLLBACK = "rollback"
+    VERIFY = "verify"
 
 
 class RecoveryCommandState(StrEnum):
@@ -553,6 +554,10 @@ class RecoveryExecutionResponse(BaseModel):
     finished_at: datetime | None = None
     result: dict[str, object] = Field(default_factory=dict)
     error: str | None = None
+    external_operation_id: str | None = None
+    configuration_verified_at: datetime | None = None
+    config_before: dict[str, object] = Field(default_factory=dict)
+    config_after: dict[str, object] = Field(default_factory=dict)
     rolled_back_at: datetime | None = None
     rollback_result: dict[str, object] = Field(default_factory=dict)
 
@@ -568,6 +573,8 @@ class VerificationRunResponse(BaseModel):
     snapshot_id: str | None = None
     required_requests: int
     observed_requests: int
+    required_coverage: float
+    observed_coverage: float
     threshold: float
     baseline_score: float | None = None
     post_score: float | None = None
@@ -601,6 +608,7 @@ class RecoveryCommandResponse(BaseModel):
     lease_expires_at: datetime | None = None
     completed_at: datetime | None = None
     error: str | None = None
+    snapshot_id: str | None = None
 
 
 class RecoveryPlanResponse(BaseModel):
@@ -845,6 +853,11 @@ class RecoveryExecuteRequest(ActorRequest):
     idempotency_key: str = Field(min_length=8, max_length=120)
     expected_version: int | None = Field(default=None, ge=1)
     max_traffic_pct: float = Field(default=100.0, ge=0, le=100)
+
+
+class RecoveryVerifyRequest(ActorRequest):
+    snapshot_id: str = Field(min_length=1, max_length=36)
+    idempotency_key: str = Field(min_length=8, max_length=120)
 
 
 class AuditEventResponse(BaseModel):
