@@ -1,0 +1,25 @@
+services:
+  - type: web
+    name: driftzero-demo
+    runtime: docker
+    plan: free
+    region: singapore
+    dockerfilePath: ./deploy/Dockerfile
+    dockerContext: .
+    healthCheckPath: /healthz
+    autoDeployTrigger: checksPass
+    envVars:
+      - key: DRIFTZERO_ENVIRONMENT
+        value: hackathon-demo
+      - key: DRIFTZERO_DATABASE_URL
+        value: sqlite:////data/driftzero.db
+      - key: DRIFTZERO_API_PREFIX
+        value: /api/v1
+      - key: DRIFTZERO_FRONTEND_DIR
+        value: /app/frontend
+      - key: DRIFTZERO_LOG_LEVEL
+        value: INFO
+      - key: DRIFTZERO_RECOVERY_WORKER_INTERVAL_SECONDS
+        value: "1"
+      - key: DRIFTZERO_OTEL_ENABLED
+        value: "false"

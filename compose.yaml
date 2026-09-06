@@ -1,0 +1,115 @@
+name: driftzero
+
+x-backend-environment: &backend-environment
+  DRIFTZERO_DATABASE_URL: ${DRIFTZERO_DATABASE_URL:-sqlite:////data/driftzero.db}
+  DRIFTZERO_API_PREFIX: ${DRIFTZERO_API_PREFIX:-/api/v1}
+  DRIFTZERO_ENVIRONMENT: ${DRIFTZERO_ENVIRONMENT:-development}
+  DRIFTZERO_MINIMUM_SAMPLE_SIZE: ${DRIFTZERO_MINIMUM_SAMPLE_SIZE:-20}
+  DRIFTZERO_MINIMUM_COVERAGE: ${DRIFTZERO_MINIMUM_COVERAGE:-0.30}
+  DRIFTZERO_FORECAST_HORIZON_MINUTES: ${DRIFTZERO_FORECAST_HORIZON_MINUTES:-30}
+  DRIFTZERO_ALERT_EVALUATION_INTERVAL_SECONDS: ${DRIFTZERO_ALERT_EVALUATION_INTERVAL_SECONDS:-60}
+  DRIFTZERO_RECOVERY_WORKER_INTERVAL_SECONDS: ${DRIFTZERO_RECOVERY_WORKER_INTERVAL_SECONDS:-2}
+  DRIFTZERO_RECOVERY_COMMAND_LEASE_SECONDS: ${DRIFTZERO_RECOVERY_COMMAND_LEASE_SECONDS:-60}
+  DRIFTZERO_RECOVERY_COMMAND_MAX_ATTEMPTS: ${DRIFTZERO_RECOVERY_COMMAND_MAX_ATTEMPTS:-3}
+  DRIFTZERO_RETENTION_INTERVAL_SECONDS: ${DRIFTZERO_RETENTION_INTERVAL_SECONDS:-3600}
+  DRIFTZERO_LOG_LEVEL: ${DRIFTZERO_LOG_LEVEL:-INFO}
+  DRIFTZERO_SLOW_QUERY_MS: ${DRIFTZERO_SLOW_QUERY_MS:-250}
+  DRIFTZERO_OTEL_ENABLED: ${DRIFTZERO_OTEL_ENABLED:-false}
+  DRIFTZERO_OTEL_SERVICE_NAME: ${DRIFTZERO_OTEL_SERVICE_NAME:-driftzero-api}
+
+x-service-defaults: &service-defaults
+  restart: unless-stopped
+  logging:
+    driver: json-file
+    options:
+      max-size: 10m
+      max-file: "3"
+  networks:
+    - driftzero
+
+services:
+  api:
+    <<: *service-defaults
+    build:
+      context: ./backend
+    environment:
+      <<: *backend-environment
+      PORT: 8000
+    ports:
+      - "${DRIFTZERO_API_PORT:-8000}:8000"
+    volumes:
+      - driftzero-data:/data
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/healthz', timeout=2)"
+      interval: 10s
+      timeout: 3s
+      start_period: 10s
+      retries: 5
+
+  alert-worker:
+    <<: *service-defaults
+    build:
+      context: ./backend
+    entrypoint: ["python", "-m", "app.alert_worker"]
+    environment:
+      <<: *backend-environment
+    volumes:
+      - driftzero-data:/data
+    depends_on:
+      api:
+        condition: service_healthy
+
+  recovery-worker:
+    <<: *service-defaults
+    build:
+      context: ./backend
+    entrypoint: ["python", "-m", "app.recovery_worker"]
+    environment:
+      <<: *backend-environment
+    volumes:
+      - driftzero-data:/data
+    depends_on:
+      api:
+        condition: service_healthy
+
+  retention-worker:
+    <<: *service-defaults
+    build:
+      context: ./backend
+    entrypoint: ["python", "-m", "app.retention_worker"]
+    environment:
+      <<: *backend-environment
+    volumes:
+      - driftzero-data:/data
+    depends_on:
+      api:
+        condition: service_healthy
+
+  dashboard:
+    <<: *service-defaults
+    build:
+      context: ./frontend
+    environment:
+      DRIFTZERO_API_UPSTREAM: http://api:8000
+    ports:
+      - "${DRIFTZERO_DASHBOARD_PORT:-3000}:80"
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1/healthz"]
+      interval: 10s
+      timeout: 3s
+      start_period: 5s
+      retries: 5
+
+volumes:
+  driftzero-data:
+
+networks:
+  driftzero:
+    driver: bridge

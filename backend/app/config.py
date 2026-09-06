@@ -45,6 +45,7 @@ class Settings:
     slow_query_ms: float = 250.0
     otel_enabled: bool = False
     otel_service_name: str = "driftzero-api"
+    frontend_dir: str | None = None
 
     @classmethod
     def from_env(cls) -> Settings:
@@ -164,4 +165,5 @@ class Settings:
             otel_service_name=os.getenv(
                 "DRIFTZERO_OTEL_SERVICE_NAME", defaults.otel_service_name
             ),
+            frontend_dir=os.getenv("DRIFTZERO_FRONTEND_DIR") or defaults.frontend_dir,
         )
