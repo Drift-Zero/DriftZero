@@ -16,20 +16,4 @@ export default tseslint.config(
       'react-refresh/only-export-components': ['warn', { allowConstantExport: true }],
     },
   },
-  {
-    // Bklit chart source is installed from its shadcn registry. It uses an
-    // animation-oriented ref/effect pattern that conflicts with this app's
-    // stricter React compiler lint rules, while remaining type-safe at build.
-    files: ['src/components/charts/**/*.ts', 'src/components/charts/**/*.tsx'],
-    rules: {
-      '@typescript-eslint/no-explicit-any': 'off',
-      '@typescript-eslint/no-unused-vars': 'off',
-      'no-useless-assignment': 'off',
-      'react-hooks/exhaustive-deps': 'off',
-      'react-hooks/purity': 'off',
-      'react-hooks/refs': 'off',
-      'react-hooks/set-state-in-effect': 'off',
-      'react-refresh/only-export-components': 'off',
-    },
-  },
 )
