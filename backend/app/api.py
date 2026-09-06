@@ -18,8 +18,13 @@ from app.schemas import (
     HealthTimelineResponse,
     IncidentResponse,
     ModelCreate,
+    ModelLifecycleUpdate,
     ModelResponse,
+    ModelUpdate,
+    ModelVersionCreate,
+    ModelVersionResponse,
     RecoveryPlanResponse,
+    RegistrationStatusResponse,
     TelemetryCreate,
 )
 from app.service import DriftZeroService
@@ -69,6 +74,96 @@ def get_model(
     service: ServiceDependency,
 ) -> ModelResponse:
     return service.get_model(session, model_id)
+
+
+@router.patch("/models/{model_id}", response_model=ModelResponse, tags=["models"])
+def update_model(
+    model_id: str,
+    payload: ModelUpdate,
+    session: SessionDependency,
+    service: ServiceDependency,
+) -> ModelResponse:
+    return service.update_model(session, model_id, payload)
+
+
+@router.post(
+    "/models/{model_id}/lifecycle",
+    response_model=ModelResponse,
+    tags=["models"],
+)
+def update_model_lifecycle(
+    model_id: str,
+    payload: ModelLifecycleUpdate,
+    session: SessionDependency,
+    service: ServiceDependency,
+) -> ModelResponse:
+    return service.update_model_lifecycle(session, model_id, payload)
+
+
+@router.post(
+    "/models/{model_id}/versions",
+    response_model=ModelVersionResponse,
+    status_code=status.HTTP_201_CREATED,
+    tags=["models"],
+)
+def create_model_version(
+    model_id: str,
+    payload: ModelVersionCreate,
+    session: SessionDependency,
+    service: ServiceDependency,
+) -> ModelVersionResponse:
+    return service.create_model_version(
+        session,
+        model_id,
+        payload,
+        actor=payload.actor,
+    )
+
+
+@router.get(
+    "/models/{model_id}/versions",
+    response_model=list[ModelVersionResponse],
+    tags=["models"],
+)
+def list_model_versions(
+    model_id: str,
+    session: SessionDependency,
+    service: ServiceDependency,
+) -> list[ModelVersionResponse]:
+    return service.list_model_versions(session, model_id)
+
+
+@router.post(
+    "/models/{model_id}/versions/{version_id}/activate",
+    response_model=ModelVersionResponse,
+    tags=["models"],
+)
+def activate_model_version(
+    model_id: str,
+    version_id: str,
+    payload: ActorRequest,
+    session: SessionDependency,
+    service: ServiceDependency,
+) -> ModelVersionResponse:
+    return service.activate_model_version(
+        session,
+        model_id,
+        version_id,
+        actor=payload.actor,
+    )
+
+
+@router.get(
+    "/models/{model_id}/registration-status",
+    response_model=RegistrationStatusResponse,
+    tags=["models"],
+)
+def registration_status(
+    model_id: str,
+    session: SessionDependency,
+    service: ServiceDependency,
+) -> RegistrationStatusResponse:
+    return service.registration_status(session, model_id)
 
 
 @router.post(
