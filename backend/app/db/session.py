@@ -18,10 +18,21 @@ from app.db.queries import ensure_default_tenant
 IN_MEMORY_URLS = frozenset({"sqlite://", "sqlite:///:memory:"})
 
 
+def normalize_database_url(database_url: str) -> str:
+    """Select psycopg 3 for managed Postgres URLs that omit a driver."""
+
+    if database_url.startswith("postgres://"):
+        return database_url.replace("postgres://", "postgresql+psycopg://", 1)
+    if database_url.startswith("postgresql://"):
+        return database_url.replace("postgresql://", "postgresql+psycopg://", 1)
+    return database_url
+
+
 class Database:
     """Owns the engine and creates short-lived sessions."""
 
     def __init__(self, database_url: str, *, echo: bool = False) -> None:
+        database_url = normalize_database_url(database_url)
         self.database_url = database_url
         engine_kwargs: dict[str, Any] = {"echo": echo, "future": True}
 
