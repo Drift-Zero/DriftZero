@@ -44,6 +44,7 @@ from app.db import (
     StabilityVariant,
     Trace,
     VerificationRun,
+    baseline_traces_before,
     ensure_health_policy,
     latest_snapshot,
     purge_expired_traces,
@@ -51,7 +52,9 @@ from app.db import (
     traces_for_metric,
 )
 from app.diagnosis import diagnose_change
+from app.drift import score_drift
 from app.evaluation import EvaluatorAdapter, SimulatedEvaluator
+from app.hallucination import score_groundedness
 from app.observability import get_request_id
 from app.recovery import RecoveryAdapter, RecoveryPolicy, build_playbook, build_recovery_adapter
 from app.redaction import REDACTION_POLICY_VERSION, content_hash, redact
@@ -2908,15 +2911,18 @@ class DriftZeroService:
         *,
         allow_verifying_resolution: bool = False,
     ) -> HealthSnapshot:
+        traces = self._record_traces(session, model_id, payload.traces)
+        window_start, window_end = self._evaluation_window(payload, traces)
+        dimensions = self._infer_missing_dimensions(
+            session, model_id, payload.dimensions, traces, window_start, window_end
+        )
         score = calculate_health(
-            payload.dimensions,
+            dimensions,
             sample_size=payload.sample_size,
             coverage=payload.coverage,
             minimum_sample_size=self.settings.minimum_sample_size,
             minimum_coverage=self.settings.minimum_coverage,
         )
-        traces = self._record_traces(session, model_id, payload.traces)
-        window_start, window_end = self._evaluation_window(payload, traces)
         policy = ensure_health_policy(
             session,
             version=score.policy_version,
@@ -2931,7 +2937,7 @@ class DriftZeroService:
             observed_at=payload.observed_at,
             window_start=window_start,
             window_end=window_end,
-            **payload.dimensions.model_dump(),
+            **dimensions.model_dump(),
             score=score.score,
             state=score.state.value,
             confidence=score.confidence,
@@ -2956,6 +2962,45 @@ class DriftZeroService:
         self._evaluate_alert_rules(session, record, incident)
         self._queue_recovery_verification(session, record)
         return record
+
+    def _infer_missing_dimensions(
+        self,
+        session: Session,
+        model_id: str,
+        dimensions: DimensionScores,
+        traces: list[Trace],
+        window_start: datetime,
+        window_end: datetime,
+    ) -> DimensionScores:
+        """Fill groundedness and drift from trace evidence when not supplied.
+
+        A caller that already scored these dimensions upstream is trusted as
+        -is; this only covers the gap for traces that ship raw counts (citation
+        counts, retrieved document ids) and expect DriftZero to turn them into
+        a dimension score, rather than treating a missing field as healthy.
+        """
+
+        updates: dict[str, float] = {}
+
+        if dimensions.groundedness is None:
+            inferred_groundedness = score_groundedness(traces)
+            if inferred_groundedness is not None:
+                updates["groundedness"] = inferred_groundedness
+
+        if dimensions.drift is None:
+            baseline = baseline_traces_before(
+                session,
+                model_id,
+                before=window_start,
+                span=window_end - window_start,
+            )
+            inferred_drift = score_drift(traces, baseline)
+            if inferred_drift is not None:
+                updates["drift"] = inferred_drift
+
+        if not updates:
+            return dimensions
+        return dimensions.model_copy(update=updates)
 
     def _queue_recovery_verification(
         self,

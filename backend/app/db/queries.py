@@ -146,6 +146,28 @@ def traces_in_window(
     return list(session.scalars(statement.order_by(Trace.occurred_at)).all())
 
 
+def baseline_traces_before(
+    session: Session,
+    model_id: str,
+    *,
+    before: datetime,
+    span: timedelta,
+) -> list[Trace]:
+    """Return the traces immediately preceding ``before``, for drift comparison.
+
+    The lookback is the same length as the window being scored, so the two
+    populations being compared are drawn from equal-sized periods rather than
+    one window swamping the other.
+    """
+
+    statement = sa.select(Trace).where(
+        Trace.model_id == model_id,
+        Trace.occurred_at < before,
+        Trace.occurred_at >= before - span,
+    )
+    return list(session.scalars(statement.order_by(Trace.occurred_at)).all())
+
+
 # Evidence metrics are health dimension names. Each maps to the ordering that
 # surfaces the requests actually demonstrating that metric, so a claim about
 # groundedness drills down to unsupported answers rather than an arbitrary
