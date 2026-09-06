@@ -1,7 +1,8 @@
 # DriftZero Product Requirements Document
 
-**Status:** Draft for approval  
-**Version:** 1.0  
+**Status:** Approved with ShopAssist demo amendment
+
+**Version:** 1.1
 **Last updated:** 2026-09-06  
 **Product:** DriftZero  
 **Tagline:** Predict. Diagnose. Recover.
@@ -18,7 +19,7 @@ The product is organized around one operational loop:
 
 DriftZero does not claim that a health score is objective truth, that a forecast guarantees an incident, or that an automated diagnosis is infallible. Every important result must show its evaluation window, sample size, traffic coverage, source, policy or evaluator version, and uncertainty. Consequential recovery is human-approved by default.
 
-The MVP is a polished, deterministic demonstration centered on **CampusGPT**, a university assistant whose retrieval layer serves stale examination-fee policy documents. The experience begins with healthy behavior, shows a credible decline, provides an evidence-backed knowledge-freshness diagnosis, guides an operator through a simulated recovery, and verifies improvement after 50 evaluation requests.
+The MVP is a polished, deterministic demonstration centered on **ShopAssist**, an e-commerce support assistant whose retrieval layer serves a retired returns-policy document. The experience begins with healthy behavior, shows a credible decline, provides an evidence-backed knowledge-freshness diagnosis, guides an operator through a simulated recovery, and verifies improvement after a defined post-recovery evaluation window. The approved scenario is specified in `docs/SHOP_ASSIST_DEMO.md`.
 
 ## 2. Current repository baseline
 
@@ -30,7 +31,7 @@ The repository is not a blank slate. As of this document, it contains a Python 3
 - a recent-slope 30-minute forecast with bounds;
 - rule-based diagnosis with supporting and contradicting evidence;
 - recovery recommendation, approval, simulated execution, verification, and auditing;
-- deterministic CampusGPT reset and recovery behavior;
+- a legacy deterministic CampusGPT reset fixture, retained until the backend owners migrate it to the approved ShopAssist scenario;
 - redacted trace storage and trace-to-evidence links;
 - a comprehensive relational schema for tenants, versions, sources, incidents, evaluations, alerts, review queues, and governance;
 - SQLite for local use and portable PostgreSQL-compatible models and migrations;
@@ -156,7 +157,7 @@ The hackathon demo may use a clearly labeled local demo identity, but production
 - recovery plan view with risk, affected traffic, approval requirement, execution progress, verification criteria, audit trail, and rollback state;
 - Semantic Stability Test based on agreement of material claims across meaning-preserving paraphrases;
 - Temporal Stability Test that distinguishes uncontrolled input changes from unexplained behavior changes;
-- deterministic CampusGPT scenario with one-action reset;
+- deterministic ShopAssist scenario with one-action reset;
 - accessible, responsive, desktop-first web experience;
 - stable API contracts, background job boundaries, and tests for the primary lifecycle;
 - explicit simulation labels anywhere data or actions are simulated.
@@ -405,7 +406,7 @@ Evaluator provider/model, prompt/configuration hash, calibration status, and act
 - summary cards: healthy/warning/critical/insufficient counts and open incidents;
 - sortable model table with score, state, change, forecast, coverage, freshness, and incident;
 - filters for environment, provider, state, and data source;
-- CampusGPT demo reset control isolated from production controls.
+- ShopAssist demo reset control isolated from production controls.
 
 ### 11.3 Model detail / Pulse
 
@@ -504,7 +505,7 @@ The first implementation should combine:
 - minimum sample/coverage gates;
 - cooldown and incident deduplication.
 
-Suggested demo rule: open a high-severity incident when score is critical and has declined by at least 15 points from the healthy baseline within 45 minutes, with at least two qualifying snapshots. This recommendation must be tested against the deterministic CampusGPT sequence.
+Suggested demo rule: open a high-severity incident when score is critical and has declined by at least 15 points from the healthy baseline within 45 minutes, with at least two qualifying snapshots. This recommendation must be tested against the deterministic ShopAssist sequence.
 
 ### 13.2 Forecast baseline
 
@@ -556,7 +557,7 @@ The highest-risk action determines the minimum plan approval. Any plan mutation 
 
 ### 15.4 Verification and rollback
 
-CampusGPT verification requires 50 post-action requests, adequate coverage, health at or above the configured recovery target, and no material regression in safety, latency, reliability, quality, or cost. A failed verification must never be shown as recovered. Rollback eligibility, action, approval, and verification are recorded separately.
+ShopAssist verification requires a defined post-action request window, adequate coverage, health at or above the configured recovery target, and no material regression in safety, latency, reliability, quality, or cost. A failed verification must never be shown as recovered. Rollback eligibility, action, approval, and verification are recorded separately.
 
 ## 16. Data and API contract
 
@@ -642,11 +643,11 @@ DriftZero monitors its own evaluators. Required signals include evaluation volum
 
 Forecast monitoring includes absolute error, bias, interval coverage, and performance by health state. Diagnosis monitoring includes top-k agreement with reviewed incidents, calibration by confidence bucket, abstention rate, and time to confirmed cause. Recovery monitoring includes approval latency, action success/timeout/rollback rate, verification success, and no-regression failures.
 
-## 20. Seeded CampusGPT demo
+## 20. Seeded ShopAssist demo
 
 ### 20.1 Data story
 
-CampusGPT answers examination-fee questions using a retrieval corpus. A newer policy document changes the deadline, but the active index continues serving the superseded document. Seeded telemetry produces health scores `92 → 87 → 74 → 61`; the 30-minute forecast is `48`. Groundedness, drift health, and semantic stability fall while safety, latency, and reliability remain stable.
+ShopAssist answers returns, refunds, and warranty questions using a retrieval corpus. Returns Policy v2.1 changes the rules for electronics, clearance items, warranties, and refund timing, but the active index can be switched to superseded v1.4. Seeded telemetry produces a visible healthy-to-critical trajectory. Groundedness, drift health, and semantic stability fall while safety, latency, and reliability remain stable.
 
 DriftZero diagnoses `knowledge_freshness_failure` at approximately 0.87 estimated confidence and recommends:
 
@@ -660,7 +661,7 @@ The operator approves the simulated plan. The system executes it, evaluates 50 r
 
 ### 20.2 Five-minute script
 
-1. **Healthy:** show CampusGPT at 92 with strong evidence coverage.
+1. **Healthy:** show ShopAssist using Returns Policy v2.1 with strong evidence coverage.
 2. **Early warning:** advance/reset the deterministic scenario; show decline and 48 forecast with bounds.
 3. **Diagnosis:** open the incident, stale-document evidence, conflicting paraphrases, and stable safety/latency contradiction evidence.
 4. **Recovery:** inspect risks and simulation labels, approve, then execute.
@@ -730,7 +731,7 @@ The operator approves the simulated plan. The system executes it, evaluates 50 r
 3. **Async jobs:** recommend a PostgreSQL-backed job abstraction for MVP simplicity, with Redis/worker infrastructure introduced only if load requires it.
 4. **Health policy editing:** recommend read-only policy inspection in the first vertical slice, then admin editing with version creation—not in-place mutation.
 5. **Alert delivery:** recommend in-product alerts first; email/Slack integrations after lifecycle and deduplication are proven.
-6. **Recovery target:** recommend configurable target with CampusGPT fixed at `>= 80`, 50 requests, `>= 0.90` coverage, and no material safety/reliability regression.
+6. **Recovery target:** recommend a configurable target with ShopAssist fixed at `>= 80`, an agreed post-action request window, `>= 0.90` coverage, and no material safety/reliability regression.
 7. **Source-of-truth for normalized dimensions:** recommend storing both raw evaluator outputs and normalized values/version once evaluator pipelines are implemented.
 
 ## 25. Release gates

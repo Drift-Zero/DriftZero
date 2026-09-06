@@ -6,7 +6,7 @@
 
 ## 1. Objective
 
-Deliver a polished DriftZero MVP that demonstrates the complete CampusGPT lifecycle:
+Deliver a polished DriftZero MVP that demonstrates the complete ShopAssist lifecycle:
 
 ```text
 seeded traces and telemetry
@@ -23,7 +23,7 @@ The current backend already implements a simplified version of this path. The pl
 ## 2. Delivery constraints
 
 - Do not begin application implementation until `docs/PRD.md` is approved.
-- Preserve deterministic CampusGPT behavior and existing API tests.
+- Preserve the deterministic lifecycle and existing API tests while backend owners migrate the legacy CampusGPT fixture to ShopAssist.
 - Never expose the existing unauthenticated service publicly.
 - Keep all mock telemetry and recovery behavior clearly labeled as simulated.
 - Do not enable consequential production recovery adapters during the MVP.
@@ -114,7 +114,7 @@ External providers and action systems connect only through typed, allow-listed a
 
 Tasks:
 
-1. Review and approve the MVP boundary, safety policy, health semantics, and CampusGPT criteria.
+1. Review and approve the MVP boundary, safety policy, health semantics, and ShopAssist criteria.
 2. Resolve the open decisions in PRD Section 24.
 3. Inventory existing API schemas against the proposed screens.
 4. Define API additions and error/pagination/idempotency conventions.
@@ -174,11 +174,11 @@ Exit criteria:
 
 - all existing tests pass;
 - new backend lifecycle tests pass;
-- one API-only CampusGPT run produces incident, evidence, action executions, verification, and audit records.
+- one API-only ShopAssist run produces incident, evidence, action executions, verification, and audit records.
 
 ### Milestone 2 — Build the frontend vertical slice
 
-**Goal:** make the existing CampusGPT story understandable and operable end to end.
+**Goal:** make the approved ShopAssist story understandable and operable end to end.
 
 Recommended stack pending approval: Next.js + TypeScript + Tailwind + accessible component primitives.
 
@@ -238,7 +238,7 @@ Exit criteria:
 
 - both tests can be run through UI and API;
 - every result links to variants/runs, claims, traces, and evaluator version;
-- CampusGPT knowledge-freshness evidence includes a semantic disagreement.
+- ShopAssist knowledge-freshness evidence includes a semantic disagreement.
 
 ### Milestone 4 — Alerts, review, and policy administration
 
@@ -364,7 +364,7 @@ Issues should be independently testable and small enough for one focused change.
 8. `web: implement fleet and Pulse model detail`
 9. `web: implement Diagnose incident detail and evidence drill-down`
 10. `web: implement recovery approval, execution, and verification`
-11. `e2e: automate CampusGPT golden path and failure states`
+11. `e2e: automate ShopAssist golden path and failure states`
 12. `evaluations: semantic stability engine and API`
 13. `evaluations: temporal stability fingerprint comparison and API`
 14. `web: evaluation detail and claim matrix`
@@ -439,7 +439,7 @@ Exact shapes are finalized in Milestone 0.
 
 ### 10.2 Golden-path assertions
 
-The deterministic CampusGPT test must assert:
+The deterministic ShopAssist test must assert:
 
 - scores equal `92.0, 87.0, 74.0, 61.0`;
 - 30-minute prediction equals `48.0` with deteriorating direction;
@@ -516,7 +516,7 @@ Frontend components may be built against frozen fixtures while backend endpoints
 
 | Risk | Early signal | Response |
 | --- | --- | --- |
-| Building all schema surfaces at once | Many endpoints with no complete UI flow | Protect the CampusGPT vertical slice; defer breadth. |
+| Building all schema surfaces at once | Many endpoints with no complete UI flow | Protect the ShopAssist vertical slice; defer breadth. |
 | Authentication selected late | Tenant assumptions leak into services | Decide in Milestone 0; introduce trusted request context early. |
 | LLM evaluator nondeterminism | Flaky tests/demo | Deterministic evaluator fixtures and pinned seeds/versions. |
 | Frontend waits on backend | UI milestone stalls | Freeze schemas and use generated fixtures/mock server. |
