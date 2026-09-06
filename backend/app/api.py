@@ -5,15 +5,20 @@ from __future__ import annotations
 from collections.abc import Iterator
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Query, Request, status
+from fastapi import APIRouter, Depends, Query, Request, Response, status
 from sqlalchemy.orm import Session
 
 from app.database import Database
 from app.schemas import (
     ActorRequest,
+    AlertEvaluationRequest,
+    AlertEvaluationResponse,
+    AlertFeedResponse,
+    AlertResolveRequest,
     AlertResponse,
     AlertRuleCreate,
     AlertRuleResponse,
+    AlertRuleUpdate,
     AlertState,
     AuditEventResponse,
     DemoResetResponse,
@@ -395,7 +400,7 @@ def list_feedback(
     "/models/{model_id}/alert-rules",
     response_model=AlertRuleResponse,
     status_code=status.HTTP_201_CREATED,
-    tags=["pulse"],
+    tags=["alerts"],
 )
 def create_alert_rule(
     model_id: str,
@@ -409,7 +414,7 @@ def create_alert_rule(
 @router.get(
     "/models/{model_id}/alert-rules",
     response_model=list[AlertRuleResponse],
-    tags=["pulse"],
+    tags=["alerts"],
 )
 def list_alert_rules(
     model_id: str,
@@ -419,7 +424,61 @@ def list_alert_rules(
     return service.list_alert_rules(session, model_id)
 
 
-@router.get("/models/{model_id}/alerts", response_model=list[AlertResponse], tags=["pulse"])
+@router.get("/alert-rules/{rule_id}", response_model=AlertRuleResponse, tags=["alerts"])
+def get_alert_rule(
+    rule_id: str,
+    session: SessionDependency,
+    service: ServiceDependency,
+) -> AlertRuleResponse:
+    return service.get_alert_rule(session, rule_id)
+
+
+@router.patch("/alert-rules/{rule_id}", response_model=AlertRuleResponse, tags=["alerts"])
+def update_alert_rule(
+    rule_id: str,
+    payload: AlertRuleUpdate,
+    session: SessionDependency,
+    service: ServiceDependency,
+) -> AlertRuleResponse:
+    return service.update_alert_rule(session, rule_id, payload)
+
+
+@router.delete(
+    "/alert-rules/{rule_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    tags=["alerts"],
+)
+def delete_alert_rule(
+    rule_id: str,
+    payload: ActorRequest,
+    session: SessionDependency,
+    service: ServiceDependency,
+) -> Response:
+    service.delete_alert_rule(session, rule_id, payload)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.post(
+    "/models/{model_id}/alerts/evaluate",
+    response_model=AlertEvaluationResponse,
+    tags=["alerts"],
+)
+def evaluate_alerts(
+    model_id: str,
+    payload: AlertEvaluationRequest,
+    session: SessionDependency,
+    service: ServiceDependency,
+) -> AlertEvaluationResponse:
+    """Evaluate rules now; intended for freshness monitors and scheduled jobs."""
+
+    return service.evaluate_alerts(session, model_id, payload)
+
+
+@router.get(
+    "/models/{model_id}/alerts",
+    response_model=list[AlertResponse],
+    tags=["alerts"],
+)
 def list_alerts(
     model_id: str,
     session: SessionDependency,
@@ -430,7 +489,28 @@ def list_alerts(
     return service.list_alerts(session, model_id, state=state, limit=limit)
 
 
-@router.post("/alerts/{alert_id}/acknowledge", response_model=AlertResponse, tags=["pulse"])
+@router.get("/alerts", response_model=AlertFeedResponse, tags=["alerts"])
+def alert_feed(
+    session: SessionDependency,
+    service: ServiceDependency,
+    state: AlertState | None = None,
+    limit: Annotated[int, Query(ge=1, le=200)] = 100,
+) -> AlertFeedResponse:
+    """Cross-model in-product notification feed for the current tenant."""
+
+    return service.alert_feed(session, state=state, limit=limit)
+
+
+@router.get("/alerts/{alert_id}", response_model=AlertResponse, tags=["alerts"])
+def get_alert(
+    alert_id: str,
+    session: SessionDependency,
+    service: ServiceDependency,
+) -> AlertResponse:
+    return service.get_alert(session, alert_id)
+
+
+@router.post("/alerts/{alert_id}/acknowledge", response_model=AlertResponse, tags=["alerts"])
 def acknowledge_alert(
     alert_id: str,
     payload: ActorRequest,
@@ -438,6 +518,16 @@ def acknowledge_alert(
     service: ServiceDependency,
 ) -> AlertResponse:
     return service.acknowledge_alert(session, alert_id, payload)
+
+
+@router.post("/alerts/{alert_id}/resolve", response_model=AlertResponse, tags=["alerts"])
+def resolve_alert(
+    alert_id: str,
+    payload: AlertResolveRequest,
+    session: SessionDependency,
+    service: ServiceDependency,
+) -> AlertResponse:
+    return service.resolve_alert(session, alert_id, payload)
 
 
 @router.post(
