@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
@@ -238,7 +238,7 @@ class DriftZeroService:
             raise InvalidTransition(f"Cannot approve a plan in '{plan.state}' state.")
 
         plan.state = RecoveryState.APPROVED.value
-        plan.approved_at = datetime.now(timezone.utc)
+        plan.approved_at = datetime.now(UTC)
         plan.approved_by = payload.actor
         self._audit(
             session,
@@ -263,7 +263,7 @@ class DriftZeroService:
             raise InvalidTransition("Recovery must be approved before execution.")
 
         plan.state = RecoveryState.EXECUTING.value
-        plan.executed_at = datetime.now(timezone.utc)
+        plan.executed_at = datetime.now(UTC)
         self._audit(
             session,
             plan.model_id,
@@ -279,7 +279,7 @@ class DriftZeroService:
                 session,
                 plan.model_id,
                 TelemetryCreate(
-                    observed_at=datetime.now(timezone.utc) + timedelta(seconds=1),
+                    observed_at=datetime.now(UTC) + timedelta(seconds=1),
                     dimensions=result.dimensions,
                     sample_size=result.evaluated_requests,
                     coverage=result.coverage,
@@ -290,7 +290,7 @@ class DriftZeroService:
             plan.state = (
                 RecoveryState.RECOVERED.value if recovered else RecoveryState.FAILED.value
             )
-            plan.verified_at = datetime.now(timezone.utc)
+            plan.verified_at = datetime.now(UTC)
             if recovered:
                 diagnosis = session.get(Diagnosis, plan.diagnosis_id)
                 if diagnosis:
@@ -350,7 +350,7 @@ class DriftZeroService:
         )
         session.add(model)
         session.flush()
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         demo_points = [
             (
                 now - timedelta(minutes=90),
@@ -569,4 +569,3 @@ class DriftZeroService:
             details=record.details,
             created_at=record.created_at,
         )
-
