@@ -70,7 +70,7 @@ Organize the product around exactly three layers:
 - Produce a Model Health Score from 0–100.
 - Health dimensions: quality, groundedness, semantic consistency, temporal consistency, safety, data/concept drift, operational reliability, latency, and cost.
 - Show trends and trajectories, not only static values.
-- Example: CampusGPT health 92 → 87 → 74 → 61; predicted health in 30 minutes: 48.
+- Example: ShopAssist health 92 → 87 → 74 → 61; predicted health in 30 minutes: 48.
 - Detect meaningful degradation while avoiding alerts caused by normal noise.
 
 2. Diagnose — Find the likely cause
@@ -111,7 +111,7 @@ IMPORTANT PRODUCT CONSTRAINTS
 
 PRIMARY DEMO SCENARIO
 
-Use a university assistant called CampusGPT. It answers examination-fee questions using a retrieval knowledge base. A newly issued policy changes the deadline, but the retriever continues serving stale documents. Over a simulated stream of requests:
+Use an e-commerce support assistant called ShopAssist. It answers returns, refunds, and warranty questions using a retrieval knowledge base. A newly issued returns policy changes category-specific rules, but the retriever continues serving a retired document. Over a simulated stream of requests:
 
 - health falls from 92 to 61;
 - the 30-minute forecast falls to 48;
@@ -170,7 +170,7 @@ PHASE 2 — ONLY AFTER PRD APPROVAL
 After I approve the PRD:
 
 1. Convert the approved requirements into small implementation tasks.
-2. Implement a vertical slice first: seeded CampusGPT telemetry → falling health trajectory → diagnosis → approved recovery → verification.
+2. Implement a vertical slice first: seeded ShopAssist telemetry → falling health trajectory → diagnosis → approved recovery → verification.
 3. Then complete the remaining approved MVP requirements.
 4. Keep mock and real integrations behind explicit adapters and label mock behavior.
 5. Add tests for score calculation, degradation alerts, stability evaluation, recovery authorization, rollback, and the main user journey.
@@ -204,7 +204,7 @@ Start Phase 1 now. Do not implement the application yet.
 - Modules: Pulse, Diagnose, Recover.
 - Primary persona: AI/ML platform or reliability engineer.
 - Secondary persona: product/support operator who can inspect incidents but may not execute high-risk recovery.
-- First scenario: CampusGPT knowledge-freshness failure.
+- First scenario: ShopAssist knowledge-freshness failure.
 
 **Exit gate:** one-sentence value proposition, target user, demo scenario, and explicit non-goals are agreed.
 
@@ -261,7 +261,7 @@ Online signals               Evaluation jobs
 
 ### Stage 3 — Build a vertical slice
 
-Build only the CampusGPT story end to end:
+Build only the ShopAssist story end to end:
 
 1. Seed a healthy interval.
 2. Introduce stale retrieval results.
@@ -292,7 +292,7 @@ Add:
 
 Prepare a five-minute narrative:
 
-1. **Healthy:** CampusGPT is at 92.
+1. **Healthy:** ShopAssist is at 92.
 2. **Early warning:** its trajectory declines and predicts 48 within 30 minutes.
 3. **Diagnosis:** stale knowledge is identified with 87% estimated confidence and trace evidence.
 4. **Recovery:** the operator reviews and approves a safe playbook.
@@ -319,7 +319,7 @@ Keep a deterministic reset control, preloaded seed data, and a fallback recordin
 - Recovery playbook with risk level, approval, simulated execution, verification, rollback state, and audit log.
 - Semantic Stability Test.
 - Temporal Stability Test with controlled-input/version checks.
-- Seeded CampusGPT scenario and resettable demo.
+- Seeded ShopAssist scenario and resettable demo.
 
 ### Should have
 
@@ -395,7 +395,7 @@ Resolve product identity
 - Treat “ModelPulse” as either an internal engine name or remove it to prevent brand confusion.
 
 Define the first credible MVP
-- Use the CampusGPT knowledge-freshness incident as the primary vertical slice.
+- Use the ShopAssist knowledge-freshness incident as the primary vertical slice.
 - Begin with seeded, deterministic telemetry.
 - Simulate recovery actions behind provider-neutral adapters.
 - Avoid attempting multiple shallow production integrations initially.
@@ -433,7 +433,7 @@ Stop at the PRD gate
 - I will not begin product implementation until you approve the PRD.
 
 After approval
-- Build the CampusGPT flow end to end.
+- Build the ShopAssist flow end to end.
 - Test it.
 - Commit logically grouped changes.
 - Push only when the repository and branch expectations are confirmed and pushing is part of your instruction.
