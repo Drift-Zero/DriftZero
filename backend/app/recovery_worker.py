@@ -19,6 +19,7 @@ from app.schemas import (
     RecoveryCommandState,
     RecoveryCommandType,
     RecoveryExecuteRequest,
+    RecoveryState,
 )
 from app.service import DriftZeroService
 
@@ -149,15 +150,28 @@ def process_recovery_commands(
             plan_id = command.plan_id
 
         try:
+            recovery = None
             with database.session_factory() as session:
                 if command_type is RecoveryCommandType.EXECUTE:
-                    service.execute_recovery(session, plan_id, payload)
+                    recovery = service.execute_recovery(session, plan_id, payload)
                 elif command_type is RecoveryCommandType.ROLLBACK:
-                    service.rollback_recovery(session, plan_id, payload)
+                    recovery = service.rollback_recovery(session, plan_id, payload)
                 else:
                     if command.snapshot_id is None:
                         raise ValueError("Verification command is missing snapshot_id.")
-                    service.verify_recovery(session, plan_id, command.snapshot_id)
+                    recovery = service.verify_recovery(
+                        session, plan_id, command.snapshot_id
+                    )
+            if recovery is not None and recovery.state is RecoveryState.FAILED:
+                error = recovery.failure_reason or "Recovery verification failed."
+                _finish_command(
+                    database,
+                    command_id,
+                    state=RecoveryCommandState.FAILED,
+                    error=error,
+                )
+                failed += 1
+                continue
             _finish_command(
                 database,
                 command_id,

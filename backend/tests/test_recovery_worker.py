@@ -6,7 +6,7 @@ from datetime import timedelta
 
 from app.config import Settings
 from app.db import Database, RecoveryCommand, utc_now
-from app.recovery import SimulatedRecoveryAdapter
+from app.recovery import RecoveryActionResult, SimulatedRecoveryAdapter
 from app.recovery_worker import _claim_next, process_recovery_commands
 from app.schemas import (
     ActorRequest,
@@ -41,6 +41,16 @@ class FlakyAdapter(SimulatedRecoveryAdapter):
         if self.calls == 1:
             raise RuntimeError("temporary control-plane outage")
         return super().execute_action(**kwargs)
+
+
+class RefusingAdapter(SimulatedRecoveryAdapter):
+    def execute_action(self, **kwargs):
+        return RecoveryActionResult(
+            succeeded=False,
+            affected_traffic_pct=0.0,
+            detail={"provider": "shopassist", "action": kwargs["action"].code},
+            error="ShopAssist recovery control refused the action.",
+        )
 
 
 def _queued(database: Database, service: DriftZeroService):
@@ -100,6 +110,26 @@ def test_worker_executes_a_persisted_command() -> None:
         command = session.get(RecoveryCommand, command_id)
         assert RecoveryCommandState(command.state) is RecoveryCommandState.SUCCEEDED
         assert service.get_recovery(session, plan_id).state is RecoveryState.RECOVERED
+    database.dispose()
+
+
+def test_worker_returns_the_recovery_failure_on_the_command() -> None:
+    database = Database("sqlite://")
+    database.create_schema()
+    service = DriftZeroService(Settings(), recovery_adapter=RefusingAdapter())
+    plan_id, command_id = _queued(database, service)
+
+    summary = process_recovery_commands(database, service, limit=1)
+
+    assert summary.failed == 1
+    assert summary.succeeded == 0
+    with database.session_factory() as session:
+        command = session.get(RecoveryCommand, command_id)
+        assert RecoveryCommandState(command.state) is RecoveryCommandState.FAILED
+        assert command.error == "ShopAssist recovery control refused the action."
+        recovery = service.get_recovery(session, plan_id)
+        assert recovery.state is RecoveryState.FAILED
+        assert recovery.failure_reason == command.error
     database.dispose()
 
 
