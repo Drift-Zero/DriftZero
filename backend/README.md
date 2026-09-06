@@ -177,7 +177,18 @@ spam. Clearing the condition resolves it, and `cooldown_minutes` controls when
 the same rule may fire again. Disabling or deleting a rule resolves active
 alerts, while deleting preserves historical alert records.
 
-Freshness rules need evaluation even when telemetry has stopped. Schedule:
+Freshness rules need evaluation even when telemetry has stopped. Run the
+dedicated worker alongside the API:
+
+```bash
+python -m app.alert_worker
+```
+
+It evaluates active models every
+`DRIFTZERO_ALERT_EVALUATION_INTERVAL_SECONDS` (60 seconds by default), isolates
+failures per model, and emits structured outcome counts. For a cron job or
+container job, use `python -m app.alert_worker --once`. The equivalent HTTP
+trigger is:
 
 ```bash
 curl -X POST http://127.0.0.1:8000/api/v1/models/MODEL_ID/alerts/evaluate \
