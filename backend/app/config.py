@@ -13,6 +13,13 @@ def _environment_bool(name: str, default: bool) -> bool:
     return value.strip().lower() in {"1", "true", "yes", "on"}
 
 
+def _environment_list(name: str, default: tuple[str, ...]) -> tuple[str, ...]:
+    value = os.getenv(name)
+    if value is None:
+        return default
+    return tuple(item.strip() for item in value.split(",") if item.strip())
+
+
 @dataclass(frozen=True, slots=True)
 class Settings:
     """Application settings loaded from environment variables.
@@ -49,6 +56,8 @@ class Settings:
     otel_enabled: bool = False
     otel_service_name: str = "driftzero-api"
     frontend_dir: str | None = None
+    cors_origins: tuple[str, ...] = ()
+    cors_origin_regex: str | None = None
 
     @classmethod
     def from_env(cls) -> Settings:
@@ -175,4 +184,6 @@ class Settings:
                 "DRIFTZERO_OTEL_SERVICE_NAME", defaults.otel_service_name
             ),
             frontend_dir=os.getenv("DRIFTZERO_FRONTEND_DIR") or defaults.frontend_dir,
+            cors_origins=_environment_list("DRIFTZERO_CORS_ORIGINS", defaults.cors_origins),
+            cors_origin_regex=os.getenv("DRIFTZERO_CORS_ORIGIN_REGEX") or None,
         )

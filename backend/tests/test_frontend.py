@@ -50,3 +50,23 @@ def test_production_does_not_enable_local_dashboard_cors() -> None:
         )
 
     assert "access-control-allow-origin" not in response.headers
+
+
+def test_production_allows_configured_vercel_origin() -> None:
+    app = create_app(
+        Settings(
+            database_url="sqlite://",
+            environment="production",
+            cors_origin_regex=r"https://.*\.vercel\.app",
+        )
+    )
+
+    with TestClient(app) as client:
+        response = client.get(
+            "/healthz",
+            headers={"Origin": "https://driftzero-dashboard.vercel.app"},
+        )
+
+    assert response.headers["access-control-allow-origin"] == (
+        "https://driftzero-dashboard.vercel.app"
+    )

@@ -1,3 +1,10 @@
+databases:
+  - name: driftzero-db
+    plan: free
+    region: singapore
+    databaseName: driftzero
+    user: driftzero
+
 services:
   - type: web
     name: driftzero-demo
@@ -12,11 +19,13 @@ services:
       - key: DRIFTZERO_ENVIRONMENT
         value: hackathon-demo
       - key: DRIFTZERO_DATABASE_URL
-        value: sqlite:////data/driftzero.db
+        fromDatabase:
+          name: driftzero-db
+          property: connectionString
       - key: DRIFTZERO_API_PREFIX
         value: /api/v1
-      - key: DRIFTZERO_FRONTEND_DIR
-        value: /app/frontend
+      - key: DRIFTZERO_CORS_ORIGIN_REGEX
+        value: https://.*\.vercel\.app
       - key: DRIFTZERO_LOG_LEVEL
         value: INFO
       - key: DRIFTZERO_RECOVERY_WORKER_INTERVAL_SECONDS

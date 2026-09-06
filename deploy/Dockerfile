@@ -1,22 +1,17 @@
 FROM python:3.12-slim
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONUNBUFFERED=1 \
-    DRIFTZERO_DATABASE_URL=sqlite:////data/driftzero.db \
-    DRIFTZERO_FRONTEND_DIR=/app/frontend
+    PYTHONUNBUFFERED=1
 
 WORKDIR /app
 
 COPY backend/pyproject.toml backend/README.md ./
 COPY backend/app ./app
-RUN python -m pip install --no-cache-dir .
+RUN python -m pip install --no-cache-dir ".[postgres]"
 
-COPY frontend/index.html frontend/styles.css frontend/app.js ./frontend/
 COPY deploy/start.py ./deploy/start.py
 
-RUN useradd --create-home driftzero \
-    && mkdir /data \
-    && chown driftzero:driftzero /data
+RUN useradd --create-home driftzero
 
 USER driftzero
 EXPOSE 10000
