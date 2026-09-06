@@ -610,6 +610,43 @@ class DriftZeroService:
         baseline_snapshot = latest_snapshot(session, plan.model_id)
         try:
             executions = self._apply_actions(session, plan, payload.actor)
+            failed_execution = next(
+                (
+                    execution
+                    for execution in executions
+                    if ExecutionState(execution.state) is ExecutionState.FAILED
+                ),
+                None,
+            )
+            if failed_execution is not None:
+                self._rollback_actions(session, plan, executions, payload.actor)
+                plan.state = RecoveryState.FAILED.value
+                plan.failure_reason = (
+                    failed_execution.error
+                    or f"Recovery action {failed_execution.action_id} failed."
+                )
+                plan.rolled_back_at = datetime.now(UTC)
+                if incident is not None and baseline_snapshot is not None:
+                    self._close_incident(
+                        session,
+                        incident,
+                        baseline_snapshot,
+                        resolved=False,
+                    )
+                self._audit(
+                    session,
+                    plan.model_id,
+                    "recovery.failed",
+                    payload.actor,
+                    {
+                        "plan_id": plan.id,
+                        "failed_execution_id": failed_execution.id,
+                        "reason": plan.failure_reason,
+                    },
+                )
+                session.commit()
+                return self._recovery_response(plan)
+
             result = self.recovery_adapter.execute(model_id=plan.model_id, plan_id=plan.id)
             snapshot = self._record_telemetry(
                 session,
@@ -621,6 +658,7 @@ class DriftZeroService:
                     coverage=result.coverage,
                     source=SignalSource.SIMULATED,
                 ),
+                allow_verifying_resolution=False,
             )
             verification = self._verify(
                 session,
@@ -641,6 +679,8 @@ class DriftZeroService:
                 self._rollback_actions(session, plan, executions, payload.actor)
                 plan.rolled_back_at = datetime.now(UTC)
             if recovered:
+                if incident is not None:
+                    self._close_incident(session, incident, snapshot, resolved=True)
                 diagnosis = session.get(Diagnosis, plan.diagnosis_id)
                 if diagnosis:
                     diagnosis.status = DiagnosisStatus.RESOLVED.value
@@ -1897,6 +1937,8 @@ class DriftZeroService:
         session: Session,
         model_id: str,
         snapshot: HealthSnapshot,
+        *,
+        allow_verifying_resolution: bool = True,
     ) -> Incident | None:
         """Open, deepen or resolve the incident this snapshot implies.
 
@@ -1948,7 +1990,11 @@ class DriftZeroService:
             session.flush()
             return incident
 
-        if incident is not None and IncidentState(incident.state) is IncidentState.VERIFYING:
+        if (
+            allow_verifying_resolution
+            and incident is not None
+            and IncidentState(incident.state) is IncidentState.VERIFYING
+        ):
             self._close_incident(session, incident, snapshot, resolved=True)
         return incident
 
@@ -2080,6 +2126,8 @@ class DriftZeroService:
         session: Session,
         model_id: str,
         payload: TelemetryCreate,
+        *,
+        allow_verifying_resolution: bool = True,
     ) -> HealthSnapshot:
         score = calculate_health(
             payload.dimensions,
@@ -2120,7 +2168,12 @@ class DriftZeroService:
         session.flush()
         self._settle_forecasts(session, record)
         self._store_forecast(session, record)
-        incident = self._sync_incident(session, model_id, record)
+        incident = self._sync_incident(
+            session,
+            model_id,
+            record,
+            allow_verifying_resolution=allow_verifying_resolution,
+        )
         self._evaluate_alert_rules(session, record, incident)
         return record
 

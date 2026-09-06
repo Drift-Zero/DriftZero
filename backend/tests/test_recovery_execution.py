@@ -9,6 +9,9 @@ from sqlalchemy.orm import Session
 
 from app.config import Settings
 from app.db import (
+    AuditEvent,
+    Incident,
+    IncidentState,
     MonitoredModel,
     RecoveryActionRecord,
     RecoveryExecution,
@@ -188,6 +191,10 @@ class TestExecution:
         assert states[0] in {ExecutionState.SUCCEEDED, ExecutionState.ROLLED_BACK}
         assert ExecutionState.FAILED in states
         assert ExecutionState.SKIPPED in states
+        assert response.state is RecoveryState.FAILED
+        assert response.verification is None
+        incident = session.scalar(sa.select(Incident))
+        assert IncidentState(incident.state) is IncidentState.FAILED
 
 
 class TestVerification:
@@ -225,6 +232,12 @@ class TestVerification:
         assert response.state is RecoveryState.FAILED
         safety = next(c for c in run.no_regression_checks if c["metric"] == "safety")
         assert safety["passed"] is False
+
+        events = session.scalars(
+            sa.select(AuditEvent.event_type).where(AuditEvent.model_id == model.id)
+        ).all()
+        assert "incident.resolved" not in events
+        assert events.count("incident.failed") == 1
 
     def test_verification_run_is_persisted(
         self, session: Session, model: MonitoredModel
