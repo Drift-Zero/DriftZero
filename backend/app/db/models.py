@@ -974,7 +974,7 @@ class AlertRule(IdMixin, Base):
     name: Mapped[str] = mapped_column(sa.String(120))
     rule_type: Mapped[str] = mapped_column(sa.String(40), default="threshold")
     metric: Mapped[str] = mapped_column(sa.String(80))
-    comparator: Mapped[str | None] = mapped_column(sa.String(10), default="lt")
+    comparator: Mapped[str | None] = mapped_column(sa.String(10))
     threshold: Mapped[float | None] = mapped_column()
     target_state: Mapped[str | None] = mapped_column(sa.String(40))
     window_minutes: Mapped[int] = mapped_column(default=15)
