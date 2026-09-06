@@ -100,6 +100,7 @@ class ModelVersionCreate(BaseModel):
     tools: list[str] = Field(default_factory=list, max_length=100)
     corpus_version: str | None = Field(default=None, max_length=80)
     evaluation_policy_version: str = Field(default="health-v1", min_length=1, max_length=40)
+    actor: str = Field(default="system", min_length=1, max_length=120)
 
 
 class ModelCreate(BaseModel):
