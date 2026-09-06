@@ -83,6 +83,34 @@ class Comparator(StrEnum):
     GTE = "gte"
 
 
+class AlertRuleType(StrEnum):
+    """Supported alert evaluation strategies."""
+
+    THRESHOLD = "threshold"
+    TRANSITION = "transition"
+    TRAJECTORY = "trajectory"
+    COVERAGE = "coverage"
+    EVALUATION_FRESHNESS = "evaluation_freshness"
+
+
+class AlertMetric(StrEnum):
+    SCORE = "score"
+    QUALITY = "quality"
+    GROUNDEDNESS = "groundedness"
+    SEMANTIC_STABILITY = "semantic_stability"
+    TEMPORAL_STABILITY = "temporal_stability"
+    SAFETY = "safety"
+    DRIFT = "drift"
+    RELIABILITY = "reliability"
+    LATENCY = "latency"
+    COST = "cost"
+    STATE = "state"
+    COVERAGE = "coverage"
+    FORECAST_SCORE = "forecast_score"
+    FORECAST_CHANGE_PER_HOUR = "forecast_change_per_hour"
+    EVALUATION_AGE_MINUTES = "evaluation_age_minutes"
+
+
 class StabilityKind(StrEnum):
     SEMANTIC = "semantic"
     TEMPORAL = "temporal"
@@ -541,24 +569,115 @@ class RecoveryPlanResponse(BaseModel):
     verification: VerificationRunResponse | None = None
 
 
-class AlertRuleCreate(BaseModel):
+class AlertRuleDefinition(BaseModel):
     name: str = Field(min_length=1, max_length=120)
-    metric: str = Field(default="score", max_length=80)
-    comparator: Comparator = Comparator.LT
-    threshold: float
-    window_minutes: int = Field(default=15, ge=1)
-    cooldown_minutes: int = Field(default=30, ge=0)
+    rule_type: AlertRuleType = AlertRuleType.THRESHOLD
+    metric: AlertMetric = AlertMetric.SCORE
+    comparator: Comparator | None = Comparator.LT
+    threshold: float | None = None
+    target_state: HealthState | None = None
+    window_minutes: int = Field(default=15, ge=1, le=10_080)
+    cooldown_minutes: int = Field(default=30, ge=0, le=10_080)
+    minimum_consecutive_windows: int = Field(default=1, ge=1, le=100)
     severity: Severity = Severity.MEDIUM
-    channel: str = Field(default="in_app", max_length=40)
+    channel: Literal["in_app"] = "in_app"
     is_enabled: bool = True
 
+    @model_validator(mode="after")
+    def validate_strategy(self) -> AlertRuleDefinition:
+        dimension_metrics = {
+            AlertMetric.SCORE,
+            AlertMetric.QUALITY,
+            AlertMetric.GROUNDEDNESS,
+            AlertMetric.SEMANTIC_STABILITY,
+            AlertMetric.TEMPORAL_STABILITY,
+            AlertMetric.SAFETY,
+            AlertMetric.DRIFT,
+            AlertMetric.RELIABILITY,
+            AlertMetric.LATENCY,
+            AlertMetric.COST,
+        }
+        expected_metrics = {
+            AlertRuleType.THRESHOLD: dimension_metrics,
+            AlertRuleType.TRANSITION: {AlertMetric.STATE},
+            AlertRuleType.TRAJECTORY: {
+                AlertMetric.FORECAST_SCORE,
+                AlertMetric.FORECAST_CHANGE_PER_HOUR,
+            },
+            AlertRuleType.COVERAGE: {AlertMetric.COVERAGE},
+            AlertRuleType.EVALUATION_FRESHNESS: {AlertMetric.EVALUATION_AGE_MINUTES},
+        }
+        if self.metric not in expected_metrics[self.rule_type]:
+            allowed = ", ".join(sorted(item.value for item in expected_metrics[self.rule_type]))
+            raise ValueError(f"{self.rule_type.value} rules require one of: {allowed}.")
 
-class AlertRuleResponse(AlertRuleCreate):
+        if self.rule_type is AlertRuleType.TRANSITION:
+            if self.target_state is None:
+                raise ValueError("Transition rules require target_state.")
+            if self.target_state is HealthState.INSUFFICIENT_DATA:
+                raise ValueError("Use a coverage rule instead of alerting on insufficient_data.")
+            if self.threshold is not None or self.comparator is not None:
+                raise ValueError("Transition rules do not accept comparator or threshold.")
+        else:
+            if self.threshold is None or self.comparator is None:
+                raise ValueError(f"{self.rule_type.value} rules require comparator and threshold.")
+            if self.target_state is not None:
+                raise ValueError("target_state is only valid for transition rules.")
+
+        if (
+            self.metric in dimension_metrics | {AlertMetric.FORECAST_SCORE}
+            and self.threshold is not None
+            and not 0 <= self.threshold <= 100
+        ):
+            raise ValueError(f"{self.metric.value} thresholds must be between 0 and 100.")
+        if (
+            self.metric is AlertMetric.COVERAGE
+            and self.threshold is not None
+            and not 0 <= self.threshold <= 1
+        ):
+            raise ValueError("Coverage thresholds must be between 0 and 1.")
+        if (
+            self.metric is AlertMetric.EVALUATION_AGE_MINUTES
+            and self.threshold is not None
+            and self.threshold < 0
+        ):
+            raise ValueError("Evaluation freshness thresholds cannot be negative.")
+        return self
+
+
+class AlertRuleCreate(AlertRuleDefinition):
+    actor: str = Field(default="system", min_length=1, max_length=120, exclude=True)
+
+
+class AlertRuleUpdate(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=120)
+    rule_type: AlertRuleType | None = None
+    metric: AlertMetric | None = None
+    comparator: Comparator | None = None
+    threshold: float | None = None
+    target_state: HealthState | None = None
+    window_minutes: int | None = Field(default=None, ge=1, le=10_080)
+    cooldown_minutes: int | None = Field(default=None, ge=0, le=10_080)
+    minimum_consecutive_windows: int | None = Field(default=None, ge=1, le=100)
+    severity: Severity | None = None
+    channel: Literal["in_app"] | None = None
+    is_enabled: bool | None = None
+    actor: str = Field(min_length=1, max_length=120)
+
+    @model_validator(mode="after")
+    def require_change(self) -> AlertRuleUpdate:
+        if self.model_fields_set == {"actor"}:
+            raise ValueError("At least one alert rule field must be supplied.")
+        return self
+
+
+class AlertRuleResponse(AlertRuleDefinition):
     model_config = ConfigDict(from_attributes=True)
 
     id: str
     model_id: str
     created_at: datetime
+    updated_at: datetime
 
 
 class AlertResponse(BaseModel):
@@ -572,10 +691,39 @@ class AlertResponse(BaseModel):
     state: AlertState
     severity: Severity
     message: str
+    observed_value: float | None = None
+    details: dict[str, object] = Field(default_factory=dict)
     fired_at: datetime
     acknowledged_at: datetime | None = None
     acknowledged_by: str | None = None
     resolved_at: datetime | None = None
+    resolution_reason: str | None = None
+    notified_at: datetime | None = None
+
+
+class AlertResolveRequest(BaseModel):
+    actor: str = Field(min_length=1, max_length=120)
+    reason: str = Field(min_length=1, max_length=1000)
+
+
+class AlertEvaluationRequest(BaseModel):
+    actor: str = Field(default="alerting-engine", min_length=1, max_length=120)
+    evaluated_at: datetime = Field(default_factory=utc_now)
+
+
+class AlertEvaluationResponse(BaseModel):
+    model_id: str
+    evaluated_at: datetime
+    evaluated_rules: int
+    fired: list[AlertResponse] = Field(default_factory=list)
+    resolved: list[AlertResponse] = Field(default_factory=list)
+
+
+class AlertFeedResponse(BaseModel):
+    items: list[AlertResponse]
+    total: int
+    firing: int
+    acknowledged: int
 
 
 class ReviewQueueItemResponse(BaseModel):
