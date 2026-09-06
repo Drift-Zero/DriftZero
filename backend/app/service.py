@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import delete, select
@@ -16,11 +18,14 @@ from app.database import (
     RecoveryPlan,
 )
 from app.db import (
+    DEFAULT_TENANT_ID,
     DiagnosisEvidence,
     Incident,
     KnowledgeDocument,
     KnowledgeSource,
     KnowledgeStatus,
+    ModelStatus,
+    ModelVersion,
     Trace,
     ensure_health_policy,
     traces_for_metric,
@@ -42,10 +47,16 @@ from app.schemas import (
     IncidentResponse,
     IncidentState,
     ModelCreate,
+    ModelLifecycleUpdate,
     ModelResponse,
+    ModelUpdate,
+    ModelVersionCreate,
+    ModelVersionResponse,
     RecoveryAction,
     RecoveryPlanResponse,
     RecoveryState,
+    RegistrationCheck,
+    RegistrationStatusResponse,
     RiskLevel,
     Severity,
     SignalSource,
@@ -85,23 +96,256 @@ class DriftZeroService:
         self.recovery_adapter = recovery_adapter or SimulatedRecoveryAdapter()
 
     def create_model(self, session: Session, payload: ModelCreate) -> ModelResponse:
-        existing = session.scalar(select(MonitoredModel).where(MonitoredModel.name == payload.name))
+        existing = session.scalar(
+            select(MonitoredModel).where(
+                MonitoredModel.tenant_id == DEFAULT_TENANT_ID,
+                MonitoredModel.name == payload.name,
+            )
+        )
         if existing:
             raise ResourceConflict(f"A monitored model named '{payload.name}' already exists.")
 
-        record = MonitoredModel(**payload.model_dump())
+        record = MonitoredModel(
+            **payload.model_dump(exclude={"actor", "initial_version"}),
+            tenant_id=DEFAULT_TENANT_ID,
+        )
         session.add(record)
         session.flush()
-        self._audit(session, record.id, "model.created", "system", payload.model_dump())
+        version = None
+        if payload.initial_version is not None:
+            version = self._create_model_version(session, record, payload.initial_version)
+        self._audit(
+            session,
+            record.id,
+            "model.created",
+            payload.actor,
+            {
+                "name": record.name,
+                "provider": record.provider,
+                "environment": record.environment,
+                "retention_days": record.retention_days,
+                "initial_version_id": version.id if version else None,
+            },
+        )
         session.commit()
         return self._model_response(record)
 
     def list_models(self, session: Session) -> list[ModelResponse]:
-        records = session.scalars(select(MonitoredModel).order_by(MonitoredModel.name)).all()
+        records = session.scalars(
+            select(MonitoredModel)
+            .where(MonitoredModel.tenant_id == DEFAULT_TENANT_ID)
+            .order_by(MonitoredModel.name)
+        ).all()
         return [self._model_response(record) for record in records]
 
     def get_model(self, session: Session, model_id: str) -> ModelResponse:
         return self._model_response(self._require_model(session, model_id))
+
+    def update_model(
+        self,
+        session: Session,
+        model_id: str,
+        payload: ModelUpdate,
+    ) -> ModelResponse:
+        record = self._require_model(session, model_id)
+        changes = payload.model_dump(exclude_unset=True, exclude={"actor"})
+        if "name" in changes and changes["name"] != record.name:
+            duplicate = session.scalar(
+                select(MonitoredModel).where(
+                    MonitoredModel.tenant_id == record.tenant_id,
+                    MonitoredModel.name == changes["name"],
+                    MonitoredModel.id != model_id,
+                )
+            )
+            if duplicate:
+                raise ResourceConflict(
+                    f"A monitored model named '{changes['name']}' already exists."
+                )
+
+        previous = {name: getattr(record, name) for name in changes}
+        for name, value in changes.items():
+            setattr(record, name, value)
+        session.flush()
+        self._audit(
+            session,
+            record.id,
+            "model.updated",
+            payload.actor,
+            {"before": previous, "after": changes},
+        )
+        session.commit()
+        return self._model_response(record)
+
+    def update_model_lifecycle(
+        self,
+        session: Session,
+        model_id: str,
+        payload: ModelLifecycleUpdate,
+    ) -> ModelResponse:
+        record = self._require_model(session, model_id)
+        requested = ModelStatus(payload.status)
+        current = ModelStatus(record.status)
+        if current is ModelStatus.RETIRED and requested is not ModelStatus.RETIRED:
+            raise InvalidTransition("A retired model cannot be reactivated.")
+        if current is requested:
+            return self._model_response(record)
+
+        record.status = requested
+        self._audit(
+            session,
+            record.id,
+            "model.lifecycle_changed",
+            payload.actor,
+            {"from": current.value, "to": requested.value},
+        )
+        session.commit()
+        return self._model_response(record)
+
+    def create_model_version(
+        self,
+        session: Session,
+        model_id: str,
+        payload: ModelVersionCreate,
+        *,
+        actor: str,
+    ) -> ModelVersionResponse:
+        model = self._require_model(session, model_id)
+        if ModelStatus(model.status) is ModelStatus.RETIRED:
+            raise InvalidTransition("Cannot add a version to a retired model.")
+        version = self._create_model_version(session, model, payload)
+        self._audit(
+            session,
+            model.id,
+            "model.version_created",
+            actor,
+            {
+                "version_id": version.id,
+                "label": version.label,
+                "fingerprint": version.fingerprint,
+            },
+        )
+        session.commit()
+        return ModelVersionResponse.model_validate(version)
+
+    def list_model_versions(
+        self,
+        session: Session,
+        model_id: str,
+    ) -> list[ModelVersionResponse]:
+        self._require_model(session, model_id)
+        records = session.scalars(
+            select(ModelVersion)
+            .where(ModelVersion.model_id == model_id)
+            .order_by(ModelVersion.created_at.desc())
+        ).all()
+        return [ModelVersionResponse.model_validate(record) for record in records]
+
+    def activate_model_version(
+        self,
+        session: Session,
+        model_id: str,
+        version_id: str,
+        *,
+        actor: str,
+    ) -> ModelVersionResponse:
+        model = self._require_model(session, model_id)
+        if ModelStatus(model.status) is ModelStatus.RETIRED:
+            raise InvalidTransition("Cannot activate a version of a retired model.")
+        target = session.scalar(
+            select(ModelVersion).where(
+                ModelVersion.id == version_id,
+                ModelVersion.model_id == model_id,
+            )
+        )
+        if target is None:
+            raise ResourceNotFound("Model version not found.")
+        if target.active_to is None:
+            return ModelVersionResponse.model_validate(target)
+
+        now = datetime.now(UTC)
+        active_versions = session.scalars(
+            select(ModelVersion).where(
+                ModelVersion.model_id == model_id,
+                ModelVersion.active_to.is_(None),
+            )
+        ).all()
+        for version in active_versions:
+            version.active_to = now
+        target.active_from = now
+        target.active_to = None
+        self._audit(
+            session,
+            model.id,
+            "model.version_activated",
+            actor,
+            {"version_id": target.id, "fingerprint": target.fingerprint},
+        )
+        session.commit()
+        return ModelVersionResponse.model_validate(target)
+
+    def registration_status(
+        self,
+        session: Session,
+        model_id: str,
+    ) -> RegistrationStatusResponse:
+        model = self._require_model(session, model_id)
+        active_version = self._active_model_version(session, model_id)
+        latest_snapshot = session.scalar(
+            select(HealthSnapshot)
+            .where(HealthSnapshot.model_id == model_id)
+            .order_by(HealthSnapshot.observed_at.desc())
+            .limit(1)
+        )
+        active = ModelStatus(model.status) is ModelStatus.ACTIVE
+        checks = [
+            RegistrationCheck(
+                code="identity_registered",
+                passed=True,
+                detail="The monitored model has a persistent DriftZero ID.",
+            ),
+            RegistrationCheck(
+                code="lifecycle_active",
+                passed=active,
+                detail=f"Model lifecycle state is '{ModelStatus(model.status).value}'.",
+            ),
+            RegistrationCheck(
+                code="provider_configured",
+                passed=bool(model.provider.strip()),
+                detail=f"Telemetry is attributed to provider '{model.provider}'.",
+            ),
+            RegistrationCheck(
+                code="active_version_fingerprinted",
+                passed=active_version is not None,
+                detail=(
+                    "Controlled model inputs have a reproducible fingerprint."
+                    if active_version
+                    else "Register a model version before sending production telemetry."
+                ),
+            ),
+            RegistrationCheck(
+                code="telemetry_received",
+                passed=latest_snapshot is not None,
+                detail=(
+                    "At least one health snapshot has been stored."
+                    if latest_snapshot
+                    else "Registration is ready, but no telemetry has arrived yet."
+                ),
+            ),
+        ]
+        ready = active and active_version is not None and bool(model.provider.strip())
+        if not active:
+            monitoring_state = "paused"
+        elif latest_snapshot is None:
+            monitoring_state = "awaiting_telemetry"
+        else:
+            monitoring_state = "receiving_telemetry"
+        return RegistrationStatusResponse(
+            model_id=model.id,
+            ready_for_telemetry=ready,
+            monitoring_state=monitoring_state,
+            active_version_id=active_version.id if active_version else None,
+            checks=checks,
+        )
 
     def record_telemetry(
         self,
@@ -906,9 +1150,92 @@ class DriftZeroService:
         horizon = timedelta(minutes=self.settings.forecast_horizon_minutes)
         return payload.observed_at - horizon, payload.observed_at
 
+    def _create_model_version(
+        self,
+        session: Session,
+        model: MonitoredModel,
+        payload: ModelVersionCreate,
+    ) -> ModelVersion:
+        config_hash = self._canonical_hash(payload.configuration)
+        tool_set_hash = self._canonical_hash(sorted(set(payload.tools)))
+        fingerprint = self._canonical_hash(
+            {
+                "model_identifier": payload.model_identifier,
+                "prompt_version": payload.prompt_version,
+                "config_hash": config_hash,
+                "tool_set_hash": tool_set_hash,
+                "corpus_version": payload.corpus_version,
+                "evaluation_policy_version": payload.evaluation_policy_version,
+            }
+        )
+        duplicate = session.scalar(
+            select(ModelVersion).where(
+                ModelVersion.model_id == model.id,
+                ModelVersion.fingerprint == fingerprint,
+            )
+        )
+        if duplicate:
+            raise ResourceConflict(
+                "This exact model, prompt, tool, corpus, and evaluation configuration "
+                "is already registered."
+            )
+
+        now = datetime.now(UTC)
+        active_versions = session.scalars(
+            select(ModelVersion).where(
+                ModelVersion.model_id == model.id,
+                ModelVersion.active_to.is_(None),
+            )
+        ).all()
+        for version in active_versions:
+            version.active_to = now
+
+        version = ModelVersion(
+            model_id=model.id,
+            label=payload.label,
+            model_identifier=payload.model_identifier,
+            prompt_version=payload.prompt_version,
+            config_hash=config_hash,
+            tool_set_hash=tool_set_hash,
+            corpus_version=payload.corpus_version,
+            evaluation_policy_version=payload.evaluation_policy_version,
+            fingerprint=fingerprint,
+            active_from=now,
+        )
+        session.add(version)
+        session.flush()
+        return version
+
+    @staticmethod
+    def _active_model_version(session: Session, model_id: str) -> ModelVersion | None:
+        return session.scalar(
+            select(ModelVersion)
+            .where(
+                ModelVersion.model_id == model_id,
+                ModelVersion.active_to.is_(None),
+            )
+            .order_by(ModelVersion.active_from.desc())
+            .limit(1)
+        )
+
+    @staticmethod
+    def _canonical_hash(value: object) -> str:
+        serialized = json.dumps(
+            value,
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=True,
+        )
+        return hashlib.sha256(serialized.encode("utf-8")).hexdigest()
+
     @staticmethod
     def _require_model(session: Session, model_id: str) -> MonitoredModel:
-        record = session.get(MonitoredModel, model_id)
+        record = session.scalar(
+            select(MonitoredModel).where(
+                MonitoredModel.id == model_id,
+                MonitoredModel.tenant_id == DEFAULT_TENANT_ID,
+            )
+        )
         if not record:
             raise ResourceNotFound("Monitored model not found.")
         return record
