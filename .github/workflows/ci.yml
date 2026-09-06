@@ -56,7 +56,27 @@ jobs:
       - name: Build single-container deployment
         run: docker build --file deploy/Dockerfile --tag driftzero-deploy:test .
       - name: Start stack
-        run: docker compose up --detach --wait
+        run: |
+          docker compose up --detach
+
+          for attempt in {1..30}; do
+            if curl --fail --silent http://localhost:8000/healthz >/dev/null \
+              && curl --fail --silent http://localhost:3000/healthz >/dev/null; then
+              break
+            fi
+            if [ "$attempt" -eq 30 ]; then
+              echo "API and dashboard did not become healthy in time" >&2
+              exit 1
+            fi
+            sleep 2
+          done
+
+          for service in alert-worker recovery-worker retention-worker; do
+            if [ "$(docker compose ps --status running --services "$service")" != "$service" ]; then
+              echo "$service is not running" >&2
+              exit 1
+            fi
+          done
       - name: Verify dashboard and recovery flow
         run: python scripts/smoke_test.py --base-url http://localhost:3000
       - name: Verify single-container deployment
