@@ -7,9 +7,10 @@ import json
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session
 
+from app.alerting import AlertEvaluation, AlertEvaluator
 from app.config import Settings
 from app.database import (
     AuditEvent,
@@ -53,12 +54,17 @@ from app.redaction import REDACTION_POLICY_VERSION, content_hash, redact
 from app.schemas import (
     ActorRequest,
     ActorType,
+    AlertEvaluationRequest,
+    AlertEvaluationResponse,
+    AlertFeedResponse,
+    AlertResolveRequest,
     AlertResponse,
     AlertRuleCreate,
+    AlertRuleDefinition,
     AlertRuleResponse,
+    AlertRuleUpdate,
     AlertState,
     AuditEventResponse,
-    Comparator,
     DemoResetResponse,
     DiagnosisResponse,
     DiagnosisStatus,
@@ -133,6 +139,7 @@ class DriftZeroService:
         self.settings = settings
         self.recovery_adapter = recovery_adapter or SimulatedRecoveryAdapter()
         self.evaluator = evaluator or SimulatedEvaluator()
+        self.alert_evaluator = AlertEvaluator()
 
     def create_model(self, session: Session, payload: ModelCreate) -> ModelResponse:
         existing = session.scalar(
@@ -1003,13 +1010,6 @@ class DriftZeroService:
     # Alerting
     # ---------------------------------------------------------------- #
 
-    _COMPARATORS = {
-        Comparator.LT: lambda value, threshold: value < threshold,
-        Comparator.LTE: lambda value, threshold: value <= threshold,
-        Comparator.GT: lambda value, threshold: value > threshold,
-        Comparator.GTE: lambda value, threshold: value >= threshold,
-    }
-
     def create_alert_rule(
         self,
         session: Session,
@@ -1018,26 +1018,34 @@ class DriftZeroService:
     ) -> AlertRuleResponse:
         self._require_model(session, model_id)
         existing = session.scalar(
-            select(AlertRule).where(
-                AlertRule.model_id == model_id, AlertRule.name == payload.name
-            )
+            select(AlertRule).where(AlertRule.model_id == model_id, AlertRule.name == payload.name)
         )
         if existing is not None:
             raise ResourceConflict(f"An alert rule named '{payload.name}' already exists.")
 
         rule = AlertRule(
             model_id=model_id,
-            **payload.model_dump(exclude={"comparator", "severity"}),
-            comparator=payload.comparator.value,
-            severity=payload.severity.value,
+            **payload.model_dump(exclude={"actor"}, mode="json"),
         )
         session.add(rule)
         session.flush()
         self._audit(
-            session, model_id, "alert_rule.created", "system", {"rule_id": rule.id}
+            session,
+            model_id,
+            "alert_rule.created",
+            payload.actor,
+            {
+                "rule_id": rule.id,
+                "rule_type": rule.rule_type,
+                "metric": rule.metric,
+                "severity": rule.severity,
+            },
         )
         session.commit()
         return AlertRuleResponse.model_validate(rule)
+
+    def get_alert_rule(self, session: Session, rule_id: str) -> AlertRuleResponse:
+        return AlertRuleResponse.model_validate(self._require_alert_rule(session, rule_id))
 
     def list_alert_rules(self, session: Session, model_id: str) -> list[AlertRuleResponse]:
         self._require_model(session, model_id)
@@ -1045,6 +1053,103 @@ class DriftZeroService:
             select(AlertRule).where(AlertRule.model_id == model_id).order_by(AlertRule.name)
         ).all()
         return [AlertRuleResponse.model_validate(record) for record in records]
+
+    def update_alert_rule(
+        self,
+        session: Session,
+        rule_id: str,
+        payload: AlertRuleUpdate,
+    ) -> AlertRuleResponse:
+        rule = self._require_alert_rule(session, rule_id)
+        changes = payload.model_dump(exclude_unset=True, exclude={"actor"}, mode="json")
+        if "name" in changes and changes["name"] != rule.name:
+            duplicate = session.scalar(
+                select(AlertRule).where(
+                    AlertRule.model_id == rule.model_id,
+                    AlertRule.name == changes["name"],
+                    AlertRule.id != rule.id,
+                )
+            )
+            if duplicate is not None:
+                raise ResourceConflict(f"An alert rule named '{changes['name']}' already exists.")
+
+        current = {field: getattr(rule, field) for field in AlertRuleDefinition.model_fields}
+        validated = AlertRuleDefinition.model_validate({**current, **changes})
+        normalized = validated.model_dump(mode="json")
+        previous = {field: current[field] for field in changes}
+        for field, value in normalized.items():
+            setattr(rule, field, value)
+
+        resolved: list[Alert] = []
+        if not rule.is_enabled:
+            evaluated_at = datetime.now(UTC)
+            resolved = self.alert_evaluator.resolve_rule_alerts(
+                session,
+                rule.id,
+                evaluated_at=evaluated_at,
+                reason="rule_disabled",
+            )
+            self._audit_alert_transitions(
+                session,
+                AlertEvaluation(
+                    evaluated_at=evaluated_at,
+                    evaluated_rules=0,
+                    fired=[],
+                    resolved=resolved,
+                ),
+            )
+        session.flush()
+        self._audit(
+            session,
+            rule.model_id,
+            "alert_rule.updated",
+            payload.actor,
+            {
+                "rule_id": rule.id,
+                "before": previous,
+                "after": {field: normalized[field] for field in changes},
+                "resolved_alert_ids": [alert.id for alert in resolved],
+            },
+        )
+        session.commit()
+        return AlertRuleResponse.model_validate(rule)
+
+    def delete_alert_rule(
+        self,
+        session: Session,
+        rule_id: str,
+        payload: ActorRequest,
+    ) -> None:
+        rule = self._require_alert_rule(session, rule_id)
+        evaluated_at = datetime.now(UTC)
+        resolved = self.alert_evaluator.resolve_rule_alerts(
+            session,
+            rule.id,
+            evaluated_at=evaluated_at,
+            reason="rule_deleted",
+        )
+        self._audit_alert_transitions(
+            session,
+            AlertEvaluation(
+                evaluated_at=evaluated_at,
+                evaluated_rules=0,
+                fired=[],
+                resolved=resolved,
+            ),
+        )
+        self._audit(
+            session,
+            rule.model_id,
+            "alert_rule.deleted",
+            payload.actor,
+            {
+                "rule_id": rule.id,
+                "name": rule.name,
+                "resolved_alert_ids": [alert.id for alert in resolved],
+            },
+        )
+        session.delete(rule)
+        session.commit()
 
     def list_alerts(
         self,
@@ -1058,17 +1163,58 @@ class DriftZeroService:
         statement = select(Alert).where(Alert.model_id == model_id)
         if state is not None:
             statement = statement.where(Alert.state == state.value)
-        records = session.scalars(
-            statement.order_by(Alert.fired_at.desc()).limit(limit)
-        ).all()
+        records = session.scalars(statement.order_by(Alert.fired_at.desc()).limit(limit)).all()
         return [AlertResponse.model_validate(record) for record in records]
+
+    def alert_feed(
+        self,
+        session: Session,
+        *,
+        state: AlertState | None = None,
+        limit: int = 100,
+    ) -> AlertFeedResponse:
+        base = (
+            select(Alert)
+            .join(MonitoredModel, MonitoredModel.id == Alert.model_id)
+            .where(MonitoredModel.tenant_id == DEFAULT_TENANT_ID)
+        )
+        if state is not None:
+            base = base.where(Alert.state == state.value)
+        records = list(session.scalars(base.order_by(Alert.fired_at.desc()).limit(limit)).all())
+        count_base = (
+            select(func.count())
+            .select_from(Alert)
+            .join(MonitoredModel, MonitoredModel.id == Alert.model_id)
+            .where(MonitoredModel.tenant_id == DEFAULT_TENANT_ID)
+        )
+        if state is not None:
+            count_base = count_base.where(Alert.state == state.value)
+        total = int(session.scalar(count_base) or 0)
+        raw_counts = dict(
+            session.execute(
+                select(Alert.state, func.count())
+                .join(MonitoredModel, MonitoredModel.id == Alert.model_id)
+                .where(MonitoredModel.tenant_id == DEFAULT_TENANT_ID)
+                .group_by(Alert.state)
+            ).all()
+        )
+        counts = {AlertState(state): count for state, count in raw_counts.items()}
+        return AlertFeedResponse(
+            items=[AlertResponse.model_validate(record) for record in records],
+            total=total,
+            firing=int(counts.get(AlertState.FIRING, 0)),
+            acknowledged=int(counts.get(AlertState.ACKNOWLEDGED, 0)),
+        )
+
+    def get_alert(self, session: Session, alert_id: str) -> AlertResponse:
+        return AlertResponse.model_validate(self._require_alert(session, alert_id))
 
     def acknowledge_alert(
         self, session: Session, alert_id: str, payload: ActorRequest
     ) -> AlertResponse:
-        alert = session.get(Alert, alert_id)
-        if alert is None:
-            raise ResourceNotFound("Alert not found.")
+        alert = self._require_alert(session, alert_id)
+        if AlertState(alert.state) is AlertState.RESOLVED:
+            raise InvalidTransition("A resolved alert cannot be acknowledged.")
         if AlertState(alert.state) is AlertState.FIRING:
             alert.state = AlertState.ACKNOWLEDGED.value
             alert.acknowledged_at = datetime.now(UTC)
@@ -1083,92 +1229,114 @@ class DriftZeroService:
             session.commit()
         return AlertResponse.model_validate(alert)
 
+    def resolve_alert(
+        self,
+        session: Session,
+        alert_id: str,
+        payload: AlertResolveRequest,
+    ) -> AlertResponse:
+        alert = self._require_alert(session, alert_id)
+        if AlertState(alert.state) is not AlertState.RESOLVED:
+            alert.state = AlertState.RESOLVED.value
+            alert.resolved_at = datetime.now(UTC)
+            alert.resolution_reason = payload.reason
+            self._audit(
+                session,
+                alert.model_id,
+                "alert.resolved",
+                payload.actor,
+                {
+                    "alert_id": alert.id,
+                    "rule_id": alert.rule_id,
+                    "summary": payload.reason,
+                },
+            )
+            session.commit()
+        return AlertResponse.model_validate(alert)
+
+    def evaluate_alerts(
+        self,
+        session: Session,
+        model_id: str,
+        payload: AlertEvaluationRequest,
+    ) -> AlertEvaluationResponse:
+        model = self._require_model(session, model_id)
+        snapshot = latest_snapshot(session, model_id)
+        result = self.alert_evaluator.evaluate(
+            session,
+            model,
+            snapshot=snapshot,
+            incident=self._open_incident(session, model_id),
+            evaluated_at=payload.evaluated_at,
+        )
+        self._audit_alert_transitions(session, result, actor=payload.actor)
+        session.commit()
+        return self._alert_evaluation_response(model_id, result)
+
     def _evaluate_alert_rules(
         self,
         session: Session,
         snapshot: HealthSnapshot,
         incident: Incident | None,
+    ) -> AlertEvaluation:
+        model = self._require_model(session, snapshot.model_id)
+        result = self.alert_evaluator.evaluate(
+            session,
+            model,
+            snapshot=snapshot,
+            incident=incident,
+            evaluated_at=snapshot.observed_at,
+        )
+        self._audit_alert_transitions(session, result)
+        return result
+
+    def _audit_alert_transitions(
+        self,
+        session: Session,
+        result: AlertEvaluation,
+        *,
+        actor: str = "alerting-engine",
     ) -> None:
-        """Fire or resolve alerts for a newly recorded snapshot.
-
-        A rule that is already firing is not fired again until its cooldown has
-        elapsed, so a sustained failure produces one alert rather than one per
-        window. When the metric recovers, the open alert is resolved rather than
-        left for someone to clear by hand.
-        """
-
-        rules = session.scalars(
-            select(AlertRule).where(
-                AlertRule.model_id == snapshot.model_id, AlertRule.is_enabled.is_(True)
-            )
-        ).all()
-        now = datetime.now(UTC)
-
-        for rule in rules:
-            value = getattr(snapshot, rule.metric, None)
-            if value is None:
-                # An unmeasured metric is not a breach; alerting on missing data
-                # would turn every gap into a page.
-                continue
-
-            breached = self._COMPARATORS[Comparator(rule.comparator)](value, rule.threshold)
-            open_alert = session.scalar(
-                select(Alert)
-                .where(
-                    Alert.rule_id == rule.id,
-                    Alert.state.in_([AlertState.FIRING.value, AlertState.ACKNOWLEDGED.value]),
-                )
-                .order_by(Alert.fired_at.desc())
-                .limit(1)
-            )
-
-            if not breached:
-                if open_alert is not None:
-                    open_alert.state = AlertState.RESOLVED.value
-                    open_alert.resolved_at = now
-                    self._audit(
-                        session,
-                        snapshot.model_id,
-                        "alert.resolved",
-                        "alerting-engine",
-                        {"alert_id": open_alert.id, "rule_id": rule.id, "value": value},
-                    )
-                continue
-
-            if open_alert is not None:
-                continue
-
-            recent = session.scalar(
-                select(Alert)
-                .where(Alert.rule_id == rule.id)
-                .order_by(Alert.fired_at.desc())
-                .limit(1)
-            )
-            if recent is not None and recent.resolved_at is not None:
-                cooled = recent.resolved_at + timedelta(minutes=rule.cooldown_minutes)
-                if now < cooled:
-                    continue
-
-            alert = Alert(
-                rule_id=rule.id,
-                model_id=snapshot.model_id,
-                snapshot_id=snapshot.id,
-                incident_id=incident.id if incident else None,
-                severity=rule.severity,
-                message=(
-                    f"{rule.metric} is {value} ({rule.comparator} {rule.threshold}): {rule.name}"
-                ),
-                fired_at=now,
-            )
-            session.add(alert)
-            session.flush()
+        for alert in result.fired:
             self._audit(
                 session,
-                snapshot.model_id,
+                alert.model_id,
                 "alert.fired",
-                "alerting-engine",
-                {"alert_id": alert.id, "rule_id": rule.id, "value": value},
+                actor,
+                {
+                    "alert_id": alert.id,
+                    "rule_id": alert.rule_id,
+                    "incident_id": alert.incident_id,
+                    "value": alert.observed_value,
+                    "severity": alert.severity,
+                },
             )
+        for alert in result.resolved:
+            self._audit(
+                session,
+                alert.model_id,
+                "alert.resolved",
+                actor,
+                {
+                    "alert_id": alert.id,
+                    "rule_id": alert.rule_id,
+                    "value": alert.observed_value,
+                    "summary": alert.resolution_reason,
+                },
+            )
+
+    @staticmethod
+    def _alert_evaluation_response(
+        model_id: str,
+        result: AlertEvaluation,
+    ) -> AlertEvaluationResponse:
+        return AlertEvaluationResponse(
+            model_id=model_id,
+            evaluated_at=result.evaluated_at,
+            evaluated_rules=result.evaluated_rules,
+            fired=[AlertResponse.model_validate(alert) for alert in result.fired],
+            resolved=[AlertResponse.model_validate(alert) for alert in result.resolved],
+        )
 
     # ---------------------------------------------------------------- #
     # Model versions and the signature stability evaluations
@@ -2169,6 +2337,20 @@ class DriftZeroService:
         return record
 
     @staticmethod
+    def _require_alert_rule(session: Session, rule_id: str) -> AlertRule:
+        record = session.get(AlertRule, rule_id)
+        if record is None:
+            raise ResourceNotFound("Alert rule not found.")
+        return record
+
+    @staticmethod
+    def _require_alert(session: Session, alert_id: str) -> Alert:
+        record = session.get(Alert, alert_id)
+        if record is None:
+            raise ResourceNotFound("Alert not found.")
+        return record
+
+    @staticmethod
     def _require_plan(session: Session, plan_id: str) -> RecoveryPlan:
         record = session.get(RecoveryPlan, plan_id)
         if not record:
@@ -2228,6 +2410,8 @@ class DriftZeroService:
     ) -> tuple[str, str]:
         prefix = event_type.partition(".")[0]
         entity_type = {
+            "alert": "alert",
+            "alert_rule": "alert_rule",
             "demo": "model",
             "diagnosis": "diagnosis",
             "incident": "incident",
@@ -2238,6 +2422,8 @@ class DriftZeroService:
         if prefix == "model" and details.get("version_id"):
             entity_type = "model_version"
         id_keys = {
+            "alert": ("alert_id",),
+            "alert_rule": ("rule_id",),
             "diagnosis": ("diagnosis_id",),
             "incident": ("incident_id",),
             "model": ("version_id",),
