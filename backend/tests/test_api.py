@@ -55,6 +55,29 @@ def test_shopassist_demo_runs_from_warning_to_verified_recovery() -> None:
         assert demo["recovery"]["simulation"] is True
         assert len(demo["recovery"]["actions"]) == 5
 
+        ingested = client.post(
+            "/api/v1/shopassist/telemetry",
+            json={
+                "dimensions": {
+                    "quality": 61,
+                    "groundedness": 30,
+                    "semantic_stability": 35,
+                    "temporal_stability": 61,
+                    "safety": 94,
+                    "drift": 58,
+                    "reliability": 88,
+                    "latency": 94,
+                    "cost": 85,
+                },
+                "sample_size": 20,
+                "coverage": 0.95,
+                "source": "observed",
+            },
+        )
+        assert ingested.status_code == 201
+        assert ingested.json()["state"] == "critical"
+        assert ingested.json()["sample_size"] == 20
+
         blocked = client.post(
             f"/api/v1/recovery/{plan_id}/execute",
             json={

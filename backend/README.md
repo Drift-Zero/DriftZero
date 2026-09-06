@@ -6,7 +6,7 @@ FastAPI service implementing DriftZero's first vertical slice:
 telemetry → health trajectory → diagnosis → recovery approval → execution → verification
 ```
 
-The included recovery adapter and CampusGPT scenario are deterministic simulations. They never
+The included recovery adapter and ShopAssist scenario are deterministic simulations. They never
 modify an external model deployment.
 
 ## Run locally
@@ -31,7 +31,7 @@ distinct `DRIFTZERO_RECOVERY_OPERATOR_API_KEY` and
 Bearer token. The server derives the role from the matched secret; JSON identity
 fields are never trusted.
 
-Initialize or reset the deterministic CampusGPT scenario:
+Initialize or reset the deterministic ShopAssist returns-policy scenario:
 
 ```bash
 curl -X POST http://127.0.0.1:8000/api/v1/demo/reset
@@ -47,6 +47,7 @@ recovery plan.
 | --- | --- | --- |
 | `GET` | `/healthz` | Service readiness |
 | `POST` | `/api/v1/models` | Register a monitored AI system |
+| `POST` | `/api/v1/shopassist/telemetry` | Ingest a server-resolved ShopAssist telemetry window (minimum 20 samples) |
 | `PATCH` | `/api/v1/models/{id}` | Update model metadata and retention |
 | `POST` | `/api/v1/models/{id}/lifecycle` | Activate, pause, or retire a model |
 | `POST` | `/api/v1/models/{id}/versions` | Register and activate controlled inputs |

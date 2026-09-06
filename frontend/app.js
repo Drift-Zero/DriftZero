@@ -79,7 +79,7 @@ function updateButtons() {
 }
 
 async function resetDemo() {
-  setNotice("Seeding deterministic CampusGPT degradation…");
+  setNotice("Seeding deterministic ShopAssist degradation…");
   toggleBusy(true);
   try {
     const demo = await request("/demo/reset", { method: "POST" });

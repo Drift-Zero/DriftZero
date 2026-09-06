@@ -105,7 +105,7 @@ The connector registers a synthetic model version and sends one normalized healt
 
 The dashboard performs this exact sequence:
 
-1. `POST /api/v1/demo/reset` seeds health `92 → 87 → 74 → 61`.
+1. `POST /api/v1/demo/reset` creates ShopAssist and seeds health `92 → 87 → 74 → 61`.
 2. The API forecasts `48` and diagnoses `knowledge_freshness_failure`.
 3. The operator approves the recommended plan.
 4. Execution is stored as a durable command; the recovery worker claims it.

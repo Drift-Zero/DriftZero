@@ -49,7 +49,32 @@ def run(base_url: str, timeout: int) -> None:
     plan_id = demo["recovery"]["id"]
     scores = [item["score"] for item in demo["health"]["snapshots"]]
     assert scores == [92.0, 87.0, 74.0, 61.0], scores
+    assert demo["model"]["name"] == "ShopAssist"
     assert demo["diagnosis"]["probable_cause"] == "knowledge_freshness_failure"
+
+    telemetry = request(
+        base_url,
+        "/api/v1/shopassist/telemetry",
+        method="POST",
+        body={
+            "dimensions": {
+                "quality": 61,
+                "groundedness": 30,
+                "semantic_stability": 35,
+                "temporal_stability": 61,
+                "safety": 94,
+                "drift": 58,
+                "reliability": 88,
+                "latency": 94,
+                "cost": 85,
+            },
+            "sample_size": 20,
+            "coverage": 0.95,
+            "source": "observed",
+        },
+    )
+    assert telemetry["state"] == "critical", telemetry
+    assert telemetry["sample_size"] >= 20, telemetry
 
     approved = request(
         base_url,
@@ -85,7 +110,7 @@ def run(base_url: str, timeout: int) -> None:
     timeline = request(base_url, f"/api/v1/models/{model_id}/health")
     final_score = timeline["snapshots"][-1]["score"]
     assert final_score == 84.2, final_score
-    print("Smoke test passed: 92 → 61 → 84.2, recovery verified.")
+    print("ShopAssist smoke test passed: 92 → 61 → 84.2, recovery verified.")
 
 
 if __name__ == "__main__":
