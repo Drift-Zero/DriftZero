@@ -20,4 +20,4 @@ export interface IncidentView {
   evidence:Array<{metric:string;summary:string;baseline?:number|null;current?:number|null}>; recovery?:RecoveryView|null
 }
 export interface EventView { id:string; modelId?:string|null; modelName:string; type:string; title:string; detail?:string|null; timestamp:string; status:'success'|'warning'|'critical'|'info' }
-export interface DashboardData { models:ModelView[]; incidents:IncidentView[]; events:EventView[]; evaluationsToday:number }
+export interface DashboardData { models:ModelView[]; incidents:IncidentView[]; events:EventView[]; latestSampleSize:number }

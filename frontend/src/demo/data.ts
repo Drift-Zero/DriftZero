@@ -9,10 +9,10 @@ const verifiedTrend=[...failedTrend.slice(-4),point(-10,72,61,78,96,70,59),point
 
 function values(stage:DemoStage):MetricValue[]{const current={healthy:[96,95,99,92,95],degraded:[34,65,95,53,29],recovering:[68,81,97,75,65],verified:[94,93,99,91,92]}[stage];const previous=stage==='healthy'?[95,94,98,91,94]:[96,95,99,92,95];return['Groundedness','Quality','Safety','Semantic stability','Drift resistance'].map((label,i)=>({key:label.toLowerCase().replaceAll(' ','_'),label,value:current[i],previous:previous[i]}))}
 const baseEvents:EventView[]=[
-  {id:'evt-1',modelId:'campus-gpt',modelName:'CampusGPT',type:'evaluation.passed',title:'Evaluation passed',detail:'Health score 95 · 48 traces',timestamp:at(0),status:'success'},
+  {id:'evt-1',modelId:'campus-gpt',modelName:'CampusGPT',type:'evaluation.passed',title:'Evaluation passed',detail:'Health score 95 · 48 samples',timestamp:at(0),status:'success'},
   {id:'evt-2',modelId:'campus-gpt',modelName:'CampusGPT',type:'groundedness.passed',title:'Groundedness check passed',detail:'96 / 100',timestamp:at(-1),status:'success'},
   {id:'evt-3',modelId:'loan-risk',modelName:'LoanRiskModel',type:'forecast.stable',title:'Forecast remains stable',detail:'Next 30 minutes',timestamp:at(-4),status:'info'},
-  {id:'evt-4',modelId:'campus-gpt',modelName:'CampusGPT',type:'evaluation.passed',title:'Evaluation passed',detail:'Health score 94 · 46 traces',timestamp:at(-7),status:'success'},
+  {id:'evt-4',modelId:'campus-gpt',modelName:'CampusGPT',type:'evaluation.passed',title:'Evaluation passed',detail:'Health score 94 · 46 samples',timestamp:at(-7),status:'success'},
 ]
 const failureEvents:EventView[]=[
   {id:'evt-f4',modelId:'campus-gpt',modelName:'CampusGPT',type:'incident.created',title:'Incident created',detail:'Knowledge freshness failure · Critical',timestamp:at(0),status:'critical'},
@@ -26,5 +26,5 @@ export function createDemoData(stage:DemoStage):DashboardData{
   const score={healthy:95,degraded:58,recovering:77,verified:93}[stage];const status:ModelView['status']=stage==='degraded'?'critical':stage==='recovering'?'warning':'healthy';const trend={healthy:healthyTrend,degraded:failedTrend,recovering:recoveryTrend,verified:verifiedTrend}[stage]
   const campus:ModelView={id:'campus-gpt',name:'CampusGPT',provider:'Qwen',environment:'Production',lifecycle:'active',description:'Answers campus policy and student services questions from the approved knowledge base.',status,score,metrics:values(stage),trend,lastEvaluation:at(0),requestId:`eval-cg-${stage}-2481`,sampleSize:48,coverage:.96,activeIncidents:stage==='healthy'||stage==='verified'?0:1,forecast:stage==='degraded'?{score:48,direction:'deteriorating',horizonMinutes:30}:{score:stage==='recovering'?86:94,direction:stage==='recovering'?'recovering':'stable',horizonMinutes:30}}
   const loan:ModelView={id:'loan-risk',name:'LoanRiskModel',provider:'XGBoost',environment:'Staging',lifecycle:'active',description:'Risk scoring model monitored before production promotion.',status:'healthy',score:91,metrics:[{key:'quality',label:'Quality',value:92},{key:'reliability',label:'Reliability',value:94},{key:'drift',label:'Drift resistance',value:88}],trend:[point(-120,89,90,90),point(-90,90,91,91),point(-60,92,93,92),point(-30,91,92,92),point(0,91,92,92)],lastEvaluation:at(-4),requestId:'eval-lr-7732',sampleSize:32,coverage:.88,activeIncidents:0,forecast:{score:90,direction:'stable',horizonMinutes:30}}
-  return{models:[campus,loan],incidents:stage==='healthy'?[]:[incident(stage)],events:eventsFor(stage),evaluationsToday:stage==='healthy'?1284:stage==='verified'?1376:1328}
+  return{models:[campus,loan],incidents:stage==='healthy'?[]:[incident(stage)],events:eventsFor(stage),latestSampleSize:(campus.sampleSize??0)+(loan.sampleSize??0)}
 }
