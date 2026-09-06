@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import json
+from urllib.error import URLError
 
 import pytest
 
-from app.recovery import ControlPlaneHttpAdapter
+from app.recovery import ControlPlaneHttpAdapter, RecoveryAdapterTransientError
 from app.schemas import RecoveryAction, RiskLevel
 
 ACTION = RecoveryAction(
@@ -88,3 +89,19 @@ def test_unknown_action_is_blocked_before_network(monkeypatch) -> None:
 
     assert result.succeeded is False
     assert "not allow-listed" in result.error
+
+
+def test_network_outage_is_reported_as_retryable(monkeypatch) -> None:
+    def unavailable(*_args, **_kwargs):
+        raise URLError("connection refused")
+
+    monkeypatch.setattr("app.recovery.urlopen", unavailable)
+    adapter = ControlPlaneHttpAdapter("https://control.example", "secret")
+
+    with pytest.raises(RecoveryAdapterTransientError, match="temporarily unavailable"):
+        adapter.execute_action(
+            model_id="model-1",
+            plan_id="plan-1",
+            action=ACTION,
+            execution_id="execution-1",
+        )

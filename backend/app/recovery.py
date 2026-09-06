@@ -17,6 +17,10 @@ if TYPE_CHECKING:
 RECOVERY_POLICY_VERSION = "recovery-v2"
 
 
+class RecoveryAdapterTransientError(RuntimeError):
+    """A retryable control-plane outage with no trustworthy action verdict."""
+
+
 @dataclass(frozen=True, slots=True)
 class RecoveryPolicyDecision:
     allowed: bool
@@ -316,12 +320,27 @@ class ControlPlaneHttpAdapter:
         try:
             with urlopen(request, timeout=self.timeout_seconds) as response:  # noqa: S310
                 body = json.loads(response.read().decode("utf-8"))
-        except (HTTPError, URLError, TimeoutError, json.JSONDecodeError) as exc:
+        except HTTPError as exc:
+            if exc.code in {408, 429} or exc.code >= 500:
+                raise RecoveryAdapterTransientError(
+                    f"Recovery control plane returned retryable HTTP {exc.code}."
+                ) from exc
             return RecoveryActionResult(
                 succeeded=False,
                 affected_traffic_pct=0.0,
                 detail={},
-                error=f"Control plane request failed: {type(exc).__name__}",
+                error=f"Control plane refused the action with HTTP {exc.code}.",
+            )
+        except (URLError, TimeoutError) as exc:
+            raise RecoveryAdapterTransientError(
+                f"Recovery control plane is temporarily unavailable ({type(exc).__name__})."
+            ) from exc
+        except json.JSONDecodeError:
+            return RecoveryActionResult(
+                succeeded=False,
+                affected_traffic_pct=0.0,
+                detail={},
+                error="Control plane returned an invalid JSON response.",
             )
 
         verified = body.get("configuration_verified") is True

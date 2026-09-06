@@ -121,6 +121,9 @@ async function execute() {
     if (command.state !== "succeeded") throw new Error(command.error || "Recovery worker timed out");
     const recovery = await request(`/recovery/${state.planId}`);
     state.recoveryState = recovery.state;
+    if (recovery.state !== "recovered") {
+      throw new Error(recovery.failure_reason || `Recovery ended in ${recovery.state}`);
+    }
     const [health, incidents, diagnosis] = await Promise.all([
       request(`/models/${state.modelId}/health`),
       request(`/models/${state.modelId}/incidents`),
