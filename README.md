@@ -1,9 +1,42 @@
 # DriftZero
 
-# DriftZero — Project Blueprint
+DriftZero is a hackathon MVP for detecting AI reliability degradation, explaining the likely cause, and running an operator-approved simulated recovery.
+
+## Run the complete demo
+
+Requirements: Docker Engine with Docker Compose v2. Git is only needed for repository work, not for running the downloaded project.
+
+```bash
+cp .env.example .env
+docker compose up --build
+```
+
+Open <http://localhost:3000>. API documentation is at <http://localhost:8000/docs>.
+
+Verify the full seeded degradation and recovery flow:
+
+```bash
+python3 scripts/smoke_test.py
+```
+
+Stop the stack with `docker compose down`. Add `--volumes` only when you deliberately want to delete the local demo database.
+
+The local stack contains:
+
+- `dashboard`: static web UI and same-origin API proxy;
+- `api`: FastAPI ingestion, scoring, diagnosis, recovery, and audit service;
+- `alert-worker`: scheduled alert-rule evaluator;
+- `recovery-worker`: durable executor for approved recovery commands;
+- `retention-worker`: applies trace-retention windows;
+- `driftzero-data`: persistent local SQLite volume.
+
+See [docs/DEVOPS_RUNBOOK.md](docs/DEVOPS_RUNBOOK.md) for setup, service wiring, logs, CI, deployment, troubleshooting, and demo recovery. See [docs/HEALTH_EVENT_SCHEMA.md](docs/HEALTH_EVENT_SCHEMA.md) for the connector contract.
+
+> **Demo boundary:** recovery is simulated. The API has no authentication, RBAC, or tenant isolation yet. Do not connect it to real model traffic or real recovery adapters, and remove any public demo deployment after judging.
+
+## Project blueprint
 
 ## Product definition
-cb
 **DriftZero** is an early-warning reliability control plane for deployed AI systems. It detects degrading behavior before it becomes a production incident, diagnoses the most likely cause, and recommends or safely executes a recovery playbook.
 
 **Tagline:** Predict. Diagnose. Recover.

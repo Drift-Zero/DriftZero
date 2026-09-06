@@ -4,9 +4,11 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI, Request, status
 from fastapi.responses import JSONResponse
+from fastapi.staticfiles import StaticFiles
 
 from app.api import router
 from app.config import Settings
@@ -94,6 +96,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return JSONResponse(
             status_code=status.HTTP_409_CONFLICT,
             content={"error": "invalid_transition", "detail": str(exc)},
+        )
+
+    if runtime_settings.frontend_dir:
+        frontend_dir = Path(runtime_settings.frontend_dir)
+        if not frontend_dir.is_dir():
+            raise RuntimeError(f"DRIFTZERO_FRONTEND_DIR does not exist: {frontend_dir}")
+        application.mount(
+            "/",
+            StaticFiles(directory=frontend_dir, html=True),
+            name="dashboard",
         )
 
     return application

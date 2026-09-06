@@ -1,0 +1,91 @@
+#!/usr/bin/env python3
+"""Verify the deployed DriftZero demo through its public HTTP contract."""
+
+from __future__ import annotations
+
+import argparse
+import json
+import time
+import urllib.error
+import urllib.request
+
+
+def request(base_url: str, path: str, *, method: str = "GET", body: dict | None = None):
+    payload = json.dumps(body).encode() if body is not None else None
+    headers = {"Content-Type": "application/json"} if payload else {}
+    req = urllib.request.Request(
+        f"{base_url.rstrip('/')}{path}",
+        data=payload,
+        headers=headers,
+        method=method,
+    )
+    with urllib.request.urlopen(req, timeout=10) as response:
+        return json.load(response)
+
+
+def wait_until_ready(base_url: str, timeout: int) -> None:
+    deadline = time.monotonic() + timeout
+    last_error: Exception | None = None
+    while time.monotonic() < deadline:
+        try:
+            health = request(base_url, "/healthz")
+            if health.get("status") == "ok":
+                return
+        except (OSError, urllib.error.URLError, json.JSONDecodeError) as exc:
+            last_error = exc
+        time.sleep(2)
+    raise RuntimeError(f"API did not become ready within {timeout}s: {last_error}")
+
+
+def run(base_url: str, timeout: int) -> None:
+    wait_until_ready(base_url, timeout)
+    demo = request(base_url, "/api/v1/demo/reset", method="POST")
+    model_id = demo["model"]["id"]
+    plan_id = demo["recovery"]["id"]
+    scores = [item["score"] for item in demo["health"]["snapshots"]]
+    assert scores == [92.0, 87.0, 74.0, 61.0], scores
+    assert demo["diagnosis"]["probable_cause"] == "knowledge_freshness_failure"
+
+    approved = request(
+        base_url,
+        f"/api/v1/recovery/{plan_id}/approve",
+        method="POST",
+        body={"actor": "smoke-test"},
+    )
+    assert approved["state"] == "approved", approved["state"]
+
+    command = request(
+        base_url,
+        f"/api/v1/recovery/{plan_id}/execute",
+        method="POST",
+        body={
+            "actor": "smoke-test",
+            "idempotency_key": f"smoke-{plan_id}",
+        },
+    )
+    assert command["state"] == "pending", command["state"]
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        command = request(base_url, f"/api/v1/recovery-commands/{command['id']}")
+        if command["state"] == "succeeded":
+            break
+        if command["state"] == "failed":
+            raise RuntimeError(f"Recovery worker failed: {command.get('error')}")
+        time.sleep(0.5)
+    else:
+        raise RuntimeError(f"Recovery command did not finish within {timeout}s")
+
+    recovered = request(base_url, f"/api/v1/recovery/{plan_id}")
+    assert recovered["state"] == "recovered", recovered["state"]
+    timeline = request(base_url, f"/api/v1/models/{model_id}/health")
+    final_score = timeline["snapshots"][-1]["score"]
+    assert final_score == 84.2, final_score
+    print("Smoke test passed: 92 → 61 → 84.2, recovery verified.")
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--base-url", default="http://localhost:3000")
+    parser.add_argument("--timeout", type=int, default=90)
+    args = parser.parse_args()
+    run(args.base_url, args.timeout)
