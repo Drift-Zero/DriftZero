@@ -8,7 +8,7 @@ running on.
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from enum import Enum as PyEnum
 from typing import Any
 from uuid import uuid4
@@ -44,7 +44,7 @@ def new_id() -> str:
 def utc_now() -> datetime:
     """Return the current time as a timezone-aware UTC datetime."""
 
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 class UtcDateTime(sa.types.TypeDecorator):
@@ -65,15 +65,15 @@ class UtcDateTime(sa.types.TypeDecorator):
         if value is None:
             return None
         if value.tzinfo is None:
-            value = value.replace(tzinfo=timezone.utc)
-        return value.astimezone(timezone.utc)
+            value = value.replace(tzinfo=UTC)
+        return value.astimezone(UTC)
 
     def process_result_value(self, value: datetime | None, dialect: Any) -> datetime | None:
         if value is None:
             return None
         if value.tzinfo is None:
-            return value.replace(tzinfo=timezone.utc)
-        return value.astimezone(timezone.utc)
+            return value.replace(tzinfo=UTC)
+        return value.astimezone(UTC)
 
 
 def _json() -> sa.types.TypeEngine[Any]:
