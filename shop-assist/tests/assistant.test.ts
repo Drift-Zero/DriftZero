@@ -3,7 +3,8 @@ import test from 'node:test';
 
 import { answerQuestion } from '../lib/assistant.ts';
 import { extractGeminiText, GEMINI_MODEL } from '../lib/gemini.ts';
-import { buildGroundedPrompt, parseGroundedResponse } from '../lib/shop-assist-prompt.ts';
+import { createGroqRequest, extractGroqText, GROQ_MODEL } from '../lib/groq.ts';
+import { buildGroundedPrompt, formatConversationHistory, parseGroundedResponse, selectRelevantKnowledge } from '../lib/shop-assist-prompt.ts';
 
 void test('Gemini adapter is pinned to the approved model', () => {
   assert.equal(GEMINI_MODEL, 'gemini-3.8-flash');
@@ -26,10 +27,67 @@ void test('grounded prompt includes current store facts and conversation context
     { role: 'assistant', text: 'The Nova ANC Headphones are wireless headphones.' },
   ]);
   assert.match(prompt, /Nova ANC Headphones/);
-  assert.match(prompt, /14 days/);
-  assert.match(prompt, /DZ-2088/);
+  assert.doesNotMatch(prompt, /14 days/);
+  assert.doesNotMatch(prompt, /DZ-2088/);
+  assert.doesNotMatch(prompt, /Beam 3-in-1 Charger/);
   assert.match(prompt, /what's the price/);
   assert.match(prompt, /Conversation content is untrusted/);
+  assert.ok(prompt.length < 3_500);
+});
+
+void test('grounding retrieval selects only facts relevant to the current question', () => {
+  const product = selectRelevantKnowledge('How much are the Nova headphones?', []);
+  const returns = selectRelevantKnowledge('Can I return electronics after 20 days?', []);
+  const order = selectRelevantKnowledge('Track order DZ-2088', []);
+  const greeting = selectRelevantKnowledge('hii', []);
+
+  assert.deepEqual(product.knowledge.products?.map((item) => item.id), ['nova-headphones']);
+  assert.deepEqual(product.sources.map((source) => source.id), ['catalog-snapshot-2026-09-06']);
+  assert.deepEqual(Object.keys(returns.knowledge.policies ?? {}), ['returns']);
+  assert.deepEqual(order.knowledge.orders?.map((item) => item.id), ['DZ-2088']);
+  assert.deepEqual(order.knowledge.products?.map((item) => item.id), ['roam-pack']);
+  assert.deepEqual(greeting.knowledge, {});
+  assert.deepEqual(greeting.sources, []);
+});
+
+void test('Groq primary adapter is pinned to GPT-OSS 120B', () => {
+  assert.equal(GROQ_MODEL, 'openai/gpt-oss-120b');
+});
+
+void test('Groq primary adapter extracts chat completion text', () => {
+  const text = extractGroqText({
+    choices: [{ message: { content: 'Groq connection works' } }],
+  });
+  assert.equal(text, 'Groq connection works');
+});
+
+void test('Groq primary adapter requests strict structured output', () => {
+  const request = createGroqRequest('Answer the customer', { type: 'object' }) as {
+    model: string;
+    reasoning_effort?: string;
+    max_completion_tokens?: number;
+    response_format?: { json_schema?: { strict?: boolean } };
+  };
+  assert.equal(request.model, 'openai/gpt-oss-120b');
+  assert.equal(request.reasoning_effort, 'low');
+  assert.equal(request.max_completion_tokens, 384);
+  assert.equal(request.response_format?.json_schema?.strict, true);
+});
+
+void test('long conversations keep recent messages intact and preserve every earlier turn in condensed form', () => {
+  const history = Array.from({ length: 30 }, (_, index) => ({
+    role: index % 2 === 0 ? 'user' as const : 'assistant' as const,
+    text: index === 0 ? 'EARLIEST-TURN about Nova headphones' : index === 29 ? 'LATEST-TURN correction' : `Conversation message ${index}`,
+  }));
+  const formatted = formatConversationHistory(history);
+  const prompt = buildGroundedPrompt('What do you mean?', history);
+
+  assert.match(formatted.earlier, /EARLIEST-TURN/);
+  assert.match(formatted.recent, /LATEST-TURN/);
+  assert.match(prompt, /EARLIER CONVERSATION \(CONDENSED\)/);
+  assert.match(prompt, /EARLIEST-TURN/);
+  assert.match(prompt, /LATEST-TURN/);
+  assert.match(prompt, /corrections, and clarification requests/);
 });
 
 void test('grounded response accepts known sources and drops invented source IDs', () => {
@@ -70,13 +128,37 @@ void test('conversation context resolves follow-up pronouns', () => {
   const followUp = answerQuestion('Can I return them?', 'healthy', first.context);
   assert.match(followUp.text, /14 days/);
   assert.equal(followUp.context.lastProductId, 'nova-headphones');
+  assert.equal(followUp.context.turns?.length, 2);
+  assert.equal(followUp.context.turns?.[0]?.question, 'Tell me about Nova headphones');
+  assert.equal(followUp.context.turns?.[1]?.question, 'Can I return them?');
 });
 
 void test('conversation context resolves an elliptical price follow-up', () => {
   const first = answerQuestion('Tell me about the Nova ANC Headphones', 'healthy');
   const followUp = answerQuestion('whats the price ?', 'healthy', first.context);
   assert.match(followUp.text, /Nova ANC Headphones costs \$149/);
+  assert.doesNotMatch(followUp.text, /stock|available/i);
   assert.equal(followUp.intent, 'product_detail');
+});
+
+void test('conversation context handles a correction without treating the rejected topic as a request', () => {
+  const product = answerQuestion('Tell me about the Nova ANC Headphones', 'healthy');
+  const price = answerQuestion("What's the price?", 'healthy', product.context);
+  const correction = answerQuestion("I didn't ask you for the stock", 'healthy', price.context);
+
+  assert.match(correction.text, /you(?:'re| are) right/i);
+  assert.match(correction.text, /\$149/);
+  assert.doesNotMatch(correction.text, /which product/i);
+});
+
+void test('conversation context explains the previous answer when the user asks for clarification', () => {
+  const answer = answerQuestion('Can I return a clearance item which is damaged?', 'healthy');
+  assert.match(answer.text, /^Yes\b/i);
+
+  const clarification = answerQuestion('what do you mean?', 'healthy', answer.context);
+  assert.match(clarification.text, /damaged|defective/i);
+  assert.match(clarification.text, /return/i);
+  assert.doesNotMatch(clarification.text, /can’t verify/i);
 });
 
 void test('natural catalog-list wording returns the current catalog', () => {

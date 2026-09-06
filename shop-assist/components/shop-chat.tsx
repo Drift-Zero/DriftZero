@@ -5,14 +5,14 @@ import Link from 'next/link';
 import { ArrowUp, BookOpenText, Box, ChevronRight, CircleCheck, RotateCcw, Search, ShieldCheck, ShoppingBag, Sparkles } from 'lucide-react';
 
 import { products } from '../data/catalog.ts';
-import { answerQuestion, type AssistantAnswer, type ConversationContext } from '../lib/assistant.ts';
+import { answerQuestion, replaceLatestConversationAnswer, type AssistantAnswer, type ConversationContext } from '../lib/assistant.ts';
 import { readScenario, type ScenarioId } from '../lib/demo-state.ts';
 import { sendInteractionTelemetry, type TelemetryDelivery } from '../lib/telemetry.ts';
 import { Button } from './ui/button';
 
-type ChatMessage = { id: number; role: 'assistant' | 'user'; text: string; answer?: AssistantAnswer; provider?: string };
-type GeminiChatReply = { answer?: unknown; model?: unknown; status?: unknown; sources?: unknown };
-type GeminiSource = { id: string; label: string };
+type ChatMessage = { id: number; role: 'assistant' | 'user'; text: string; answer?: AssistantAnswer; provider?: string; tokens?: number };
+type AIChatReply = { answer?: unknown; model?: unknown; status?: unknown; sources?: unknown; usage?: { totalTokens?: unknown } };
+type ProviderSource = { id: string; label: string };
 
 const initialSuggestions = [
   'Recommend headphones under $200',
@@ -59,22 +59,23 @@ export function ShopChat() {
     setDelivery('ready');
   }
 
-  async function requestGemini(question: string): Promise<{ answer: string; model: string; sources: GeminiSource[] }> {
-    const history = messages.slice(-10).map((message) => ({ role: message.role, text: message.text }));
+  async function requestPrimaryModel(question: string): Promise<{ answer: string; model: string; sources: ProviderSource[]; tokens?: number }> {
+    const history = messages.map((message) => ({ role: message.role, text: message.text }));
     const response = await fetch('/api/chat', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ message: question, history }),
     });
-    const payload = await response.json() as GeminiChatReply;
+    const payload = await response.json() as AIChatReply;
     if (!response.ok || typeof payload.answer !== 'string' || !payload.answer.trim()) {
       throw new Error('Gemini chat request failed');
     }
     return {
       answer: payload.answer.trim(),
-      model: typeof payload.model === 'string' ? payload.model : 'gemini-3.8-flash',
+      model: typeof payload.model === 'string' ? payload.model : 'AI provider',
+      tokens: typeof payload.usage?.totalTokens === 'number' ? payload.usage.totalTokens : undefined,
       sources: Array.isArray(payload.sources)
-        ? payload.sources.filter((source): source is GeminiSource => Boolean(source) && typeof source === 'object' && 'id' in source && typeof source.id === 'string' && 'label' in source && typeof source.label === 'string')
+        ? payload.sources.filter((source): source is ProviderSource => Boolean(source) && typeof source === 'object' && 'id' in source && typeof source.id === 'string' && 'label' in source && typeof source.label === 'string')
         : [],
     };
   }
@@ -87,13 +88,14 @@ export function ShopChat() {
     setMessages((current) => [...current, { id: nextId.current++, role: 'user', text: question }]);
     setInput('');
     setTyping(true);
-    void requestGemini(question).then((reply) => {
+    void requestPrimaryModel(question).then((reply) => {
       if (activeRequest !== requestVersion.current) return;
       setMessages((current) => [...current, {
         id: nextId.current++,
         role: 'assistant',
         text: reply.answer,
         provider: reply.model,
+        tokens: reply.tokens,
         answer: {
           ...fallbackAnswer,
           text: reply.answer,
@@ -105,7 +107,7 @@ export function ShopChat() {
         },
       }]);
       setSuggestions(fallbackAnswer.suggestions);
-      setContext(fallbackAnswer.context);
+      setContext(replaceLatestConversationAnswer(fallbackAnswer.context, reply.answer));
       setTyping(false);
       setDelivery('ready');
     }).catch(() => {
@@ -176,11 +178,11 @@ export function ShopChat() {
                     <div className="source-row">
                       <BookOpenText size={14} />
                       {message.answer.citations.map((citation) => <span key={citation.id}>{citation.label}</span>)}
-                      {message.answer.confidence > 0 ? <em>{message.answer.confidence}% confidence</em> : message.provider ? <em>{message.provider}</em> : null}
+                      {message.answer.confidence > 0 ? <em>{message.answer.confidence}% confidence</em> : message.provider ? <em>{message.provider}{message.tokens ? ` · ${message.tokens.toLocaleString()} tokens` : ''}</em> : null}
                     </div>
                   ) : null}
                   {message.provider && !message.answer?.citations.length ? (
-                    <div className="source-row"><Sparkles size={14} /><span>{message.provider}</span></div>
+                    <div className="source-row"><Sparkles size={14} /><span>{message.provider}</span>{message.tokens ? <em>{message.tokens.toLocaleString()} tokens</em> : null}</div>
                   ) : null}
                 </div>
               </article>

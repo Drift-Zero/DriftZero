@@ -34,3 +34,9 @@ If either value is absent, the latest 100 payloads are buffered in browser
 
 The demo is explicitly simulated. It does not call a production model or modify
 an external commerce system.
+
+## AI providers
+
+ShopAssist uses Groq's `openai/gpt-oss-120b` as its primary conversational model.
+Set `GROQ_API_KEY` in `.env.local`; never expose it with a `NEXT_PUBLIC_` prefix.
+The Gemini adapter remains available for a later automatic-failover phase.
