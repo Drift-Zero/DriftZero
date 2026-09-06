@@ -18,6 +18,7 @@ from app.database import (
 )
 from app.db import (
     DiagnosisEvidence,
+    HealthForecastRecord,
     Incident,
     KnowledgeDocument,
     KnowledgeSource,
@@ -28,6 +29,7 @@ from app.db import (
     VerificationRun,
     ensure_health_policy,
     latest_snapshot,
+    snapshot_timeline,
     traces_for_metric,
 )
 from app.diagnosis import diagnose_change
@@ -43,6 +45,7 @@ from app.schemas import (
     DimensionScores,
     EvidenceItem,
     ExecutionState,
+    HealthForecastRecordResponse,
     HealthSnapshotResponse,
     HealthState,
     HealthTimelineResponse,
@@ -1060,8 +1063,87 @@ class DriftZeroService:
         )
         session.add(record)
         session.flush()
+        self._settle_forecasts(session, record)
+        self._store_forecast(session, record)
         self._sync_incident(session, model_id, record)
         return record
+
+    def _store_forecast(
+        self,
+        session: Session,
+        snapshot: HealthSnapshot,
+    ) -> HealthForecastRecord | None:
+        """Persist the trajectory predicted from this snapshot.
+
+        Written when the snapshot is recorded rather than when a timeline is
+        read, so a prediction is a fact about a moment rather than a side effect
+        of someone opening a page.
+        """
+
+        horizon = self.settings.forecast_horizon_minutes
+        forecast = forecast_health(
+            snapshot_timeline(session, snapshot.model_id),
+            horizon_minutes=horizon,
+        )
+        if forecast is None:
+            return None
+
+        record = HealthForecastRecord(
+            model_id=snapshot.model_id,
+            snapshot_id=snapshot.id,
+            horizon_minutes=forecast.horizon_minutes,
+            predicted_score=forecast.predicted_score,
+            lower_bound=forecast.lower_bound,
+            upper_bound=forecast.upper_bound,
+            change_per_hour=forecast.change_per_hour,
+            direction=forecast.direction,
+            method=forecast.method,
+            target_at=snapshot.observed_at + timedelta(minutes=horizon),
+        )
+        session.add(record)
+        session.flush()
+        return record
+
+    @staticmethod
+    def _settle_forecasts(session: Session, snapshot: HealthSnapshot) -> None:
+        """Record what actually happened for predictions whose horizon has passed.
+
+        Only scored snapshots can settle a forecast: an insufficient-data window
+        is not evidence that a prediction was wrong.
+        """
+
+        if snapshot.score is None:
+            return
+        pending = session.scalars(
+            select(HealthForecastRecord).where(
+                HealthForecastRecord.model_id == snapshot.model_id,
+                HealthForecastRecord.actual_score.is_(None),
+                HealthForecastRecord.target_at.is_not(None),
+                HealthForecastRecord.target_at <= snapshot.observed_at,
+            )
+        ).all()
+        for record in pending:
+            record.actual_score = snapshot.score
+        if pending:
+            session.flush()
+
+    def list_forecasts(
+        self,
+        session: Session,
+        model_id: str,
+        *,
+        limit: int = 50,
+    ) -> list[HealthForecastRecordResponse]:
+        """Stored predictions for a model, most recent first."""
+
+        self._require_model(session, model_id)
+        records = session.scalars(
+            select(HealthForecastRecord)
+            .where(HealthForecastRecord.model_id == model_id)
+            .order_by(HealthForecastRecord.created_at.desc())
+            .limit(limit)
+        ).all()
+        return [HealthForecastRecordResponse.model_validate(record) for record in records]
 
     def _record_traces(
         self,

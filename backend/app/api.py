@@ -14,6 +14,7 @@ from app.schemas import (
     AuditEventResponse,
     DemoResetResponse,
     DiagnosisResponse,
+    HealthForecastRecordResponse,
     HealthSnapshotResponse,
     HealthTimelineResponse,
     IncidentResponse,
@@ -125,6 +126,22 @@ def latest_diagnosis(
     service: ServiceDependency,
 ) -> DiagnosisResponse:
     return service.latest_diagnosis(session, model_id)
+
+
+@router.get(
+    "/models/{model_id}/forecasts",
+    response_model=list[HealthForecastRecordResponse],
+    tags=["pulse"],
+)
+def list_forecasts(
+    model_id: str,
+    session: SessionDependency,
+    service: ServiceDependency,
+    limit: Annotated[int, Query(ge=1, le=200)] = 50,
+) -> list[HealthForecastRecordResponse]:
+    """Stored predictions and, once their horizon passed, what actually happened."""
+
+    return service.list_forecasts(session, model_id, limit=limit)
 
 
 @router.get(

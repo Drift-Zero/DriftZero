@@ -208,6 +208,30 @@ class HealthForecast(BaseModel):
     method: str = "recent_slope_v1"
 
 
+class HealthForecastRecordResponse(BaseModel):
+    """A stored prediction and, once the horizon elapses, what happened.
+
+    Keeping both is what allows the early-warning claim to be checked rather
+    than taken on trust.
+    """
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    model_id: str
+    snapshot_id: str
+    horizon_minutes: int
+    predicted_score: float
+    lower_bound: float
+    upper_bound: float
+    change_per_hour: float
+    direction: str
+    method: str
+    target_at: datetime | None = None
+    actual_score: float | None = None
+    created_at: datetime
+
+
 class HealthTimelineResponse(BaseModel):
     model: ModelResponse
     snapshots: list[HealthSnapshotResponse]
