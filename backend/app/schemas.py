@@ -350,9 +350,14 @@ class ActorRequest(BaseModel):
 
 class AuditEventResponse(BaseModel):
     id: str
-    model_id: str
+    model_id: str | None
     event_type: str
     actor: str
+    actor_type: Literal["human", "system", "agent"]
+    entity_type: str | None = None
+    entity_id: str | None = None
+    reason: str | None = None
+    request_id: str | None = None
     details: dict[str, object]
     created_at: datetime
 
