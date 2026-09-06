@@ -65,6 +65,8 @@ services:
     depends_on:
       api:
         condition: service_healthy
+    healthcheck:
+      test: ["NONE"]
 
   recovery-worker:
     <<: *service-defaults
@@ -78,6 +80,8 @@ services:
     depends_on:
       api:
         condition: service_healthy
+    healthcheck:
+      test: ["NONE"]
 
   retention-worker:
     <<: *service-defaults
@@ -91,6 +95,8 @@ services:
     depends_on:
       api:
         condition: service_healthy
+    healthcheck:
+      test: ["NONE"]
 
   dashboard:
     <<: *service-defaults
