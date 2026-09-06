@@ -42,6 +42,8 @@ recovery plan.
 | `POST` | `/api/v1/models/{id}/telemetry` | Ingest normalized health dimensions |
 | `GET` | `/api/v1/models/{id}/health` | Read health history and forecast |
 | `POST` | `/api/v1/models/{id}/diagnoses` | Diagnose the latest deterioration |
+| `GET` | `/api/v1/models/{id}/incidents` | List recent incidents for a model |
+| `GET` | `/api/v1/incidents/{id}` | Read one incident and its lifecycle state |
 | `GET` | `/api/v1/models/{id}/recovery/latest` | Read the recommended playbook |
 | `POST` | `/api/v1/recovery/{id}/approve` | Record operator approval |
 | `POST` | `/api/v1/recovery/{id}/execute` | Execute and verify the approved plan |

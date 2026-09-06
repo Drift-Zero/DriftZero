@@ -16,6 +16,7 @@ from app.schemas import (
     DiagnosisResponse,
     HealthSnapshotResponse,
     HealthTimelineResponse,
+    IncidentResponse,
     ModelCreate,
     ModelResponse,
     RecoveryPlanResponse,
@@ -124,6 +125,35 @@ def latest_diagnosis(
     service: ServiceDependency,
 ) -> DiagnosisResponse:
     return service.latest_diagnosis(session, model_id)
+
+
+@router.get(
+    "/models/{model_id}/incidents",
+    response_model=list[IncidentResponse],
+    tags=["diagnose"],
+)
+def list_incidents(
+    model_id: str,
+    session: SessionDependency,
+    service: ServiceDependency,
+    limit: Annotated[int, Query(ge=1, le=100)] = 20,
+) -> list[IncidentResponse]:
+    """Recent incidents for a model, most recently opened first."""
+
+    return service.list_incidents(session, model_id, limit=limit)
+
+
+@router.get(
+    "/incidents/{incident_id}",
+    response_model=IncidentResponse,
+    tags=["diagnose"],
+)
+def get_incident(
+    incident_id: str,
+    session: SessionDependency,
+    service: ServiceDependency,
+) -> IncidentResponse:
+    return service.get_incident(session, incident_id)
 
 
 @router.get(

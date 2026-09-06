@@ -294,8 +294,9 @@ Left as-is deliberately — that file belongs to the API layer.
 ## Currently wired
 
 `app/service.py` writes `monitored_models`, `traces`, `health_snapshots`,
-`health_policies`, `diagnoses`, `diagnosis_evidence`, `evidence_traces`,
-`knowledge_sources`, `knowledge_documents`, `recovery_plans` and `audit_events`.
+`health_policies`, `incidents`, `diagnoses`, `diagnosis_evidence`,
+`evidence_traces`, `knowledge_sources`, `knowledge_documents`, `recovery_plans`
+and `audit_events`.
 
 **Traces and the drill-down.** `TelemetryCreate.traces` is optional; when
 supplied, `_record_telemetry` redacts and stores each one, derives the
@@ -321,13 +322,32 @@ repeated questions stay correlatable without retaining what was asked. Every
 trace records the `redaction_policy_version` that produced it. Do not add a
 column for raw prompt or response content.
 
+**Incidents.** `_sync_incident` runs on every recorded snapshot. A warning or
+critical snapshot opens an incident if none is running and otherwise deepens the
+existing one: severity only escalates, and `trough_score` records the worst the
+model actually reached rather than the latest reading. `baseline_score` is the
+last healthy score before the fall.
+
+The state machine follows the flow: `open` on detection, `diagnosing` once a
+cause is ranked, `mitigating` on approval, `verifying` while the adapter runs,
+then `resolved` or `failed`. `_advance_incident` never moves an incident
+backwards and never touches a closed one, so a later degradation opens a new
+incident rather than reopening a resolved one. Closing records `closed_at`,
+`closing_snapshot_id` and a summary, and writes an audit event.
+
+Diagnoses and recovery plans carry `incident_id`, and both responses expose it.
+Reads are `GET /models/{id}/incidents` (most recently opened first) and
+`GET /incidents/{id}`.
+
+Note a deliberate asymmetry: a healthy snapshot only closes an incident that is
+already `verifying`. One good window during an unaddressed degradation is not a
+recovery, so an `open` incident is left alone.
+
 Still unwired, in the order worth adopting next:
 
-1. **`incidents`** — needed for "recent incidents" on the fleet view, and it is
-   what groups a diagnosis with its recovery and verification.
-2. **`recovery_actions` + `recovery_executions`** — per-action execution, so
+1. **`recovery_actions` + `recovery_executions`** — per-action execution, so
    partial failure and rollback are recorded rather than collapsed into a single
    `executed_at`.
-3. **`verification_runs`** — records the threshold, window, request count and
+2. **`verification_runs`** — records the threshold, window, request count and
    no-regression checks that define a successful recovery.
-4. **`model_versions` + `stability_*`** — the signature evaluations.
+3. **`model_versions` + `stability_*`** — the signature evaluations.

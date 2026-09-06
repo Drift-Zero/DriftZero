@@ -17,6 +17,7 @@ from app.database import (
 )
 from app.db import (
     DiagnosisEvidence,
+    Incident,
     KnowledgeDocument,
     KnowledgeSource,
     KnowledgeStatus,
@@ -38,12 +39,15 @@ from app.schemas import (
     HealthSnapshotResponse,
     HealthState,
     HealthTimelineResponse,
+    IncidentResponse,
+    IncidentState,
     ModelCreate,
     ModelResponse,
     RecoveryAction,
     RecoveryPlanResponse,
     RecoveryState,
     RiskLevel,
+    Severity,
     SignalSource,
     TelemetryCreate,
     TraceCreate,
@@ -179,9 +183,11 @@ class DriftZeroService:
             self._dimensions_from_record(baseline),
             self._dimensions_from_record(latest),
         )
+        incident = self._open_incident(session, model_id)
         diagnosis = Diagnosis(
             model_id=model_id,
             snapshot_id=latest.id,
+            incident_id=incident.id if incident else None,
             probable_cause=result.probable_cause,
             confidence=result.confidence,
             status=DiagnosisStatus.OPEN.value,
@@ -190,11 +196,13 @@ class DriftZeroService:
         session.add(diagnosis)
         session.flush()
         self._record_evidence(session, diagnosis, latest, result.evidence)
+        self._advance_incident(session, incident, IncidentState.DIAGNOSING)
 
         playbook = build_playbook(result.probable_cause)
         plan = RecoveryPlan(
             model_id=model_id,
             diagnosis_id=diagnosis.id,
+            incident_id=diagnosis.incident_id,
             state=RecoveryState.RECOMMENDED.value,
             risk=playbook.risk.value,
             actions=[action.model_dump(mode="json") for action in playbook.actions],
@@ -256,6 +264,9 @@ class DriftZeroService:
         plan.state = RecoveryState.APPROVED.value
         plan.approved_at = datetime.now(UTC)
         plan.approved_by = payload.actor
+        self._advance_incident(
+            session, self._open_incident(session, plan.model_id), IncidentState.MITIGATING
+        )
         self._audit(
             session,
             plan.model_id,
@@ -280,6 +291,8 @@ class DriftZeroService:
 
         plan.state = RecoveryState.EXECUTING.value
         plan.executed_at = datetime.now(UTC)
+        incident = self._open_incident(session, plan.model_id)
+        self._advance_incident(session, incident, IncidentState.VERIFYING)
         self._audit(
             session,
             plan.model_id,
@@ -311,6 +324,8 @@ class DriftZeroService:
                 diagnosis = session.get(Diagnosis, plan.diagnosis_id)
                 if diagnosis:
                     diagnosis.status = DiagnosisStatus.RESOLVED.value
+            elif incident is not None:
+                self._close_incident(session, incident, snapshot, resolved=False)
             self._audit(
                 session,
                 plan.model_id,
@@ -453,11 +468,13 @@ class DriftZeroService:
         session.commit()
 
         diagnosis = self.diagnose_latest(session, model.id)
+        incident = self._open_incident(session, model.id)
         return DemoResetResponse(
             model=self._model_response(model),
             health=self.health_timeline(session, model.id),
             diagnosis=diagnosis,
             recovery=self.latest_recovery(session, model.id),
+            incident=IncidentResponse.model_validate(incident) if incident else None,
         )
 
     def _seed_knowledge_corpus(
@@ -564,6 +581,182 @@ class DriftZeroService:
             )
         return traces
 
+    # A degradation is one story: the snapshot that opened it, the diagnosis
+    # that explained it, the recovery that addressed it, and the verification
+    # that closed it. The incident is what holds those together.
+    _OPEN_STATES = frozenset(
+        {
+            IncidentState.OPEN,
+            IncidentState.DIAGNOSING,
+            IncidentState.MITIGATING,
+            IncidentState.VERIFYING,
+        }
+    )
+    _SEVERITY_BY_HEALTH = {
+        HealthState.WARNING: Severity.MEDIUM,
+        HealthState.CRITICAL: Severity.HIGH,
+    }
+
+    @classmethod
+    def _open_incident(cls, session: Session, model_id: str) -> Incident | None:
+        """Return the model's unresolved incident, if it has one."""
+
+        return session.scalar(
+            select(Incident)
+            .where(
+                Incident.model_id == model_id,
+                Incident.state.in_([state.value for state in cls._OPEN_STATES]),
+            )
+            .order_by(Incident.opened_at.desc())
+            .limit(1)
+        )
+
+    def _sync_incident(
+        self,
+        session: Session,
+        model_id: str,
+        snapshot: HealthSnapshot,
+    ) -> Incident | None:
+        """Open, deepen or resolve the incident this snapshot implies.
+
+        A degrading snapshot opens an incident if none is already running, and
+        otherwise deepens the existing one -- severity only escalates, and the
+        trough records the worst the model actually got, not merely the latest
+        reading. A healthy snapshot closes an incident that was being verified;
+        one that is merely open is left alone, since a single good window is not
+        yet a recovery.
+        """
+
+        state = HealthState(snapshot.state)
+        incident = self._open_incident(session, model_id)
+
+        if state in self._SEVERITY_BY_HEALTH:
+            severity = self._SEVERITY_BY_HEALTH[state]
+            if incident is None:
+                incident = Incident(
+                    model_id=model_id,
+                    title=f"Health degraded to {state.value}",
+                    state=IncidentState.OPEN.value,
+                    severity=severity.value,
+                    opened_at=snapshot.observed_at,
+                    opening_snapshot_id=snapshot.id,
+                    baseline_score=self._last_healthy_score(session, model_id, snapshot),
+                    trough_score=snapshot.score,
+                )
+                session.add(incident)
+                session.flush()
+                self._audit(
+                    session,
+                    model_id,
+                    "incident.opened",
+                    "pulse-engine",
+                    {
+                        "incident_id": incident.id,
+                        "severity": incident.severity,
+                        "score": snapshot.score,
+                    },
+                )
+                return incident
+
+            if Severity(incident.severity) is Severity.MEDIUM and severity is Severity.HIGH:
+                incident.severity = severity.value
+            if snapshot.score is not None and (
+                incident.trough_score is None or snapshot.score < incident.trough_score
+            ):
+                incident.trough_score = snapshot.score
+            session.flush()
+            return incident
+
+        if incident is not None and IncidentState(incident.state) is IncidentState.VERIFYING:
+            self._close_incident(session, incident, snapshot, resolved=True)
+        return incident
+
+    @staticmethod
+    def _last_healthy_score(
+        session: Session,
+        model_id: str,
+        before: HealthSnapshot,
+    ) -> float | None:
+        """The score this model was holding before it started to fall."""
+
+        return session.scalar(
+            select(HealthSnapshot.score)
+            .where(
+                HealthSnapshot.model_id == model_id,
+                HealthSnapshot.observed_at < before.observed_at,
+                HealthSnapshot.score.is_not(None),
+                HealthSnapshot.state == HealthState.HEALTHY.value,
+            )
+            .order_by(HealthSnapshot.observed_at.desc())
+            .limit(1)
+        )
+
+    def _advance_incident(
+        self,
+        session: Session,
+        incident: Incident | None,
+        state: IncidentState,
+    ) -> None:
+        """Move an incident forward, never backwards, and never once closed."""
+
+        if incident is None or IncidentState(incident.state) not in self._OPEN_STATES:
+            return
+        incident.state = state.value
+        session.flush()
+
+    def _close_incident(
+        self,
+        session: Session,
+        incident: Incident,
+        snapshot: HealthSnapshot,
+        *,
+        resolved: bool,
+    ) -> None:
+        incident.state = (IncidentState.RESOLVED if resolved else IncidentState.FAILED).value
+        incident.closed_at = datetime.now(UTC)
+        incident.closing_snapshot_id = snapshot.id
+        incident.summary = (
+            f"Recovered to {snapshot.score} from a trough of {incident.trough_score}."
+            if resolved
+            else f"Recovery did not restore health; last score {snapshot.score}."
+        )
+        session.flush()
+        self._audit(
+            session,
+            incident.model_id,
+            "incident.resolved" if resolved else "incident.failed",
+            "verification-engine",
+            {
+                "incident_id": incident.id,
+                "score": snapshot.score,
+                "trough_score": incident.trough_score,
+            },
+        )
+
+    def list_incidents(
+        self,
+        session: Session,
+        model_id: str,
+        *,
+        limit: int = 20,
+    ) -> list[IncidentResponse]:
+        """Recent incidents for a model, most recently opened first."""
+
+        self._require_model(session, model_id)
+        records = session.scalars(
+            select(Incident)
+            .where(Incident.model_id == model_id)
+            .order_by(Incident.opened_at.desc())
+            .limit(limit)
+        ).all()
+        return [IncidentResponse.model_validate(record) for record in records]
+
+    def get_incident(self, session: Session, incident_id: str) -> IncidentResponse:
+        record = session.get(Incident, incident_id)
+        if record is None:
+            raise ResourceNotFound("Incident not found.")
+        return IncidentResponse.model_validate(record)
+
     def _record_evidence(
         self,
         session: Session,
@@ -644,6 +837,7 @@ class DriftZeroService:
         )
         session.add(record)
         session.flush()
+        self._sync_incident(session, model_id, record)
         return record
 
     def _record_traces(
@@ -782,6 +976,7 @@ class DriftZeroService:
             id=record.id,
             model_id=record.model_id,
             snapshot_id=record.snapshot_id,
+            incident_id=record.incident_id,
             probable_cause=record.probable_cause,
             confidence=record.confidence,
             status=DiagnosisStatus(record.status),
@@ -819,6 +1014,7 @@ class DriftZeroService:
             id=record.id,
             model_id=record.model_id,
             diagnosis_id=record.diagnosis_id,
+            incident_id=record.incident_id,
             state=RecoveryState(record.state),
             risk=RiskLevel(record.risk),
             actions=[RecoveryAction.model_validate(item) for item in record.actions],

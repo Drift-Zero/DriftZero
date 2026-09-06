@@ -28,6 +28,25 @@ class SignalSource(StrEnum):
     SIMULATED = "simulated"
 
 
+class Severity(StrEnum):
+    INFO = "info"
+    LOW = "low"
+    MEDIUM = "medium"
+    HIGH = "high"
+    CRITICAL = "critical"
+
+
+class IncidentState(StrEnum):
+    """Lifecycle of a degradation, from detection through verified recovery."""
+
+    OPEN = "open"
+    DIAGNOSING = "diagnosing"
+    MITIGATING = "mitigating"
+    VERIFYING = "verifying"
+    RESOLVED = "resolved"
+    FAILED = "failed"
+
+
 class TraceStatus(StrEnum):
     OK = "ok"
     ERROR = "error"
@@ -188,10 +207,30 @@ class EvidenceItem(BaseModel):
     trace_ids: list[str] = Field(default_factory=list)
 
 
+class IncidentResponse(BaseModel):
+    """A period of degradation and everything attached to it."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    model_id: str
+    title: str
+    state: IncidentState
+    severity: Severity
+    opened_at: datetime
+    closed_at: datetime | None = None
+    opening_snapshot_id: str | None = None
+    closing_snapshot_id: str | None = None
+    baseline_score: float | None = None
+    trough_score: float | None = None
+    summary: str | None = None
+
+
 class DiagnosisResponse(BaseModel):
     id: str
     model_id: str
     snapshot_id: str
+    incident_id: str | None = None
     probable_cause: str
     confidence: float = Field(ge=0, le=1)
     confidence_label: str = "estimated"
@@ -213,6 +252,7 @@ class RecoveryPlanResponse(BaseModel):
     id: str
     model_id: str
     diagnosis_id: str
+    incident_id: str | None = None
     state: RecoveryState
     risk: RiskLevel
     actions: list[RecoveryAction]
@@ -242,3 +282,4 @@ class DemoResetResponse(BaseModel):
     health: HealthTimelineResponse
     diagnosis: DiagnosisResponse
     recovery: RecoveryPlanResponse
+    incident: IncidentResponse | None = None

@@ -13,8 +13,10 @@ from enum import StrEnum
 from app.schemas import (
     DiagnosisStatus,
     HealthState,
+    IncidentState,
     RecoveryState,
     RiskLevel,
+    Severity,
     SignalSource,
     TraceStatus,
 )
@@ -51,23 +53,6 @@ class KnowledgeStatus(StrEnum):
     FRESH = "fresh"
     STALE = "stale"
     DISABLED = "disabled"
-
-
-class Severity(StrEnum):
-    INFO = "info"
-    LOW = "low"
-    MEDIUM = "medium"
-    HIGH = "high"
-    CRITICAL = "critical"
-
-
-class IncidentState(StrEnum):
-    OPEN = "open"
-    DIAGNOSING = "diagnosing"
-    MITIGATING = "mitigating"
-    VERIFYING = "verifying"
-    RESOLVED = "resolved"
-    FAILED = "failed"
 
 
 class ExecutionState(StrEnum):
