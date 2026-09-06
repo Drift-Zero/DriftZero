@@ -67,6 +67,24 @@ class RecoveryState(StrEnum):
     FAILED = "failed"
 
 
+class ExecutionState(StrEnum):
+    """Lifecycle of a single recovery action attempt."""
+
+    PENDING = "pending"
+    RUNNING = "running"
+    SUCCEEDED = "succeeded"
+    FAILED = "failed"
+    TIMED_OUT = "timed_out"
+    ROLLED_BACK = "rolled_back"
+    SKIPPED = "skipped"
+
+
+class ActorType(StrEnum):
+    HUMAN = "human"
+    SYSTEM = "system"
+    AGENT = "agent"
+
+
 class RiskLevel(StrEnum):
     LOW = "low"
     MEDIUM = "medium"
@@ -248,6 +266,49 @@ class RecoveryAction(BaseModel):
     reversible: bool
 
 
+class RecoveryExecutionResponse(BaseModel):
+    """One attempt at one action, including its blast radius and rollback."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    action_id: str
+    plan_id: str
+    state: ExecutionState
+    attempt: int
+    actor: str
+    actor_type: ActorType
+    reason: str | None = None
+    affected_traffic_pct: float | None = None
+    started_at: datetime | None = None
+    finished_at: datetime | None = None
+    result: dict[str, object] = Field(default_factory=dict)
+    error: str | None = None
+    rolled_back_at: datetime | None = None
+
+
+class VerificationRunResponse(BaseModel):
+    """What "recovered" was judged against, recorded with the verdict."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    plan_id: str
+    incident_id: str | None = None
+    snapshot_id: str | None = None
+    required_requests: int
+    observed_requests: int
+    threshold: float
+    baseline_score: float | None = None
+    post_score: float | None = None
+    passed: bool | None = None
+    no_regression_checks: list[dict[str, object]] = Field(default_factory=list)
+    window_start: datetime | None = None
+    window_end: datetime | None = None
+    started_at: datetime
+    finished_at: datetime | None = None
+
+
 class RecoveryPlanResponse(BaseModel):
     id: str
     model_id: str
@@ -262,6 +323,8 @@ class RecoveryPlanResponse(BaseModel):
     approved_by: str | None = None
     executed_at: datetime | None = None
     verified_at: datetime | None = None
+    executions: list[RecoveryExecutionResponse] = Field(default_factory=list)
+    verification: VerificationRunResponse | None = None
 
 
 class ActorRequest(BaseModel):

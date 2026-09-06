@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 
 from app.config import Settings
 from app.db import HealthSnapshot, HealthState, Incident, MonitoredModel, utc_now
-from app.recovery import RecoveryExecutionResult
+from app.recovery import RecoveryActionResult, RecoveryExecutionResult
 from app.schemas import (
     ActorRequest,
     DimensionScores,
@@ -57,9 +57,21 @@ CRITICAL = DimensionScores(
 
 
 class FailingRecoveryAdapter:
-    """An adapter whose remediation does not restore health."""
+    """An adapter whose actions apply cleanly but do not restore health."""
 
     simulation = True
+
+    def execute_action(
+        self, *, model_id: str, plan_id: str, action: object
+    ) -> RecoveryActionResult:
+        del model_id, plan_id, action
+        return RecoveryActionResult(succeeded=True, affected_traffic_pct=50.0, detail={})
+
+    def rollback_action(
+        self, *, model_id: str, plan_id: str, action: object
+    ) -> RecoveryActionResult:
+        del model_id, plan_id, action
+        return RecoveryActionResult(succeeded=True, affected_traffic_pct=50.0, detail={})
 
     def execute(self, *, model_id: str, plan_id: str) -> RecoveryExecutionResult:
         del model_id, plan_id

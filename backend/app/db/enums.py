@@ -11,7 +11,9 @@ from __future__ import annotations
 from enum import StrEnum
 
 from app.schemas import (
+    ActorType,
     DiagnosisStatus,
+    ExecutionState,
     HealthState,
     IncidentState,
     RecoveryState,
@@ -55,18 +57,6 @@ class KnowledgeStatus(StrEnum):
     DISABLED = "disabled"
 
 
-class ExecutionState(StrEnum):
-    """Lifecycle of a single recovery action attempt."""
-
-    PENDING = "pending"
-    RUNNING = "running"
-    SUCCEEDED = "succeeded"
-    FAILED = "failed"
-    TIMED_OUT = "timed_out"
-    ROLLED_BACK = "rolled_back"
-    SKIPPED = "skipped"
-
-
 class EvaluatorKind(StrEnum):
     QUALITY = "quality"
     GROUNDEDNESS = "groundedness"
@@ -98,12 +88,6 @@ class AlertState(StrEnum):
     FIRING = "firing"
     ACKNOWLEDGED = "acknowledged"
     RESOLVED = "resolved"
-
-
-class ActorType(StrEnum):
-    HUMAN = "human"
-    SYSTEM = "system"
-    AGENT = "agent"
 
 
 class FeedbackVerdict(StrEnum):

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
+from typing import Any
 
 from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
@@ -21,8 +22,12 @@ from app.db import (
     KnowledgeDocument,
     KnowledgeSource,
     KnowledgeStatus,
+    RecoveryActionRecord,
+    RecoveryExecution,
     Trace,
+    VerificationRun,
     ensure_health_policy,
+    latest_snapshot,
     traces_for_metric,
 )
 from app.diagnosis import diagnose_change
@@ -30,12 +35,14 @@ from app.recovery import RecoveryAdapter, SimulatedRecoveryAdapter, build_playbo
 from app.redaction import REDACTION_POLICY_VERSION, content_hash, redact
 from app.schemas import (
     ActorRequest,
+    ActorType,
     AuditEventResponse,
     DemoResetResponse,
     DiagnosisResponse,
     DiagnosisStatus,
     DimensionScores,
     EvidenceItem,
+    ExecutionState,
     HealthSnapshotResponse,
     HealthState,
     HealthTimelineResponse,
@@ -44,6 +51,7 @@ from app.schemas import (
     ModelCreate,
     ModelResponse,
     RecoveryAction,
+    RecoveryExecutionResponse,
     RecoveryPlanResponse,
     RecoveryState,
     RiskLevel,
@@ -51,6 +59,7 @@ from app.schemas import (
     SignalSource,
     TelemetryCreate,
     TraceCreate,
+    VerificationRunResponse,
 )
 from app.scoring import DIMENSION_WEIGHTS, calculate_health, forecast_health
 
@@ -210,6 +219,21 @@ class DriftZeroService:
         )
         session.add(plan)
         session.flush()
+        for action in playbook.actions:
+            session.add(
+                RecoveryActionRecord(
+                    plan_id=plan.id,
+                    order=action.order,
+                    code=action.code,
+                    title=action.title,
+                    description=action.description,
+                    risk=action.risk.value,
+                    reversible=action.reversible,
+                    adapter=type(self.recovery_adapter).__name__,
+                    is_simulated=self.recovery_adapter.simulation,
+                )
+            )
+        session.flush()
         self._audit(
             session,
             model_id,
@@ -302,7 +326,9 @@ class DriftZeroService:
         )
         session.flush()
 
+        baseline_snapshot = latest_snapshot(session, plan.model_id)
         try:
+            executions = self._apply_actions(session, plan, payload.actor)
             result = self.recovery_adapter.execute(model_id=plan.model_id, plan_id=plan.id)
             snapshot = self._record_telemetry(
                 session,
@@ -315,11 +341,24 @@ class DriftZeroService:
                     source=SignalSource.SIMULATED,
                 ),
             )
-            recovered = snapshot.score is not None and snapshot.score >= 80
+            verification = self._verify(
+                session,
+                plan,
+                incident,
+                baseline_snapshot,
+                snapshot,
+                evaluated_requests=result.evaluated_requests,
+            )
+            recovered = bool(verification.passed)
             plan.state = (
                 RecoveryState.RECOVERED.value if recovered else RecoveryState.FAILED.value
             )
             plan.verified_at = datetime.now(UTC)
+            if not recovered:
+                # Leave the system no worse than we found it: undo what can be
+                # undone, and record what could not.
+                self._rollback_actions(session, plan, executions, payload.actor)
+                plan.rolled_back_at = datetime.now(UTC)
             if recovered:
                 diagnosis = session.get(Diagnosis, plan.diagnosis_id)
                 if diagnosis:
@@ -338,6 +377,9 @@ class DriftZeroService:
                     "evaluated_requests": result.evaluated_requests,
                     "outcome": plan.state,
                     "summary": result.summary,
+                    "verification_run_id": verification.id,
+                    "threshold": verification.threshold,
+                    "no_regression_checks": verification.no_regression_checks,
                 },
             )
             session.commit()
@@ -356,6 +398,187 @@ class DriftZeroService:
             raise
 
         return self._recovery_response(plan)
+
+    def _plan_actions(self, session: Session, plan_id: str) -> list[RecoveryActionRecord]:
+        return list(
+            session.scalars(
+                select(RecoveryActionRecord)
+                .where(RecoveryActionRecord.plan_id == plan_id)
+                .order_by(RecoveryActionRecord.order)
+            ).all()
+        )
+
+    def _apply_actions(
+        self,
+        session: Session,
+        plan: RecoveryPlan,
+        actor: str,
+    ) -> list[RecoveryExecution]:
+        """Apply each action in order, recording one execution row per attempt.
+
+        A step that fails does not abort the rest: the remaining actions are
+        recorded as skipped rather than silently omitted, so the record shows
+        exactly how far the playbook got.
+        """
+
+        executions: list[RecoveryExecution] = []
+        aborted = False
+
+        for record in self._plan_actions(session, plan.id):
+            execution = RecoveryExecution(
+                action_id=record.id,
+                plan_id=plan.id,
+                actor=actor,
+                actor_type=ActorType.HUMAN.value,
+                reason=f"Executing playbook step {record.order}: {record.code}",
+                state=ExecutionState.SKIPPED.value if aborted else ExecutionState.RUNNING.value,
+            )
+            session.add(execution)
+
+            if aborted:
+                session.flush()
+                executions.append(execution)
+                continue
+
+            execution.started_at = datetime.now(UTC)
+            action = RecoveryAction(
+                order=record.order,
+                code=record.code,
+                title=record.title,
+                description=record.description,
+                risk=RiskLevel(record.risk),
+                reversible=record.reversible,
+            )
+            outcome = self.recovery_adapter.execute_action(
+                model_id=plan.model_id, plan_id=plan.id, action=action
+            )
+            execution.finished_at = datetime.now(UTC)
+            execution.affected_traffic_pct = outcome.affected_traffic_pct
+            execution.result = dict(outcome.detail)
+            execution.error = outcome.error
+            execution.state = (
+                ExecutionState.SUCCEEDED.value if outcome.succeeded else ExecutionState.FAILED.value
+            )
+            aborted = not outcome.succeeded
+            session.flush()
+            executions.append(execution)
+
+        return executions
+
+    def _rollback_actions(
+        self,
+        session: Session,
+        plan: RecoveryPlan,
+        executions: list[RecoveryExecution],
+        actor: str,
+    ) -> None:
+        """Undo applied actions in reverse order, recording what could not be."""
+
+        for execution in reversed(executions):
+            if ExecutionState(execution.state) is not ExecutionState.SUCCEEDED:
+                continue
+            record = session.get(RecoveryActionRecord, execution.action_id)
+            if record is None:
+                continue
+            action = RecoveryAction(
+                order=record.order,
+                code=record.code,
+                title=record.title,
+                description=record.description,
+                risk=RiskLevel(record.risk),
+                reversible=record.reversible,
+            )
+            outcome = self.recovery_adapter.rollback_action(
+                model_id=plan.model_id, plan_id=plan.id, action=action
+            )
+            execution.rollback_result = dict(outcome.detail)
+            if outcome.succeeded:
+                execution.state = ExecutionState.ROLLED_BACK.value
+                execution.rolled_back_at = datetime.now(UTC)
+            else:
+                # An irreversible action stays applied; saying otherwise would
+                # misrepresent the state of the deployment.
+                execution.rollback_result = {
+                    **dict(outcome.detail),
+                    "error": outcome.error,
+                }
+            session.flush()
+        self._audit(
+            session,
+            plan.model_id,
+            "recovery.rolled_back",
+            actor,
+            {
+                "plan_id": plan.id,
+                "rolled_back": sum(
+                    1
+                    for execution in executions
+                    if ExecutionState(execution.state) is ExecutionState.ROLLED_BACK
+                ),
+            },
+        )
+
+    # Dimensions that must not get worse for a recovery to count, and how much
+    # slack to allow before calling a movement a regression.
+    _NO_REGRESSION_METRICS = ("safety", "latency", "reliability")
+    _REGRESSION_TOLERANCE = 2.0
+
+    def _verify(
+        self,
+        session: Session,
+        plan: RecoveryPlan,
+        incident: Incident | None,
+        baseline: HealthSnapshot | None,
+        snapshot: HealthSnapshot,
+        *,
+        evaluated_requests: int,
+    ) -> VerificationRun:
+        """Record what recovery was judged against, alongside the verdict.
+
+        Success is not the score alone: it must clear the threshold *and* not
+        have traded one failure for another. Safety, latency and reliability are
+        checked against the pre-execution snapshot, and each check is stored so
+        the judgement can be inspected rather than trusted.
+        """
+
+        threshold = HEALTH_THRESHOLDS["healthy"]
+        checks: list[dict[str, Any]] = []
+        for metric in self._NO_REGRESSION_METRICS:
+            before = getattr(baseline, metric, None) if baseline else None
+            after = getattr(snapshot, metric, None)
+            passed = before is None or after is None or after >= before - self._REGRESSION_TOLERANCE
+            checks.append(
+                {
+                    "metric": metric,
+                    "baseline": before,
+                    "current": after,
+                    "passed": passed,
+                }
+            )
+
+        cleared = snapshot.score is not None and snapshot.score >= threshold
+        passed = cleared and all(check["passed"] for check in checks)
+
+        run = VerificationRun(
+            plan_id=plan.id,
+            incident_id=incident.id if incident else None,
+            snapshot_id=snapshot.id,
+            required_requests=evaluated_requests,
+            observed_requests=evaluated_requests,
+            threshold=threshold,
+            baseline_score=(
+                incident.baseline_score if incident else (baseline.score if baseline else None)
+            ),
+            post_score=snapshot.score,
+            passed=passed,
+            no_regression_checks=checks,
+            window_start=snapshot.window_start,
+            window_end=snapshot.window_end,
+            finished_at=datetime.now(UTC),
+        )
+        session.add(run)
+        session.flush()
+        return run
 
     def audit_events(self, session: Session, model_id: str) -> list[AuditEventResponse]:
         self._require_model(session, model_id)
@@ -1010,6 +1233,16 @@ class DriftZeroService:
 
     @staticmethod
     def _recovery_response(record: RecoveryPlan) -> RecoveryPlanResponse:
+        # action_items is ordered by playbook step; sorting across actions by id
+        # would scramble the sequence a reader needs to follow.
+        executions = [
+            execution
+            for action in record.action_items
+            for execution in sorted(action.executions, key=lambda item: item.attempt)
+        ]
+        verification = max(
+            record.verification_runs, key=lambda run: run.started_at, default=None
+        )
         return RecoveryPlanResponse(
             id=record.id,
             model_id=record.model_id,
@@ -1024,6 +1257,12 @@ class DriftZeroService:
             approved_by=record.approved_by,
             executed_at=record.executed_at,
             verified_at=record.verified_at,
+            executions=[
+                RecoveryExecutionResponse.model_validate(execution) for execution in executions
+            ],
+            verification=(
+                VerificationRunResponse.model_validate(verification) if verification else None
+            ),
         )
 
     @staticmethod

@@ -15,6 +15,21 @@ class Playbook:
 
 
 @dataclass(frozen=True, slots=True)
+class RecoveryActionResult:
+    """The outcome of applying one action.
+
+    Recorded per action so that a playbook where three steps succeed and one
+    times out is represented as exactly that, rather than collapsed into a
+    single verdict for the whole plan.
+    """
+
+    succeeded: bool
+    affected_traffic_pct: float
+    detail: dict[str, object]
+    error: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class RecoveryExecutionResult:
     dimensions: DimensionScores
     evaluated_requests: int
@@ -29,11 +44,63 @@ class RecoveryAdapter(Protocol):
 
     def execute(self, *, model_id: str, plan_id: str) -> RecoveryExecutionResult: ...
 
+    def execute_action(
+        self, *, model_id: str, plan_id: str, action: RecoveryAction
+    ) -> RecoveryActionResult: ...
+
+    def rollback_action(
+        self, *, model_id: str, plan_id: str, action: RecoveryAction
+    ) -> RecoveryActionResult: ...
+
+
+# How much of a model's traffic each safeguard touches. Published so the
+# recorded blast radius of an action is inspectable rather than invented.
+SIMULATED_TRAFFIC_SHARE: dict[str, float] = {
+    # Policy changes that apply to every request.
+    "require_citations": 100.0,
+    "enable_safe_response_mode": 100.0,
+    "refresh_retrieval_index": 100.0,
+    # Changes that only bite on the subset of traffic that trips them.
+    "suppress_unsupported_generation": 42.0,
+    "route_low_confidence": 18.0,
+    "route_fallback_model": 22.0,
+    "reduce_concurrency": 30.0,
+    "queue_human_review": 6.0,
+    "route_human_review": 9.0,
+}
+
 
 class SimulatedRecoveryAdapter:
     """Deterministic demo adapter; it never touches an external deployment."""
 
     simulation = True
+
+    def execute_action(
+        self, *, model_id: str, plan_id: str, action: RecoveryAction
+    ) -> RecoveryActionResult:
+        del model_id, plan_id
+        return RecoveryActionResult(
+            succeeded=True,
+            affected_traffic_pct=SIMULATED_TRAFFIC_SHARE.get(action.code, 100.0),
+            detail={"simulated": True, "code": action.code},
+        )
+
+    def rollback_action(
+        self, *, model_id: str, plan_id: str, action: RecoveryAction
+    ) -> RecoveryActionResult:
+        del model_id, plan_id
+        if not action.reversible:
+            return RecoveryActionResult(
+                succeeded=False,
+                affected_traffic_pct=0.0,
+                detail={"simulated": True, "code": action.code},
+                error="Action is not reversible.",
+            )
+        return RecoveryActionResult(
+            succeeded=True,
+            affected_traffic_pct=SIMULATED_TRAFFIC_SHARE.get(action.code, 100.0),
+            detail={"simulated": True, "code": action.code, "rolled_back": True},
+        )
 
     def execute(self, *, model_id: str, plan_id: str) -> RecoveryExecutionResult:
         del model_id, plan_id
