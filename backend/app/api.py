@@ -9,6 +9,7 @@ from fastapi import APIRouter, Depends, Query, Request, Response, status
 from sqlalchemy.orm import Session
 
 from app.database import Database
+from app.recovery_auth import recovery_principal
 from app.schemas import (
     ActorRequest,
     AlertEvaluationRequest,
@@ -40,6 +41,7 @@ from app.schemas import (
     RecoveryExecuteRequest,
     RecoveryExecutionResponse,
     RecoveryPlanResponse,
+    RecoveryRollbackRequest,
     RecoveryVerifyRequest,
     RegistrationStatusResponse,
     ReviewDecisionRequest,
@@ -67,6 +69,16 @@ def get_service(request: Request) -> DriftZeroService:
 
 SessionDependency = Annotated[Session, Depends(get_session)]
 ServiceDependency = Annotated[DriftZeroService, Depends(get_service)]
+RecoveryPrincipalDependency = Annotated[ActorRequest, Depends(recovery_principal)]
+
+
+def _trusted_recovery_request[RecoveryRequest: ActorRequest](
+    payload: RecoveryRequest,
+    principal: ActorRequest,
+) -> RecoveryRequest:
+    """Keep command parameters while replacing untrusted identity fields."""
+
+    return payload.model_copy(update={"actor": principal.actor, "role": principal.role})
 
 
 @router.post(
@@ -311,8 +323,11 @@ def approve_recovery(
     payload: RecoveryDecisionRequest,
     session: SessionDependency,
     service: ServiceDependency,
+    principal: RecoveryPrincipalDependency,
 ) -> RecoveryPlanResponse:
-    return service.approve_recovery(session, plan_id, payload)
+    return service.approve_recovery(
+        session, plan_id, _trusted_recovery_request(payload, principal)
+    )
 
 
 @router.post(
@@ -325,8 +340,11 @@ def reject_recovery(
     payload: RecoveryDecisionRequest,
     session: SessionDependency,
     service: ServiceDependency,
+    principal: RecoveryPrincipalDependency,
 ) -> RecoveryPlanResponse:
-    return service.reject_recovery(session, plan_id, payload)
+    return service.reject_recovery(
+        session, plan_id, _trusted_recovery_request(payload, principal)
+    )
 
 
 @router.post(
@@ -339,8 +357,11 @@ def cancel_recovery(
     payload: RecoveryDecisionRequest,
     session: SessionDependency,
     service: ServiceDependency,
+    principal: RecoveryPrincipalDependency,
 ) -> RecoveryPlanResponse:
-    return service.cancel_recovery(session, plan_id, payload)
+    return service.cancel_recovery(
+        session, plan_id, _trusted_recovery_request(payload, principal)
+    )
 
 
 @router.post(
@@ -354,8 +375,11 @@ def enqueue_recovery(
     payload: RecoveryExecuteRequest,
     session: SessionDependency,
     service: ServiceDependency,
+    principal: RecoveryPrincipalDependency,
 ) -> RecoveryCommandResponse:
-    return service.enqueue_recovery(session, plan_id, payload)
+    return service.enqueue_recovery(
+        session, plan_id, _trusted_recovery_request(payload, principal)
+    )
 
 
 @router.get(
@@ -421,22 +445,29 @@ def enqueue_recovery_verification(
     payload: RecoveryVerifyRequest,
     session: SessionDependency,
     service: ServiceDependency,
+    principal: RecoveryPrincipalDependency,
 ) -> RecoveryCommandResponse:
-    return service.enqueue_verification(session, plan_id, payload)
+    return service.enqueue_verification(
+        session, plan_id, _trusted_recovery_request(payload, principal)
+    )
 
 
 @router.post(
     "/recovery/{plan_id}/rollback",
-    response_model=RecoveryPlanResponse,
+    response_model=RecoveryCommandResponse,
+    status_code=status.HTTP_202_ACCEPTED,
     tags=["recover"],
 )
 def rollback_recovery(
     plan_id: str,
-    payload: RecoveryDecisionRequest,
+    payload: RecoveryRollbackRequest,
     session: SessionDependency,
     service: ServiceDependency,
-) -> RecoveryPlanResponse:
-    return service.rollback_recovery(session, plan_id, payload)
+    principal: RecoveryPrincipalDependency,
+) -> RecoveryCommandResponse:
+    return service.enqueue_rollback(
+        session, plan_id, _trusted_recovery_request(payload, principal)
+    )
 
 
 @router.get(

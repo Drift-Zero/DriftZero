@@ -860,6 +860,11 @@ class RecoveryVerifyRequest(ActorRequest):
     idempotency_key: str = Field(min_length=8, max_length=120)
 
 
+class RecoveryRollbackRequest(ActorRequest):
+    idempotency_key: str = Field(min_length=8, max_length=120)
+    expected_version: int | None = Field(default=None, ge=1)
+
+
 class AuditEventResponse(BaseModel):
     id: str
     model_id: str | None

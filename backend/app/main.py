@@ -65,6 +65,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             {"name": "demo", "description": "Deterministic CampusGPT scenario."},
         ],
     )
+    application.state.settings = runtime_settings
     application.add_middleware(RequestLoggingMiddleware)
     application.include_router(router, prefix=runtime_settings.api_prefix)
     application.state.opentelemetry_enabled = configure_opentelemetry(

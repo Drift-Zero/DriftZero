@@ -14,6 +14,7 @@ from app.schemas import (
     ModelCreate,
     RecoveryCommandState,
     RecoveryExecuteRequest,
+    RecoveryRollbackRequest,
     RecoveryState,
     SignalSource,
     TelemetryCreate,
@@ -209,4 +210,32 @@ def test_worker_retries_with_the_same_persisted_action_attempt() -> None:
         assert len({execution.id for execution in recovery.executions}) == len(
             recovery.executions
         )
+    database.dispose()
+
+
+def test_rollback_is_a_separate_durable_command() -> None:
+    database = Database("sqlite://")
+    database.create_schema()
+    service = DriftZeroService(Settings())
+    plan_id, _ = _queued(database, service)
+    process_recovery_commands(database, service, limit=1)
+
+    with database.session_factory() as session:
+        service.enqueue_rollback(
+            session,
+            plan_id,
+            RecoveryRollbackRequest(
+                actor="admin",
+                role="admin",
+                reason="Return to the previous operating mode.",
+                idempotency_key="rollback-command-key",
+            ),
+        )
+    result = process_recovery_commands(database, service, limit=1)
+
+    assert result.succeeded == 1
+    with database.session_factory() as session:
+        plan = service.get_recovery(session, plan_id)
+        assert plan.state is RecoveryState.ROLLED_BACK
+        assert all(execution.rolled_back_at for execution in plan.executions)
     database.dispose()

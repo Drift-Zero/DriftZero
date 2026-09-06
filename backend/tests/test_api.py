@@ -4,6 +4,11 @@ from app.config import Settings
 from app.main import create_app
 from app.recovery_worker import process_recovery_commands
 
+RECOVERY_HEADERS = {
+    "X-DriftZero-Actor": "demo-operator",
+    "X-DriftZero-Role": "operator",
+}
+
 
 def make_client() -> TestClient:
     return TestClient(
@@ -11,6 +16,7 @@ def make_client() -> TestClient:
             Settings(
                 database_url="sqlite://",
                 environment="test",
+                recovery_allow_local_identity=True,
             )
         )
     )
@@ -49,6 +55,7 @@ def test_campus_demo_runs_from_warning_to_verified_recovery() -> None:
                 "actor": "demo-operator",
                 "idempotency_key": "demo-run-blocked",
             },
+            headers=RECOVERY_HEADERS,
         )
         assert blocked.status_code == 409
         assert blocked.json()["error"] == "invalid_transition"
@@ -56,6 +63,7 @@ def test_campus_demo_runs_from_warning_to_verified_recovery() -> None:
         approval = client.post(
             f"/api/v1/recovery/{plan_id}/approve",
             json={"actor": "demo-operator"},
+            headers=RECOVERY_HEADERS,
         )
         assert approval.status_code == 200
         assert approval.json()["state"] == "approved"
@@ -67,6 +75,7 @@ def test_campus_demo_runs_from_warning_to_verified_recovery() -> None:
                 "actor": "demo-operator",
                 "idempotency_key": "demo-run-success",
             },
+            headers=RECOVERY_HEADERS,
         )
         assert execution.status_code == 202
         assert execution.json()["state"] == "pending"

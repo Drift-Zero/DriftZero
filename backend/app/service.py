@@ -97,6 +97,7 @@ from app.schemas import (
     RecoveryExecuteRequest,
     RecoveryExecutionResponse,
     RecoveryPlanResponse,
+    RecoveryRollbackRequest,
     RecoveryState,
     RecoveryVerifyRequest,
     RegistrationCheck,
@@ -691,6 +692,63 @@ class DriftZeroService:
             "recovery.verification_queued",
             payload.actor,
             {"plan_id": plan.id, "command_id": command.id, "snapshot_id": snapshot.id},
+        )
+        session.commit()
+        return RecoveryCommandResponse.model_validate(command)
+
+    def enqueue_rollback(
+        self,
+        session: Session,
+        plan_id: str,
+        payload: RecoveryRollbackRequest,
+    ) -> RecoveryCommandResponse:
+        plan = self._require_plan(session, plan_id)
+        self._check_plan_version(plan, payload)
+        self._authorize_recovery(plan, payload)
+        if plan.state not in {RecoveryState.RECOVERED.value, RecoveryState.FAILED.value}:
+            raise InvalidTransition(f"Cannot roll back a plan in '{plan.state}' state.")
+        existing = session.scalar(
+            select(RecoveryCommand).where(
+                RecoveryCommand.idempotency_key == payload.idempotency_key
+            )
+        )
+        if existing is not None:
+            if existing.plan_id != plan.id or existing.command_type != RecoveryCommandType.ROLLBACK:
+                raise ResourceConflict("Idempotency key belongs to a different command.")
+            return RecoveryCommandResponse.model_validate(existing)
+        active = session.scalar(
+            select(RecoveryCommand.id).where(
+                RecoveryCommand.plan_id == plan.id,
+                RecoveryCommand.state.in_(
+                    [RecoveryCommandState.PENDING.value, RecoveryCommandState.RUNNING.value]
+                ),
+            )
+        )
+        if active is not None:
+            raise ResourceConflict("A recovery command is already active for this plan.")
+
+        now = datetime.now(UTC)
+        command = RecoveryCommand(
+            plan_id=plan.id,
+            command_type=RecoveryCommandType.ROLLBACK.value,
+            state=RecoveryCommandState.PENDING.value,
+            idempotency_key=payload.idempotency_key,
+            actor=payload.actor,
+            actor_role=payload.role.value,
+            reason=payload.reason,
+            max_traffic_pct=100.0,
+            max_attempts=self.settings.recovery_command_max_attempts,
+            requested_at=now,
+            available_at=now,
+        )
+        session.add(command)
+        session.flush()
+        self._audit(
+            session,
+            plan.model_id,
+            "recovery.rollback_queued",
+            payload.actor,
+            {"plan_id": plan.id, "command_id": command.id},
         )
         session.commit()
         return RecoveryCommandResponse.model_validate(command)
