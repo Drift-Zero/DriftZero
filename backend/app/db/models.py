@@ -15,7 +15,6 @@ Two rules hold throughout:
 
 from __future__ import annotations
 
-import hashlib
 from datetime import datetime
 from typing import Any
 
@@ -175,20 +174,6 @@ class ModelVersion(IdMixin, Base):
         "corpus_version",
         "evaluation_policy_version",
     )
-
-    @classmethod
-    def fingerprint_for(cls, **inputs: str | None) -> str:
-        """Hash exactly the inputs that must hold constant across a comparison.
-
-        Anything not in ``CONTROLLED_INPUTS`` is deliberately excluded: the
-        fingerprint answers "could this answer have changed for a reason other
-        than the model itself", so widening it would make every run
-        incomparable, and narrowing it would let a changed input masquerade as
-        drift.
-        """
-
-        material = "|".join(f"{name}={inputs.get(name) or ''}" for name in cls.CONTROLLED_INPUTS)
-        return hashlib.sha256(material.encode("utf-8")).hexdigest()
 
     def comparable_with(self, other: ModelVersion) -> bool:
         """Whether two runs may be compared without attributing input changes."""

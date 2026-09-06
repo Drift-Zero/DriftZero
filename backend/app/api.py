@@ -25,10 +25,13 @@ from app.schemas import (
     HealthTimelineResponse,
     IncidentResponse,
     ModelCreate,
+    ModelLifecycleUpdate,
     ModelResponse,
+    ModelUpdate,
     ModelVersionCreate,
     ModelVersionResponse,
     RecoveryPlanResponse,
+    RegistrationStatusResponse,
     ReviewDecisionRequest,
     ReviewQueueItemResponse,
     ReviewState,
@@ -86,6 +89,96 @@ def get_model(
     return service.get_model(session, model_id)
 
 
+@router.patch("/models/{model_id}", response_model=ModelResponse, tags=["models"])
+def update_model(
+    model_id: str,
+    payload: ModelUpdate,
+    session: SessionDependency,
+    service: ServiceDependency,
+) -> ModelResponse:
+    return service.update_model(session, model_id, payload)
+
+
+@router.post(
+    "/models/{model_id}/lifecycle",
+    response_model=ModelResponse,
+    tags=["models"],
+)
+def update_model_lifecycle(
+    model_id: str,
+    payload: ModelLifecycleUpdate,
+    session: SessionDependency,
+    service: ServiceDependency,
+) -> ModelResponse:
+    return service.update_model_lifecycle(session, model_id, payload)
+
+
+@router.post(
+    "/models/{model_id}/versions",
+    response_model=ModelVersionResponse,
+    status_code=status.HTTP_201_CREATED,
+    tags=["models"],
+)
+def create_model_version(
+    model_id: str,
+    payload: ModelVersionCreate,
+    session: SessionDependency,
+    service: ServiceDependency,
+) -> ModelVersionResponse:
+    return service.create_model_version(
+        session,
+        model_id,
+        payload,
+        actor=payload.actor,
+    )
+
+
+@router.get(
+    "/models/{model_id}/versions",
+    response_model=list[ModelVersionResponse],
+    tags=["models"],
+)
+def list_model_versions(
+    model_id: str,
+    session: SessionDependency,
+    service: ServiceDependency,
+) -> list[ModelVersionResponse]:
+    return service.list_model_versions(session, model_id)
+
+
+@router.post(
+    "/models/{model_id}/versions/{version_id}/activate",
+    response_model=ModelVersionResponse,
+    tags=["models"],
+)
+def activate_model_version(
+    model_id: str,
+    version_id: str,
+    payload: ActorRequest,
+    session: SessionDependency,
+    service: ServiceDependency,
+) -> ModelVersionResponse:
+    return service.activate_model_version(
+        session,
+        model_id,
+        version_id,
+        actor=payload.actor,
+    )
+
+
+@router.get(
+    "/models/{model_id}/registration-status",
+    response_model=RegistrationStatusResponse,
+    tags=["models"],
+)
+def registration_status(
+    model_id: str,
+    session: SessionDependency,
+    service: ServiceDependency,
+) -> RegistrationStatusResponse:
+    return service.registration_status(session, model_id)
+
+
 @router.post(
     "/models/{model_id}/telemetry",
     response_model=HealthSnapshotResponse,
@@ -140,6 +233,101 @@ def latest_diagnosis(
     service: ServiceDependency,
 ) -> DiagnosisResponse:
     return service.latest_diagnosis(session, model_id)
+
+
+@router.get(
+    "/models/{model_id}/incidents",
+    response_model=list[IncidentResponse],
+    tags=["diagnose"],
+)
+def list_incidents(
+    model_id: str,
+    session: SessionDependency,
+    service: ServiceDependency,
+    limit: Annotated[int, Query(ge=1, le=100)] = 20,
+) -> list[IncidentResponse]:
+    """Recent incidents for a model, most recently opened first."""
+
+    return service.list_incidents(session, model_id, limit=limit)
+
+
+@router.get(
+    "/incidents/{incident_id}",
+    response_model=IncidentResponse,
+    tags=["diagnose"],
+)
+def get_incident(
+    incident_id: str,
+    session: SessionDependency,
+    service: ServiceDependency,
+) -> IncidentResponse:
+    return service.get_incident(session, incident_id)
+
+
+@router.get(
+    "/models/{model_id}/recovery/latest",
+    response_model=RecoveryPlanResponse,
+    tags=["recover"],
+)
+def latest_recovery(
+    model_id: str,
+    session: SessionDependency,
+    service: ServiceDependency,
+) -> RecoveryPlanResponse:
+    return service.latest_recovery(session, model_id)
+
+
+@router.post(
+    "/recovery/{plan_id}/approve",
+    response_model=RecoveryPlanResponse,
+    tags=["recover"],
+)
+def approve_recovery(
+    plan_id: str,
+    payload: ActorRequest,
+    session: SessionDependency,
+    service: ServiceDependency,
+) -> RecoveryPlanResponse:
+    return service.approve_recovery(session, plan_id, payload)
+
+
+@router.post(
+    "/recovery/{plan_id}/execute",
+    response_model=RecoveryPlanResponse,
+    tags=["recover"],
+)
+def execute_recovery(
+    plan_id: str,
+    payload: ActorRequest,
+    session: SessionDependency,
+    service: ServiceDependency,
+) -> RecoveryPlanResponse:
+    return service.execute_recovery(session, plan_id, payload)
+
+
+@router.get(
+    "/models/{model_id}/audit",
+    response_model=list[AuditEventResponse],
+    tags=["audit"],
+)
+def audit_events(
+    model_id: str,
+    session: SessionDependency,
+    service: ServiceDependency,
+) -> list[AuditEventResponse]:
+    return service.audit_events(session, model_id)
+
+
+@router.post(
+    "/demo/reset",
+    response_model=DemoResetResponse,
+    tags=["demo"],
+)
+def reset_demo(
+    session: SessionDependency,
+    service: ServiceDependency,
+) -> DemoResetResponse:
+    return service.reset_demo(session)
 
 
 @router.get(
@@ -253,36 +441,6 @@ def acknowledge_alert(
 
 
 @router.post(
-    "/models/{model_id}/versions",
-    response_model=ModelVersionResponse,
-    status_code=status.HTTP_201_CREATED,
-    tags=["pulse"],
-)
-def register_model_version(
-    model_id: str,
-    payload: ModelVersionCreate,
-    session: SessionDependency,
-    service: ServiceDependency,
-) -> ModelVersionResponse:
-    """Declare the controlled inputs a temporal comparison must hold constant."""
-
-    return service.register_model_version(session, model_id, payload)
-
-
-@router.get(
-    "/models/{model_id}/versions",
-    response_model=list[ModelVersionResponse],
-    tags=["pulse"],
-)
-def list_model_versions(
-    model_id: str,
-    session: SessionDependency,
-    service: ServiceDependency,
-) -> list[ModelVersionResponse]:
-    return service.list_model_versions(session, model_id)
-
-
-@router.post(
     "/models/{model_id}/stability/semantic",
     response_model=StabilityTestResponse,
     status_code=status.HTTP_201_CREATED,
@@ -345,99 +503,3 @@ def list_forecasts(
     """Stored predictions and, once their horizon passed, what actually happened."""
 
     return service.list_forecasts(session, model_id, limit=limit)
-
-
-@router.get(
-    "/models/{model_id}/incidents",
-    response_model=list[IncidentResponse],
-    tags=["diagnose"],
-)
-def list_incidents(
-    model_id: str,
-    session: SessionDependency,
-    service: ServiceDependency,
-    limit: Annotated[int, Query(ge=1, le=100)] = 20,
-) -> list[IncidentResponse]:
-    """Recent incidents for a model, most recently opened first."""
-
-    return service.list_incidents(session, model_id, limit=limit)
-
-
-@router.get(
-    "/incidents/{incident_id}",
-    response_model=IncidentResponse,
-    tags=["diagnose"],
-)
-def get_incident(
-    incident_id: str,
-    session: SessionDependency,
-    service: ServiceDependency,
-) -> IncidentResponse:
-    return service.get_incident(session, incident_id)
-
-
-@router.get(
-    "/models/{model_id}/recovery/latest",
-    response_model=RecoveryPlanResponse,
-    tags=["recover"],
-)
-def latest_recovery(
-    model_id: str,
-    session: SessionDependency,
-    service: ServiceDependency,
-) -> RecoveryPlanResponse:
-    return service.latest_recovery(session, model_id)
-
-
-@router.post(
-    "/recovery/{plan_id}/approve",
-    response_model=RecoveryPlanResponse,
-    tags=["recover"],
-)
-def approve_recovery(
-    plan_id: str,
-    payload: ActorRequest,
-    session: SessionDependency,
-    service: ServiceDependency,
-) -> RecoveryPlanResponse:
-    return service.approve_recovery(session, plan_id, payload)
-
-
-@router.post(
-    "/recovery/{plan_id}/execute",
-    response_model=RecoveryPlanResponse,
-    tags=["recover"],
-)
-def execute_recovery(
-    plan_id: str,
-    payload: ActorRequest,
-    session: SessionDependency,
-    service: ServiceDependency,
-) -> RecoveryPlanResponse:
-    return service.execute_recovery(session, plan_id, payload)
-
-
-@router.get(
-    "/models/{model_id}/audit",
-    response_model=list[AuditEventResponse],
-    tags=["audit"],
-)
-def audit_events(
-    model_id: str,
-    session: SessionDependency,
-    service: ServiceDependency,
-) -> list[AuditEventResponse]:
-    return service.audit_events(session, model_id)
-
-
-@router.post(
-    "/demo/reset",
-    response_model=DemoResetResponse,
-    tags=["demo"],
-)
-def reset_demo(
-    session: SessionDependency,
-    service: ServiceDependency,
-) -> DemoResetResponse:
-    return service.reset_demo(session)
-

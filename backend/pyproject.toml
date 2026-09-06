@@ -25,6 +25,12 @@ dev = [
 postgres = [
   "psycopg[binary]>=3.2,<4",
 ]
+observability = [
+  "opentelemetry-exporter-otlp-proto-http>=1.44,<2",
+  "opentelemetry-instrumentation-fastapi>=0.65b0,<1",
+  "opentelemetry-instrumentation-sqlalchemy>=0.65b0,<1",
+  "opentelemetry-sdk>=1.44,<2",
+]
 
 [tool.hatch.build.targets.wheel]
 packages = ["app"]

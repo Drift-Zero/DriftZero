@@ -11,6 +11,12 @@ from fastapi.responses import JSONResponse
 from app.api import router
 from app.config import Settings
 from app.database import Database
+from app.observability import (
+    RequestLoggingMiddleware,
+    configure_database_logging,
+    configure_logging,
+    configure_opentelemetry,
+)
 from app.service import (
     DriftZeroService,
     InvalidTransition,
@@ -21,7 +27,9 @@ from app.service import (
 
 def create_app(settings: Settings | None = None) -> FastAPI:
     runtime_settings = settings or Settings.from_env()
+    logger = configure_logging(runtime_settings)
     database = Database(runtime_settings.database_url)
+    configure_database_logging(database.engine, slow_query_ms=runtime_settings.slow_query_ms)
     service = DriftZeroService(runtime_settings)
 
     @asynccontextmanager
@@ -29,7 +37,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         database.create_schema()
         application.state.database = database
         application.state.service = service
+        logger.info(
+            "service.started",
+            extra={"event": "service.lifecycle"},
+        )
         yield
+        logger.info(
+            "service.stopped",
+            extra={"event": "service.lifecycle"},
+        )
         database.dispose()
 
     application = FastAPI(
@@ -46,7 +62,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             {"name": "demo", "description": "Deterministic CampusGPT scenario."},
         ],
     )
+    application.add_middleware(RequestLoggingMiddleware)
     application.include_router(router, prefix=runtime_settings.api_prefix)
+    application.state.opentelemetry_enabled = configure_opentelemetry(
+        application,
+        database.engine,
+        runtime_settings,
+    )
 
     @application.get("/healthz", tags=["system"])
     def healthcheck() -> dict[str, str]:
@@ -77,4 +99,3 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
 
 app = create_app()
-

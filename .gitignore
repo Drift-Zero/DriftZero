@@ -11,6 +11,7 @@ __pycache__/
 *.sqlite
 *.sqlite3
 .env
+backend/logs/
 
 # Editors and operating systems
 .idea/

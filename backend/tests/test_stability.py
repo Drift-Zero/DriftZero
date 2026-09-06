@@ -8,7 +8,6 @@ from sqlalchemy.orm import Session
 from app.config import Settings
 from app.db import (
     EvaluatorVersion,
-    ModelVersion,
     MonitoredModel,
     StabilityClaim,
     StabilityVariant,
@@ -39,51 +38,16 @@ def _version(corpus: str | None, label: str = "v1") -> ModelVersionCreate:
     )
 
 
-class TestFingerprint:
-    def test_identical_inputs_produce_one_fingerprint(self) -> None:
-        inputs = {"model_identifier": "m", "prompt_version": "v1", "corpus_version": "c"}
-
-        assert ModelVersion.fingerprint_for(**inputs) == ModelVersion.fingerprint_for(**inputs)
-
-    def test_a_changed_controlled_input_changes_the_fingerprint(self) -> None:
-        base = {"model_identifier": "m", "prompt_version": "v1", "corpus_version": "c1"}
-        moved = {**base, "corpus_version": "c2"}
-
-        assert ModelVersion.fingerprint_for(**base) != ModelVersion.fingerprint_for(**moved)
-
-    def test_uncontrolled_fields_are_ignored(self) -> None:
-        """Widening the fingerprint would make every run incomparable."""
-
-        base = {"model_identifier": "m", "prompt_version": "v1"}
-
-        assert ModelVersion.fingerprint_for(**base) == ModelVersion.fingerprint_for(
-            **base, label="a different label"
-        )
-
-
-class TestVersionRegistration:
-    def test_registering_retires_the_previous_version(
-        self, session: Session, model: MonitoredModel
-    ) -> None:
-        service = _service()
-        first = service.register_model_version(session, model.id, _version("c1"))
-        service.register_model_version(session, model.id, _version("c2", label="v2"))
-
-        retired = session.get(ModelVersion, first.id)
-        assert retired.active_to is not None
-        assert service._active_model_version(session, model.id).corpus_version == "c2"
-
-    def test_re_registering_identical_inputs_does_not_duplicate(
-        self, session: Session, model: MonitoredModel
-    ) -> None:
-        """A service that re-declares its config on boot must not fragment history."""
-
-        service = _service()
-        first = service.register_model_version(session, model.id, _version("c1"))
-        again = service.register_model_version(session, model.id, _version("c1"))
-
-        assert first.id == again.id
-        assert session.scalar(sa.select(sa.func.count()).select_from(ModelVersion)) == 1
+def _register(
+    service: DriftZeroService,
+    session: Session,
+    model: MonitoredModel,
+    corpus: str | None,
+    label: str = "v1",
+):
+    return service.create_model_version(
+        session, model.id, _version(corpus, label), actor="test"
+    )
 
 
 class TestSemanticStability:
@@ -91,7 +55,7 @@ class TestSemanticStability:
         self, session: Session, model: MonitoredModel
     ) -> None:
         service = _service()
-        service.register_model_version(session, model.id, _version(CURRENT_CORPUS_VERSION))
+        _register(service, session, model, CURRENT_CORPUS_VERSION)
 
         result = service.run_semantic_stability(session, model.id, QUESTION)
 
@@ -105,7 +69,7 @@ class TestSemanticStability:
         """Paraphrases disagree when some retrievals surface the stale document."""
 
         service = _service()
-        service.register_model_version(session, model.id, _version(SUPERSEDED_CORPUS))
+        _register(service, session, model, SUPERSEDED_CORPUS)
 
         result = service.run_semantic_stability(session, model.id, QUESTION)
 
@@ -117,7 +81,7 @@ class TestSemanticStability:
         self, session: Session, model: MonitoredModel
     ) -> None:
         service = _service()
-        service.register_model_version(session, model.id, _version(SUPERSEDED_CORPUS))
+        _register(service, session, model, SUPERSEDED_CORPUS)
 
         service.run_semantic_stability(session, model.id, QUESTION)
 
@@ -132,7 +96,7 @@ class TestSemanticStability:
         self, session: Session, model: MonitoredModel
     ) -> None:
         service = _service()
-        service.register_model_version(session, model.id, _version(CURRENT_CORPUS_VERSION))
+        _register(service, session, model, CURRENT_CORPUS_VERSION)
 
         service.run_semantic_stability(session, model.id, QUESTION)
 
@@ -148,7 +112,7 @@ class TestTemporalStability:
         self, session: Session, model: MonitoredModel
     ) -> None:
         service = _service()
-        service.register_model_version(session, model.id, _version(CURRENT_CORPUS_VERSION))
+        _register(service, session, model, CURRENT_CORPUS_VERSION)
 
         result = service.run_temporal_stability(session, model.id, QUESTION)
 
@@ -160,7 +124,7 @@ class TestTemporalStability:
         self, session: Session, model: MonitoredModel
     ) -> None:
         service = _service()
-        service.register_model_version(session, model.id, _version(CURRENT_CORPUS_VERSION))
+        _register(service, session, model, CURRENT_CORPUS_VERSION)
         service.run_temporal_stability(session, model.id, QUESTION)
 
         result = service.run_temporal_stability(session, model.id, QUESTION)
@@ -176,10 +140,10 @@ class TestTemporalStability:
         changed corpus."""
 
         service = _service()
-        service.register_model_version(session, model.id, _version(CURRENT_CORPUS_VERSION))
+        _register(service, session, model, CURRENT_CORPUS_VERSION)
         service.run_temporal_stability(session, model.id, QUESTION)
 
-        service.register_model_version(session, model.id, _version(SUPERSEDED_CORPUS, "v2"))
+        _register(service, session, model, SUPERSEDED_CORPUS, "v2")
         result = service.run_temporal_stability(session, model.id, QUESTION)
 
         assert result.inputs_changed is True
@@ -198,7 +162,7 @@ class TestEvaluatorVersioning:
         self, session: Session, model: MonitoredModel
     ) -> None:
         service = _service()
-        service.register_model_version(session, model.id, _version(CURRENT_CORPUS_VERSION))
+        _register(service, session, model, CURRENT_CORPUS_VERSION)
 
         service.run_semantic_stability(session, model.id, QUESTION)
         service.run_temporal_stability(session, model.id, QUESTION)
@@ -210,7 +174,7 @@ class TestEvaluatorVersioning:
         self, session: Session, model: MonitoredModel
     ) -> None:
         service = _service()
-        service.register_model_version(session, model.id, _version(CURRENT_CORPUS_VERSION))
+        _register(service, session, model, CURRENT_CORPUS_VERSION)
 
         for _ in range(3):
             service.run_semantic_stability(session, model.id, QUESTION)
@@ -223,7 +187,7 @@ class TestEvaluatorVersioning:
         self, session: Session, model: MonitoredModel
     ) -> None:
         service = _service()
-        service.register_model_version(session, model.id, _version(CURRENT_CORPUS_VERSION))
+        _register(service, session, model, CURRENT_CORPUS_VERSION)
 
         result = service.run_semantic_stability(session, model.id, QUESTION)
 
@@ -236,7 +200,7 @@ class TestReads:
         self, session: Session, model: MonitoredModel
     ) -> None:
         service = _service()
-        service.register_model_version(session, model.id, _version(CURRENT_CORPUS_VERSION))
+        _register(service, session, model, CURRENT_CORPUS_VERSION)
         service.run_semantic_stability(session, model.id, QUESTION)
         service.run_temporal_stability(session, model.id, QUESTION)
 

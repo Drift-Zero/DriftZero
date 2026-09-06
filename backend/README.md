@@ -39,6 +39,12 @@ recovery plan.
 | --- | --- | --- |
 | `GET` | `/healthz` | Service readiness |
 | `POST` | `/api/v1/models` | Register a monitored AI system |
+| `PATCH` | `/api/v1/models/{id}` | Update model metadata and retention |
+| `POST` | `/api/v1/models/{id}/lifecycle` | Activate, pause, or retire a model |
+| `POST` | `/api/v1/models/{id}/versions` | Register and activate controlled inputs |
+| `GET` | `/api/v1/models/{id}/versions` | Read version and fingerprint history |
+| `POST` | `/api/v1/models/{id}/versions/{version_id}/activate` | Reactivate a prior version |
+| `GET` | `/api/v1/models/{id}/registration-status` | Validate monitoring readiness |
 | `POST` | `/api/v1/models/{id}/telemetry` | Ingest normalized health dimensions |
 | `GET` | `/api/v1/models/{id}/health` | Read health history and forecast |
 | `POST` | `/api/v1/models/{id}/diagnoses` | Diagnose the latest deterioration |
@@ -48,6 +54,47 @@ recovery plan.
 | `POST` | `/api/v1/recovery/{id}/approve` | Record operator approval |
 | `POST` | `/api/v1/recovery/{id}/execute` | Execute and verify the approved plan |
 | `GET` | `/api/v1/models/{id}/audit` | Read the model's audit history |
+
+## Register a model
+
+Registration can create the model identity and its first controlled version in
+one transaction:
+
+```json
+{
+  "name": "SupportCopilot",
+  "provider": "openai",
+  "environment": "production",
+  "description": "Answers support questions from the approved knowledge base.",
+  "retention_days": 30,
+  "actor": "owner@example.com",
+  "initial_version": {
+    "label": "release-1",
+    "model_identifier": "gpt-production",
+    "prompt_version": "support-prompt-v1",
+    "configuration": {"temperature": 0.1, "max_tokens": 500},
+    "tools": ["knowledge_search", "ticket_lookup"],
+    "corpus_version": "support-2026-09",
+    "evaluation_policy_version": "health-v1"
+  }
+}
+```
+
+DriftZero hashes the configuration and normalized tool set, then hashes the
+complete set of controlled inputs into a stable version fingerprint. Creating
+a new version closes the previous active interval. Activating an older version
+closes the current one, preserving enough history to determine whether two
+temporal stability runs are comparable.
+
+`GET /api/v1/models/{id}/registration-status` distinguishes configuration from
+traffic: `ready_for_telemetry` requires an active model with an active
+fingerprinted version, while `monitoring_state` remains `awaiting_telemetry`
+until a health snapshot arrives. Paused and retired models are not considered
+ready. Retirement is terminal through the API.
+
+Configuration values are hashed rather than copied into the audit log. Provider
+secrets are not accepted by these endpoints and must eventually be supplied by
+a dedicated secrets-manager integration.
 
 ## Database
 
@@ -85,6 +132,39 @@ inspectable baseline, not a guarantee that an incident will occur.
 Copy `.env.example` values into the deployment environment. Environment variables are read using
 the `DRIFTZERO_` prefix. SQLite is the zero-setup default; set `DRIFTZERO_DATABASE_URL` to another
 SQLAlchemy-compatible database URL for a persistent deployment.
+
+## Operational logging
+
+The API writes one JSON object per line to stdout. Every HTTP response includes
+`X-Request-ID` and `X-Correlation-ID`; callers may supply either header using up
+to 128 letters, numbers, dots, underscores, colons, or hyphens. Invalid values
+are replaced with a generated request ID. The same IDs flow into operational
+logs and into audit events created during that request.
+
+```json
+{"timestamp":"2026-09-06T12:00:00+00:00","level":"info","logger":"driftzero.http","service":"driftzero-api","environment":"production","message":"request.completed","request_id":"request-123","correlation_id":"workflow-456","event":"http.request","http_method":"POST","http_route":"/api/v1/models","status_code":201,"duration_ms":24.7}
+```
+
+Request/response bodies, header values, SQL text, and bound query parameters are
+not logged. Free-text messages and exception text are scrubbed for common direct
+identifiers and secrets. Database errors are logged at `ERROR`, queries slower
+than `DRIFTZERO_SLOW_QUERY_MS` at `WARNING`, and other query timings at `DEBUG`.
+
+Set `DRIFTZERO_LOG_FILE` to also write rotating JSONL files. Rotation defaults
+to five 10 MiB backups and is controlled by `DRIFTZERO_LOG_FILE_MAX_BYTES` and
+`DRIFTZERO_LOG_FILE_BACKUP_COUNT`.
+
+Distributed traces are opt-in:
+
+```bash
+python -m pip install -e ".[observability]"
+export DRIFTZERO_OTEL_ENABLED=true
+export OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318
+```
+
+This instruments FastAPI and SQLAlchemy and exports spans through OTLP/HTTP.
+If the optional packages are absent, the service remains available and records
+an `opentelemetry.unavailable` warning instead of failing startup.
 
 ## Current safety boundary
 
