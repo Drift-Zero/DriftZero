@@ -1,0 +1,80 @@
+# DriftZero backend
+
+FastAPI service implementing DriftZero's first vertical slice:
+
+```text
+telemetry → health trajectory → diagnosis → recovery approval → execution → verification
+```
+
+The included recovery adapter and CampusGPT scenario are deterministic simulations. They never
+modify an external model deployment.
+
+## Run locally
+
+Requires Python 3.12 or newer.
+
+```bash
+python -m venv .venv
+# Windows: .venv\Scripts\activate
+# macOS/Linux: source .venv/bin/activate
+python -m pip install -e ".[dev]"
+uvicorn app.main:app --reload
+```
+
+Open `http://127.0.0.1:8000/docs` for the interactive OpenAPI documentation.
+
+Initialize or reset the deterministic CampusGPT scenario:
+
+```bash
+curl -X POST http://127.0.0.1:8000/api/v1/demo/reset
+```
+
+The response contains a health trajectory of approximately `92 → 87 → 74 → 61`, a 30-minute
+forecast of `48`, an evidence-backed `knowledge_freshness_failure` diagnosis, and an approval-gated
+recovery plan.
+
+## Important endpoints
+
+| Method | Path | Purpose |
+| --- | --- | --- |
+| `GET` | `/healthz` | Service readiness |
+| `POST` | `/api/v1/models` | Register a monitored AI system |
+| `POST` | `/api/v1/models/{id}/telemetry` | Ingest normalized health dimensions |
+| `GET` | `/api/v1/models/{id}/health` | Read health history and forecast |
+| `POST` | `/api/v1/models/{id}/diagnoses` | Diagnose the latest deterioration |
+| `GET` | `/api/v1/models/{id}/recovery/latest` | Read the recommended playbook |
+| `POST` | `/api/v1/recovery/{id}/approve` | Record operator approval |
+| `POST` | `/api/v1/recovery/{id}/execute` | Execute and verify the approved plan |
+| `GET` | `/api/v1/models/{id}/audit` | Read the model's audit history |
+
+## Health-score policy
+
+All dimensions are normalized to `0–100`, where higher is healthier. The `health-v1` policy uses
+published weights and renormalizes across available dimensions. It returns `insufficient_data`
+instead of a score when sample size, request coverage, or weighted dimension coverage is too low.
+Every snapshot retains its policy version, confidence, sample size, coverage, missing dimensions,
+and whether the signal was observed, inferred, or simulated.
+
+The MVP forecast uses the most recent observed slope with a variability-based interval. This is an
+inspectable baseline, not a guarantee that an incident will occur.
+
+## Configuration
+
+Copy `.env.example` values into the deployment environment. Environment variables are read using
+the `DRIFTZERO_` prefix. SQLite is the zero-setup default; set `DRIFTZERO_DATABASE_URL` to another
+SQLAlchemy-compatible database URL for a persistent deployment.
+
+## Current safety boundary
+
+Authentication and production recovery integrations are intentionally outside this initial slice.
+Do not expose the service publicly or connect consequential action adapters until authentication,
+role-based authorization, tenant isolation, secrets management, and deployment-specific rollback
+controls are implemented.
+
+## Verify
+
+```bash
+ruff check .
+pytest
+```
+
