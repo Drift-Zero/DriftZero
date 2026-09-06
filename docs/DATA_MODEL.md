@@ -156,19 +156,19 @@ so a replayed approval cannot execute a playbook twice.
 | Table | Notes |
 | --- | --- |
 | `audit_events` | Append-only. `entity_type` + `entity_id` are indexed, so you can pull the trail for one plan or one action. `model_id` is nullable for tenant-level events. |
-| `alert_rules` / `alerts` | Threshold rules and their firing / acknowledged / resolved state. |
+| `alert_rules` | Threshold, health-transition, trajectory, coverage, and evaluation-freshness rules, including persistence windows, cooldown, severity, and channel. |
+| `alerts` | Firing / acknowledged / resolved state, the observed evidence, incident and snapshot links, notification time, and resolution reason. |
 | `review_queue_items` | The human-review queue, and the target of the "send conflicts to human review" action. |
 
 ---
 
 ## Enums
 
-Five vocabularies are shared with the API and imported from `app/schemas.py`:
-`HealthState`, `SignalSource`, `DiagnosisStatus`, `RecoveryState`, `RiskLevel`.
-The rest are in `app/db/enums.py`: `ModelStatus`, `KnowledgeStatus`,
-`TraceStatus`, `Severity`, `IncidentState`, `ExecutionState`, `EvaluatorKind`,
-`StabilityKind`, `StabilityVerdict`, `ReviewState`, `AlertState`, `ActorType`,
-`FeedbackVerdict`.
+Wire-level vocabularies are defined in `app/schemas.py`, including
+`HealthState`, `Severity`, `AlertState`, `AlertRuleType`, `AlertMetric`, and
+`Comparator`. Persistence re-exports the shared values through
+`app/db/enums.py`; database-only vocabularies such as `ModelStatus` and
+`KnowledgeStatus` remain there.
 
 All of them are stored as their **value** (`"insufficient_data"`, not
 `"INSUFFICIENT_DATA"`) in a CHECK-constrained `VARCHAR(40)`. Assigning an
@@ -266,8 +266,9 @@ confidence are `0–1`, `sample_size` is non-negative, `rank` and action `order`
 are positive. A percentage passed where a probability belongs raises rather than
 being stored.
 
-**Cascades work at both levels.** `ondelete="CASCADE"` is in the DDL and the ORM
-relationships use `cascade="all, delete-orphan"` with `passive_deletes=True`.
+**Deletion preserves incident history where required.** Owned child data uses
+database and ORM cascades. Alert rules are the deliberate exception: deleting
+a rule sets historical alerts' `rule_id` to null instead of deleting evidence.
 SQLite enforces foreign keys only because a `PRAGMA foreign_keys=ON` listener
 runs on every connection.
 
@@ -335,9 +336,17 @@ the result records `inputs_changed` and the specific fields, and returns
 `inconclusive` — never `drifting`. Evaluators are pinned per judgement kind so a
 verdict can be replayed.
 
-**Alerting.** Rules are evaluated on every snapshot. A sustained breach fires
-once, not once per window; recovery resolves the open alert; and a metric with
-no value is skipped rather than treated as a breach.
+**Alerting.** Rules are evaluated on every snapshot. Threshold and coverage
+rules evaluate persisted values; transition rules detect entry into a target
+health state; trajectory rules evaluate the bounded forecast; freshness rules
+compare the most recent evaluation time with an explicit clock. Freshness can
+therefore also be evaluated through the manual endpoint when no telemetry is
+arriving. `minimum_consecutive_windows` suppresses single-window noise. A
+sustained breach creates one active alert and refreshes its evidence rather than
+creating one per window. Recovery, manual resolution, rule disablement, and
+rule deletion all record an explicit resolution reason. Cooldown is measured
+from resolution. In-product delivery sets `notified_at` in the same transaction,
+and every lifecycle transition is audited and correlated to the request.
 
 **Forecasts** are stored when a snapshot is recorded, not when a timeline is
 read, and are settled with the actual score once their horizon elapses.
@@ -359,8 +368,9 @@ confidence are `0–1`, `sample_size` is non-negative, `rank` and action `order`
 are positive. A percentage passed where a probability belongs raises rather than
 being stored.
 
-**Cascades work at both levels.** `ondelete="CASCADE"` is in the DDL and the ORM
-relationships use `cascade="all, delete-orphan"` with `passive_deletes=True`.
+**Deletion preserves incident history where required.** Owned child data uses
+database and ORM cascades. Alert rules are the deliberate exception: deleting
+a rule sets historical alerts' `rule_id` to null instead of deleting evidence.
 SQLite enforces foreign keys only because a `PRAGMA foreign_keys=ON` listener
 runs on every connection.
 
