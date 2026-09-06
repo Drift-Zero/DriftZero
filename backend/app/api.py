@@ -11,6 +11,10 @@ from sqlalchemy.orm import Session
 from app.database import Database
 from app.schemas import (
     ActorRequest,
+    AlertResponse,
+    AlertRuleCreate,
+    AlertRuleResponse,
+    AlertState,
     AuditEventResponse,
     DemoResetResponse,
     DiagnosisResponse,
@@ -131,6 +135,55 @@ def latest_diagnosis(
     service: ServiceDependency,
 ) -> DiagnosisResponse:
     return service.latest_diagnosis(session, model_id)
+
+
+@router.post(
+    "/models/{model_id}/alert-rules",
+    response_model=AlertRuleResponse,
+    status_code=status.HTTP_201_CREATED,
+    tags=["pulse"],
+)
+def create_alert_rule(
+    model_id: str,
+    payload: AlertRuleCreate,
+    session: SessionDependency,
+    service: ServiceDependency,
+) -> AlertRuleResponse:
+    return service.create_alert_rule(session, model_id, payload)
+
+
+@router.get(
+    "/models/{model_id}/alert-rules",
+    response_model=list[AlertRuleResponse],
+    tags=["pulse"],
+)
+def list_alert_rules(
+    model_id: str,
+    session: SessionDependency,
+    service: ServiceDependency,
+) -> list[AlertRuleResponse]:
+    return service.list_alert_rules(session, model_id)
+
+
+@router.get("/models/{model_id}/alerts", response_model=list[AlertResponse], tags=["pulse"])
+def list_alerts(
+    model_id: str,
+    session: SessionDependency,
+    service: ServiceDependency,
+    state: AlertState | None = None,
+    limit: Annotated[int, Query(ge=1, le=200)] = 50,
+) -> list[AlertResponse]:
+    return service.list_alerts(session, model_id, state=state, limit=limit)
+
+
+@router.post("/alerts/{alert_id}/acknowledge", response_model=AlertResponse, tags=["pulse"])
+def acknowledge_alert(
+    alert_id: str,
+    payload: ActorRequest,
+    session: SessionDependency,
+    service: ServiceDependency,
+) -> AlertResponse:
+    return service.acknowledge_alert(session, alert_id, payload)
 
 
 @router.post(

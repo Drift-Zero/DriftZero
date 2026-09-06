@@ -47,6 +47,21 @@ class IncidentState(StrEnum):
     FAILED = "failed"
 
 
+class AlertState(StrEnum):
+    FIRING = "firing"
+    ACKNOWLEDGED = "acknowledged"
+    RESOLVED = "resolved"
+
+
+class Comparator(StrEnum):
+    """How a metric is compared against a rule's threshold."""
+
+    LT = "lt"
+    LTE = "lte"
+    GT = "gt"
+    GTE = "gte"
+
+
 class StabilityKind(StrEnum):
     SEMANTIC = "semantic"
     TEMPORAL = "temporal"
@@ -445,6 +460,43 @@ class RecoveryPlanResponse(BaseModel):
     verified_at: datetime | None = None
     executions: list[RecoveryExecutionResponse] = Field(default_factory=list)
     verification: VerificationRunResponse | None = None
+
+
+class AlertRuleCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=120)
+    metric: str = Field(default="score", max_length=80)
+    comparator: Comparator = Comparator.LT
+    threshold: float
+    window_minutes: int = Field(default=15, ge=1)
+    cooldown_minutes: int = Field(default=30, ge=0)
+    severity: Severity = Severity.MEDIUM
+    channel: str = Field(default="in_app", max_length=40)
+    is_enabled: bool = True
+
+
+class AlertRuleResponse(AlertRuleCreate):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    model_id: str
+    created_at: datetime
+
+
+class AlertResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    model_id: str
+    rule_id: str | None = None
+    snapshot_id: str | None = None
+    incident_id: str | None = None
+    state: AlertState
+    severity: Severity
+    message: str
+    fired_at: datetime
+    acknowledged_at: datetime | None = None
+    acknowledged_by: str | None = None
+    resolved_at: datetime | None = None
 
 
 class ActorRequest(BaseModel):

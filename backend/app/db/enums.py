@@ -12,6 +12,7 @@ from enum import StrEnum
 
 from app.schemas import (
     ActorType,
+    AlertState,
     DiagnosisStatus,
     EvaluatorKind,
     ExecutionState,
@@ -65,12 +66,6 @@ class ReviewState(StrEnum):
     IN_REVIEW = "in_review"
     APPROVED = "approved"
     REJECTED = "rejected"
-
-
-class AlertState(StrEnum):
-    FIRING = "firing"
-    ACKNOWLEDGED = "acknowledged"
-    RESOLVED = "resolved"
 
 
 class FeedbackVerdict(StrEnum):

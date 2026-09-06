@@ -17,6 +17,8 @@ from app.database import (
     RecoveryPlan,
 )
 from app.db import (
+    Alert,
+    AlertRule,
     DiagnosisEvidence,
     EvaluatorVersion,
     HealthForecastRecord,
@@ -44,7 +46,12 @@ from app.redaction import REDACTION_POLICY_VERSION, content_hash, redact
 from app.schemas import (
     ActorRequest,
     ActorType,
+    AlertResponse,
+    AlertRuleCreate,
+    AlertRuleResponse,
+    AlertState,
     AuditEventResponse,
+    Comparator,
     DemoResetResponse,
     DiagnosisResponse,
     DiagnosisStatus,
@@ -597,6 +604,177 @@ class DriftZeroService:
         session.add(run)
         session.flush()
         return run
+
+    # ---------------------------------------------------------------- #
+    # Alerting
+    # ---------------------------------------------------------------- #
+
+    _COMPARATORS = {
+        Comparator.LT: lambda value, threshold: value < threshold,
+        Comparator.LTE: lambda value, threshold: value <= threshold,
+        Comparator.GT: lambda value, threshold: value > threshold,
+        Comparator.GTE: lambda value, threshold: value >= threshold,
+    }
+
+    def create_alert_rule(
+        self,
+        session: Session,
+        model_id: str,
+        payload: AlertRuleCreate,
+    ) -> AlertRuleResponse:
+        self._require_model(session, model_id)
+        existing = session.scalar(
+            select(AlertRule).where(
+                AlertRule.model_id == model_id, AlertRule.name == payload.name
+            )
+        )
+        if existing is not None:
+            raise ResourceConflict(f"An alert rule named '{payload.name}' already exists.")
+
+        rule = AlertRule(
+            model_id=model_id,
+            **payload.model_dump(exclude={"comparator", "severity"}),
+            comparator=payload.comparator.value,
+            severity=payload.severity.value,
+        )
+        session.add(rule)
+        session.flush()
+        self._audit(
+            session, model_id, "alert_rule.created", "system", {"rule_id": rule.id}
+        )
+        session.commit()
+        return AlertRuleResponse.model_validate(rule)
+
+    def list_alert_rules(self, session: Session, model_id: str) -> list[AlertRuleResponse]:
+        self._require_model(session, model_id)
+        records = session.scalars(
+            select(AlertRule).where(AlertRule.model_id == model_id).order_by(AlertRule.name)
+        ).all()
+        return [AlertRuleResponse.model_validate(record) for record in records]
+
+    def list_alerts(
+        self,
+        session: Session,
+        model_id: str,
+        *,
+        state: AlertState | None = None,
+        limit: int = 50,
+    ) -> list[AlertResponse]:
+        self._require_model(session, model_id)
+        statement = select(Alert).where(Alert.model_id == model_id)
+        if state is not None:
+            statement = statement.where(Alert.state == state.value)
+        records = session.scalars(
+            statement.order_by(Alert.fired_at.desc()).limit(limit)
+        ).all()
+        return [AlertResponse.model_validate(record) for record in records]
+
+    def acknowledge_alert(
+        self, session: Session, alert_id: str, payload: ActorRequest
+    ) -> AlertResponse:
+        alert = session.get(Alert, alert_id)
+        if alert is None:
+            raise ResourceNotFound("Alert not found.")
+        if AlertState(alert.state) is AlertState.FIRING:
+            alert.state = AlertState.ACKNOWLEDGED.value
+            alert.acknowledged_at = datetime.now(UTC)
+            alert.acknowledged_by = payload.actor
+            self._audit(
+                session,
+                alert.model_id,
+                "alert.acknowledged",
+                payload.actor,
+                {"alert_id": alert.id},
+            )
+            session.commit()
+        return AlertResponse.model_validate(alert)
+
+    def _evaluate_alert_rules(
+        self,
+        session: Session,
+        snapshot: HealthSnapshot,
+        incident: Incident | None,
+    ) -> None:
+        """Fire or resolve alerts for a newly recorded snapshot.
+
+        A rule that is already firing is not fired again until its cooldown has
+        elapsed, so a sustained failure produces one alert rather than one per
+        window. When the metric recovers, the open alert is resolved rather than
+        left for someone to clear by hand.
+        """
+
+        rules = session.scalars(
+            select(AlertRule).where(
+                AlertRule.model_id == snapshot.model_id, AlertRule.is_enabled.is_(True)
+            )
+        ).all()
+        now = datetime.now(UTC)
+
+        for rule in rules:
+            value = getattr(snapshot, rule.metric, None)
+            if value is None:
+                # An unmeasured metric is not a breach; alerting on missing data
+                # would turn every gap into a page.
+                continue
+
+            breached = self._COMPARATORS[Comparator(rule.comparator)](value, rule.threshold)
+            open_alert = session.scalar(
+                select(Alert)
+                .where(
+                    Alert.rule_id == rule.id,
+                    Alert.state.in_([AlertState.FIRING.value, AlertState.ACKNOWLEDGED.value]),
+                )
+                .order_by(Alert.fired_at.desc())
+                .limit(1)
+            )
+
+            if not breached:
+                if open_alert is not None:
+                    open_alert.state = AlertState.RESOLVED.value
+                    open_alert.resolved_at = now
+                    self._audit(
+                        session,
+                        snapshot.model_id,
+                        "alert.resolved",
+                        "alerting-engine",
+                        {"alert_id": open_alert.id, "rule_id": rule.id, "value": value},
+                    )
+                continue
+
+            if open_alert is not None:
+                continue
+
+            recent = session.scalar(
+                select(Alert)
+                .where(Alert.rule_id == rule.id)
+                .order_by(Alert.fired_at.desc())
+                .limit(1)
+            )
+            if recent is not None and recent.resolved_at is not None:
+                cooled = recent.resolved_at + timedelta(minutes=rule.cooldown_minutes)
+                if now < cooled:
+                    continue
+
+            alert = Alert(
+                rule_id=rule.id,
+                model_id=snapshot.model_id,
+                snapshot_id=snapshot.id,
+                incident_id=incident.id if incident else None,
+                severity=rule.severity,
+                message=(
+                    f"{rule.metric} is {value} ({rule.comparator} {rule.threshold}): {rule.name}"
+                ),
+                fired_at=now,
+            )
+            session.add(alert)
+            session.flush()
+            self._audit(
+                session,
+                snapshot.model_id,
+                "alert.fired",
+                "alerting-engine",
+                {"alert_id": alert.id, "rule_id": rule.id, "value": value},
+            )
 
     # ---------------------------------------------------------------- #
     # Model versions and the signature stability evaluations
@@ -1427,7 +1605,8 @@ class DriftZeroService:
         session.flush()
         self._settle_forecasts(session, record)
         self._store_forecast(session, record)
-        self._sync_incident(session, model_id, record)
+        incident = self._sync_incident(session, model_id, record)
+        self._evaluate_alert_rules(session, record, incident)
         return record
 
     def _store_forecast(
