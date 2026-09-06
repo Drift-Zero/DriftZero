@@ -47,6 +47,27 @@ class IncidentState(StrEnum):
     FAILED = "failed"
 
 
+class ReviewState(StrEnum):
+    PENDING = "pending"
+    IN_REVIEW = "in_review"
+    APPROVED = "approved"
+    REJECTED = "rejected"
+
+
+class FeedbackVerdict(StrEnum):
+    AGREE = "agree"
+    DISAGREE = "disagree"
+    UNSURE = "unsure"
+
+
+class FeedbackTarget(StrEnum):
+    """What a human is passing judgement on."""
+
+    DIAGNOSIS = "diagnosis"
+    STABILITY_TEST = "stability_test"
+    HEALTH_SNAPSHOT = "health_snapshot"
+
+
 class AlertState(StrEnum):
     FIRING = "firing"
     ACKNOWLEDGED = "acknowledged"
@@ -497,6 +518,48 @@ class AlertResponse(BaseModel):
     acknowledged_at: datetime | None = None
     acknowledged_by: str | None = None
     resolved_at: datetime | None = None
+
+
+class ReviewQueueItemResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    model_id: str
+    trace_id: str | None = None
+    incident_id: str | None = None
+    reason: str
+    state: ReviewState
+    assigned_to: str | None = None
+    decided_by: str | None = None
+    decided_at: datetime | None = None
+    notes: str | None = None
+    created_at: datetime
+
+
+class ReviewDecisionRequest(BaseModel):
+    actor: str = Field(min_length=1, max_length=120)
+    state: ReviewState
+    notes: str | None = None
+
+
+class EvaluationFeedbackCreate(BaseModel):
+    target_type: FeedbackTarget
+    target_id: str = Field(min_length=1, max_length=36)
+    actor: str = Field(min_length=1, max_length=120)
+    verdict: FeedbackVerdict
+    note: str | None = None
+
+
+class EvaluationFeedbackResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    target_type: str
+    target_id: str
+    actor: str
+    verdict: FeedbackVerdict
+    note: str | None = None
+    created_at: datetime
 
 
 class ActorRequest(BaseModel):

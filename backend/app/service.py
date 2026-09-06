@@ -20,6 +20,7 @@ from app.db import (
     Alert,
     AlertRule,
     DiagnosisEvidence,
+    EvaluationFeedback,
     EvaluatorVersion,
     HealthForecastRecord,
     Incident,
@@ -29,6 +30,7 @@ from app.db import (
     ModelVersion,
     RecoveryActionRecord,
     RecoveryExecution,
+    ReviewQueueItem,
     StabilityClaim,
     StabilityTest,
     StabilityVariant,
@@ -56,6 +58,8 @@ from app.schemas import (
     DiagnosisResponse,
     DiagnosisStatus,
     DimensionScores,
+    EvaluationFeedbackCreate,
+    EvaluationFeedbackResponse,
     EvaluatorKind,
     EvidenceItem,
     ExecutionState,
@@ -73,6 +77,9 @@ from app.schemas import (
     RecoveryExecutionResponse,
     RecoveryPlanResponse,
     RecoveryState,
+    ReviewDecisionRequest,
+    ReviewQueueItemResponse,
+    ReviewState,
     RiskLevel,
     Severity,
     SignalSource,
@@ -486,9 +493,23 @@ class DriftZeroService:
             )
             aborted = not outcome.succeeded
             session.flush()
+
+            if outcome.succeeded and record.code in self._REVIEW_ROUTING_ACTIONS:
+                # The playbook said to involve a human; that only means something
+                # if the work actually lands in front of one.
+                self._queue_for_review(
+                    session,
+                    plan.model_id,
+                    reason=record.title,
+                    incident_id=plan.incident_id,
+                )
+
             executions.append(execution)
 
         return executions
+
+    # Playbook steps whose entire purpose is to put a human in the loop.
+    _REVIEW_ROUTING_ACTIONS = frozenset({"queue_human_review", "route_human_review"})
 
     def _rollback_actions(
         self,
@@ -604,6 +625,137 @@ class DriftZeroService:
         session.add(run)
         session.flush()
         return run
+
+    # ---------------------------------------------------------------- #
+    # Human review and evaluator feedback
+    # ---------------------------------------------------------------- #
+
+    def _queue_for_review(
+        self,
+        session: Session,
+        model_id: str,
+        *,
+        reason: str,
+        incident_id: str | None = None,
+        trace_id: str | None = None,
+    ) -> ReviewQueueItem:
+        item = ReviewQueueItem(
+            model_id=model_id,
+            incident_id=incident_id,
+            trace_id=trace_id,
+            reason=reason,
+        )
+        session.add(item)
+        session.flush()
+        self._audit(
+            session,
+            model_id,
+            "review.queued",
+            "review-router",
+            {"item_id": item.id, "reason": reason},
+        )
+        return item
+
+    def list_review_queue(
+        self,
+        session: Session,
+        model_id: str,
+        *,
+        state: ReviewState | None = None,
+        limit: int = 50,
+    ) -> list[ReviewQueueItemResponse]:
+        self._require_model(session, model_id)
+        statement = select(ReviewQueueItem).where(ReviewQueueItem.model_id == model_id)
+        if state is not None:
+            statement = statement.where(ReviewQueueItem.state == state.value)
+        records = session.scalars(
+            statement.order_by(ReviewQueueItem.created_at.desc()).limit(limit)
+        ).all()
+        return [ReviewQueueItemResponse.model_validate(record) for record in records]
+
+    def decide_review_item(
+        self,
+        session: Session,
+        item_id: str,
+        payload: ReviewDecisionRequest,
+    ) -> ReviewQueueItemResponse:
+        """Record a human decision on a queued item.
+
+        Only a terminal decision is stamped with a decider: moving an item to
+        ``in_review`` is claiming it, not deciding it.
+        """
+
+        item = session.get(ReviewQueueItem, item_id)
+        if item is None:
+            raise ResourceNotFound("Review item not found.")
+        if ReviewState(item.state) in {ReviewState.APPROVED, ReviewState.REJECTED}:
+            raise InvalidTransition("This review item has already been decided.")
+
+        item.state = payload.state.value
+        item.notes = payload.notes
+        if payload.state is ReviewState.IN_REVIEW:
+            item.assigned_to = payload.actor
+        else:
+            item.decided_by = payload.actor
+            item.decided_at = datetime.now(UTC)
+
+        self._audit(
+            session,
+            item.model_id,
+            "review.decided",
+            payload.actor,
+            {"item_id": item.id, "state": item.state},
+        )
+        session.commit()
+        return ReviewQueueItemResponse.model_validate(item)
+
+    def record_feedback(
+        self,
+        session: Session,
+        payload: EvaluationFeedbackCreate,
+    ) -> EvaluationFeedbackResponse:
+        """Record a human verdict on an automated judgement.
+
+        Evaluator output is fallible, so disagreement is captured as data rather
+        than argued with. The target is validated so feedback cannot accumulate
+        against something that does not exist.
+        """
+
+        target_model = {
+            "diagnosis": Diagnosis,
+            "stability_test": StabilityTest,
+            "health_snapshot": HealthSnapshot,
+        }[payload.target_type.value]
+        if session.get(target_model, payload.target_id) is None:
+            raise ResourceNotFound(f"No {payload.target_type.value} with that id.")
+
+        record = EvaluationFeedback(
+            target_type=payload.target_type.value,
+            target_id=payload.target_id,
+            actor=payload.actor,
+            verdict=payload.verdict.value,
+            note=payload.note,
+        )
+        session.add(record)
+        session.flush()
+        session.commit()
+        return EvaluationFeedbackResponse.model_validate(record)
+
+    def list_feedback(
+        self,
+        session: Session,
+        target_type: str,
+        target_id: str,
+    ) -> list[EvaluationFeedbackResponse]:
+        records = session.scalars(
+            select(EvaluationFeedback)
+            .where(
+                EvaluationFeedback.target_type == target_type,
+                EvaluationFeedback.target_id == target_id,
+            )
+            .order_by(EvaluationFeedback.created_at.desc())
+        ).all()
+        return [EvaluationFeedbackResponse.model_validate(record) for record in records]
 
     # ---------------------------------------------------------------- #
     # Alerting

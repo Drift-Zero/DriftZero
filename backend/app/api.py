@@ -18,6 +18,8 @@ from app.schemas import (
     AuditEventResponse,
     DemoResetResponse,
     DiagnosisResponse,
+    EvaluationFeedbackCreate,
+    EvaluationFeedbackResponse,
     HealthForecastRecordResponse,
     HealthSnapshotResponse,
     HealthTimelineResponse,
@@ -27,6 +29,9 @@ from app.schemas import (
     ModelVersionCreate,
     ModelVersionResponse,
     RecoveryPlanResponse,
+    ReviewDecisionRequest,
+    ReviewQueueItemResponse,
+    ReviewState,
     StabilityKind,
     StabilityRunRequest,
     StabilityTestResponse,
@@ -135,6 +140,67 @@ def latest_diagnosis(
     service: ServiceDependency,
 ) -> DiagnosisResponse:
     return service.latest_diagnosis(session, model_id)
+
+
+@router.get(
+    "/models/{model_id}/review-queue",
+    response_model=list[ReviewQueueItemResponse],
+    tags=["recover"],
+)
+def list_review_queue(
+    model_id: str,
+    session: SessionDependency,
+    service: ServiceDependency,
+    state: ReviewState | None = None,
+    limit: Annotated[int, Query(ge=1, le=200)] = 50,
+) -> list[ReviewQueueItemResponse]:
+    """Work a recovery playbook routed to a human."""
+
+    return service.list_review_queue(session, model_id, state=state, limit=limit)
+
+
+@router.post(
+    "/review-queue/{item_id}/decide",
+    response_model=ReviewQueueItemResponse,
+    tags=["recover"],
+)
+def decide_review_item(
+    item_id: str,
+    payload: ReviewDecisionRequest,
+    session: SessionDependency,
+    service: ServiceDependency,
+) -> ReviewQueueItemResponse:
+    return service.decide_review_item(session, item_id, payload)
+
+
+@router.post(
+    "/feedback",
+    response_model=EvaluationFeedbackResponse,
+    status_code=status.HTTP_201_CREATED,
+    tags=["evaluate"],
+)
+def record_feedback(
+    payload: EvaluationFeedbackCreate,
+    session: SessionDependency,
+    service: ServiceDependency,
+) -> EvaluationFeedbackResponse:
+    """Record agreement or disagreement with an automated judgement."""
+
+    return service.record_feedback(session, payload)
+
+
+@router.get(
+    "/feedback/{target_type}/{target_id}",
+    response_model=list[EvaluationFeedbackResponse],
+    tags=["evaluate"],
+)
+def list_feedback(
+    target_type: str,
+    target_id: str,
+    session: SessionDependency,
+    service: ServiceDependency,
+) -> list[EvaluationFeedbackResponse]:
+    return service.list_feedback(session, target_type, target_id)
 
 
 @router.post(

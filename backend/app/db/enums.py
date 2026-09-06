@@ -16,9 +16,11 @@ from app.schemas import (
     DiagnosisStatus,
     EvaluatorKind,
     ExecutionState,
+    FeedbackVerdict,
     HealthState,
     IncidentState,
     RecoveryState,
+    ReviewState,
     RiskLevel,
     Severity,
     SignalSource,
@@ -59,16 +61,3 @@ class KnowledgeStatus(StrEnum):
     FRESH = "fresh"
     STALE = "stale"
     DISABLED = "disabled"
-
-
-class ReviewState(StrEnum):
-    PENDING = "pending"
-    IN_REVIEW = "in_review"
-    APPROVED = "approved"
-    REJECTED = "rejected"
-
-
-class FeedbackVerdict(StrEnum):
-    AGREE = "agree"
-    DISAGREE = "disagree"
-    UNSURE = "unsure"

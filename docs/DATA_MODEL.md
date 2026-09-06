@@ -291,6 +291,99 @@ Left as-is deliberately — that file belongs to the API layer.
 
 ---
 
+## What writes what
+
+**Every table in the model is now written by `app/service.py`.**
+
+| Area | Tables | Trigger |
+| --- | --- | --- |
+| Fleet | `tenants`, `monitored_models`, `model_versions` | model registration; version registration |
+| Knowledge | `knowledge_sources`, `knowledge_documents` | demo seed |
+| Pulse | `traces`, `health_snapshots`, `health_policies`, `health_forecasts` | `record_telemetry` |
+| Diagnose | `incidents`, `diagnoses`, `diagnosis_evidence`, `evidence_traces` | `_sync_incident`, `diagnose_latest` |
+| Recover | `recovery_plans`, `recovery_actions`, `recovery_executions`, `verification_runs`, `review_queue_items` | plan creation; `execute_recovery` |
+| Evaluate | `evaluator_versions`, `stability_tests`, `stability_variants`, `stability_claims`, `evaluation_feedback` | stability runs; `record_feedback` |
+| Governance | `audit_events`, `alert_rules`, `alerts` | throughout; `_evaluate_alert_rules` |
+
+A few behaviours are easier to get wrong than right, so they are stated here:
+
+**Traces and the drill-down.** `TelemetryCreate.traces` is optional; when
+supplied, `_record_telemetry` redacts and stores each one and derives the
+snapshot's window from the traffic they span. With no traces the window falls
+back to the configured horizon, so a score always states its period.
+`diagnose_latest` writes `diagnosis_evidence` rows and links each to the traces
+demonstrating its metric. The stored link is a *set* of relevant traces, not a
+ranking, and reads back chronologically.
+
+**Incidents.** A degrading snapshot opens one if none is running and otherwise
+deepens it: severity only escalates, and `trough_score` records the worst
+reading rather than the latest. A healthy snapshot closes an incident only when
+it is already `verifying` — one good window during an unaddressed degradation is
+not a recovery.
+
+**Recovery.** Actions are rows, and each attempt is a `recovery_executions`
+record with its actor, blast radius and rollback state. A failed step stops the
+playbook and the rest are recorded as skipped. Success requires clearing the
+threshold *and* not regressing safety, latency or reliability — a recovery that
+restores the score while breaking something else is not a recovery. A failure
+rolls back what can be undone; an irreversible action records why it could not
+be, rather than claiming it was.
+
+**Stability.** `ModelVersion.fingerprint_for` hashes only the controlled inputs.
+A temporal comparison runs only when the fingerprint held; when an input moved,
+the result records `inputs_changed` and the specific fields, and returns
+`inconclusive` — never `drifting`. Evaluators are pinned per judgement kind so a
+verdict can be replayed.
+
+**Alerting.** Rules are evaluated on every snapshot. A sustained breach fires
+once, not once per window; recovery resolves the open alert; and a metric with
+no value is skipped rather than treated as a breach.
+
+**Forecasts** are stored when a snapshot is recorded, not when a timeline is
+read, and are settled with the actual score once their horizon elapses.
+
+## Conventions and gotchas
+
+**Timestamps are always aware UTC.** SQLite has no timezone-aware column type —
+its dialect drops the offset on write and returns naive datetimes on read, so
+`DateTime(timezone=True)` is silently a no-op there. `UtcDateTime` normalises in
+both directions. Use `app.db.utc_now()`; never `datetime.now()` without a
+timezone, and never `sa.DateTime` directly on a model.
+
+**JSON columns track in-place mutation.** `snapshot.missing_dimensions.append(x)`
+is persisted. Without the `Mutable*` wrappers it would not have been — SQLAlchemy
+would compare the list to itself, see no change, and drop the write.
+
+**Constraints are enforced by the database.** Scores are `0–100`, coverage and
+confidence are `0–1`, `sample_size` is non-negative, `rank` and action `order`
+are positive. A percentage passed where a probability belongs raises rather than
+being stored.
+
+**Cascades work at both levels.** `ondelete="CASCADE"` is in the DDL and the ORM
+relationships use `cascade="all, delete-orphan"` with `passive_deletes=True`.
+SQLite enforces foreign keys only because a `PRAGMA foreign_keys=ON` listener
+runs on every connection.
+
+**Redaction is not optional.** `traces` and `stability_*` store redacted text and
+hashes. Do not add a column for raw prompt or response content.
+
+---
+
+## Notes for the API layer
+
+`app/schemas.py` declares fields named `model_id` and `model`. Pydantic v2
+protects the `model_` namespace and emits
+`UserWarning: Field "model_id" has conflict with protected namespace "model_"`.
+It is harmless, and silenced with one line on the affected models:
+
+```python
+model_config = ConfigDict(protected_namespaces=())
+```
+
+Left as-is deliberately — that file belongs to the API layer.
+
+---
+
 ## Currently wired
 
 `app/service.py` writes `monitored_models`, `traces`, `health_snapshots`,
