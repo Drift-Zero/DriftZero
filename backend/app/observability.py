@@ -201,6 +201,8 @@ class RequestLoggingMiddleware:
         route_path = getattr(route, "path", None) or "<unmatched>"
         fields: dict[str, object] = {
             "event": "http.request",
+            "request_id": get_request_id(),
+            "correlation_id": get_correlation_id(),
             "http_method": scope.get("method", "UNKNOWN"),
             "http_route": route_path,
             "status_code": status_code,
