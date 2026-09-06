@@ -3,7 +3,7 @@
 # DriftZero — Project Blueprint
 
 ## Product definition
-
+cb
 **DriftZero** is an early-warning reliability control plane for deployed AI systems. It detects degrading behavior before it becomes a production incident, diagnoses the most likely cause, and recommends or safely executes a recovery playbook.
 
 **Tagline:** Predict. Diagnose. Recover.
