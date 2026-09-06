@@ -26,3 +26,27 @@ def test_optional_dashboard_is_served_without_shadowing_api(tmp_path: Path) -> N
 def test_missing_dashboard_directory_fails_fast(tmp_path: Path) -> None:
     with pytest.raises(RuntimeError, match="DRIFTZERO_FRONTEND_DIR does not exist"):
         create_app(Settings(frontend_dir=str(tmp_path / "missing")))
+
+
+def test_local_dashboard_origin_can_read_the_api() -> None:
+    app = create_app(Settings(database_url="sqlite://", environment="development"))
+
+    with TestClient(app) as client:
+        response = client.get(
+            "/healthz",
+            headers={"Origin": "http://127.0.0.1:5173"},
+        )
+
+    assert response.headers["access-control-allow-origin"] == "http://127.0.0.1:5173"
+
+
+def test_production_does_not_enable_local_dashboard_cors() -> None:
+    app = create_app(Settings(database_url="sqlite://", environment="production"))
+
+    with TestClient(app) as client:
+        response = client.get(
+            "/healthz",
+            headers={"Origin": "http://127.0.0.1:5173"},
+        )
+
+    assert "access-control-allow-origin" not in response.headers

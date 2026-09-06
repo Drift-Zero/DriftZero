@@ -7,6 +7,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, Request, status
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -68,6 +69,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         ],
     )
     application.state.settings = runtime_settings
+    if runtime_settings.environment.lower() not in {"production", "prod"}:
+        application.add_middleware(
+            CORSMiddleware,
+            allow_origins=["http://127.0.0.1:5173", "http://localhost:5173"],
+            allow_methods=["*"],
+            allow_headers=["*"],
+        )
     application.add_middleware(RequestLoggingMiddleware)
     application.include_router(router, prefix=runtime_settings.api_prefix)
     application.state.opentelemetry_enabled = configure_opentelemetry(
