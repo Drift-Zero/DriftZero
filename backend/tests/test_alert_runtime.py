@@ -128,6 +128,32 @@ def test_threshold_requires_consecutive_breaches(
     assert alert.details["recent_values"] == [61.0, 60.0]
 
 
+def test_rule_creation_and_update_evaluate_existing_evidence(
+    session: Session,
+    model: MonitoredModel,
+) -> None:
+    service = DriftZeroService(Settings())
+    _record(service, session, model, 61, utc_now())
+
+    rule = service.create_alert_rule(
+        session,
+        model.id,
+        AlertRuleCreate(name="existing degradation", threshold=70),
+    )
+
+    alert = _stored_alerts(session)[0]
+    assert AlertState(alert.state) is AlertState.FIRING
+    assert alert.observed_value == 61
+
+    service.update_alert_rule(
+        session,
+        rule.id,
+        AlertRuleUpdate(threshold=50, actor="operator"),
+    )
+    assert AlertState(alert.state) is AlertState.RESOLVED
+    assert alert.resolution_reason == "condition_cleared"
+
+
 def test_transition_alert_links_incident_and_resolves_after_state_exit(
     session: Session,
     model: MonitoredModel,
