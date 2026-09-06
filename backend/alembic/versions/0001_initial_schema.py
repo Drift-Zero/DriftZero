@@ -12,6 +12,7 @@ Create Date: 2026-09-06 09:53:48.437176
 from __future__ import annotations
 
 from collections.abc import Sequence
+from datetime import UTC, datetime
 
 import sqlalchemy as sa
 from alembic import op
@@ -617,6 +618,25 @@ def upgrade() -> None:
         batch_op.create_index(batch_op.f('ix_recovery_executions_plan_id'), ['plan_id'], unique=False)
         batch_op.create_index(batch_op.f('ix_recovery_executions_state'), ['state'], unique=False)
 
+    # The single-tenant bootstrap row. Every tenant-scoped table defaults its
+    # tenant_id to this value, so nothing can be inserted until it exists.
+    op.bulk_insert(
+        sa.table(
+            "tenants",
+            sa.column("id", sa.String),
+            sa.column("slug", sa.String),
+            sa.column("name", sa.String),
+            sa.column("created_at", sa.DateTime(timezone=True)),
+        ),
+        [
+            {
+                "id": "00000000-0000-0000-0000-000000000001",
+                "slug": "default",
+                "name": "Default",
+                "created_at": datetime.now(UTC),
+            }
+        ],
+    )
     # ### end Alembic commands ###
 
 

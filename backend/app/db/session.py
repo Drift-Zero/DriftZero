@@ -13,6 +13,7 @@ from sqlalchemy.pool import StaticPool
 
 from app.config import Settings
 from app.db.base import Base
+from app.db.queries import ensure_default_tenant
 
 IN_MEMORY_URLS = frozenset({"sqlite://", "sqlite:///:memory:"})
 
@@ -54,13 +55,20 @@ class Database:
         cursor.close()
 
     def create_schema(self) -> None:
-        """Create every table directly from the models.
+        """Create every table directly from the models, and bootstrap the tenant.
 
         Convenient for tests and throwaway demos. Use Alembic for any database
         whose contents you intend to keep.
+
+        The default tenant is part of making the schema usable rather than demo
+        data: every tenant-scoped table defaults its ``tenant_id`` to that row,
+        so nothing can be inserted until it exists.
         """
 
         Base.metadata.create_all(self.engine)
+        with self.session_factory() as session:
+            ensure_default_tenant(session)
+            session.commit()
 
     def drop_schema(self) -> None:
         Base.metadata.drop_all(self.engine)
