@@ -1016,7 +1016,7 @@ class DriftZeroService:
         model_id: str,
         payload: AlertRuleCreate,
     ) -> AlertRuleResponse:
-        self._require_model(session, model_id)
+        model = self._require_model(session, model_id)
         existing = session.scalar(
             select(AlertRule).where(AlertRule.model_id == model_id, AlertRule.name == payload.name)
         )
@@ -1041,6 +1041,15 @@ class DriftZeroService:
                 "severity": rule.severity,
             },
         )
+        if rule.is_enabled:
+            result = self.alert_evaluator.evaluate(
+                session,
+                model,
+                snapshot=latest_snapshot(session, model_id),
+                incident=self._open_incident(session, model_id),
+                evaluated_at=datetime.now(UTC),
+            )
+            self._audit_alert_transitions(session, result)
         session.commit()
         return AlertRuleResponse.model_validate(rule)
 
@@ -1080,24 +1089,35 @@ class DriftZeroService:
         for field, value in normalized.items():
             setattr(rule, field, value)
 
-        resolved: list[Alert] = []
+        evaluated_at = datetime.now(UTC)
+        result = AlertEvaluation(
+            evaluated_at=evaluated_at,
+            evaluated_rules=0,
+            fired=[],
+            resolved=[],
+        )
         if not rule.is_enabled:
-            evaluated_at = datetime.now(UTC)
             resolved = self.alert_evaluator.resolve_rule_alerts(
                 session,
                 rule.id,
                 evaluated_at=evaluated_at,
                 reason="rule_disabled",
             )
-            self._audit_alert_transitions(
-                session,
-                AlertEvaluation(
-                    evaluated_at=evaluated_at,
-                    evaluated_rules=0,
-                    fired=[],
-                    resolved=resolved,
-                ),
+            result = AlertEvaluation(
+                evaluated_at=evaluated_at,
+                evaluated_rules=0,
+                fired=[],
+                resolved=resolved,
             )
+        else:
+            result = self.alert_evaluator.evaluate(
+                session,
+                self._require_model(session, rule.model_id),
+                snapshot=latest_snapshot(session, rule.model_id),
+                incident=self._open_incident(session, rule.model_id),
+                evaluated_at=evaluated_at,
+            )
+        self._audit_alert_transitions(session, result)
         session.flush()
         self._audit(
             session,
@@ -1108,7 +1128,8 @@ class DriftZeroService:
                 "rule_id": rule.id,
                 "before": previous,
                 "after": {field: normalized[field] for field in changes},
-                "resolved_alert_ids": [alert.id for alert in resolved],
+                "fired_alert_ids": [alert.id for alert in result.fired],
+                "resolved_alert_ids": [alert.id for alert in result.resolved],
             },
         )
         session.commit()
