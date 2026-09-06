@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+from datetime import datetime
 from pathlib import Path
 
 from fastapi.testclient import TestClient
@@ -126,9 +127,12 @@ def test_json_formatter_redacts_identifiers_and_secrets() -> None:
         args=(),
         exc_info=None,
     )
+    record.model_id = "12345678-1234-1234-1234-123456789012"
 
     payload = json.loads(formatter.format(record))
 
+    datetime.fromisoformat(payload["timestamp"])
+    assert payload["model_id"] == record.model_id
     assert "student@example.com" not in payload["message"]
     assert "abcdefghijklmnop" not in payload["message"]
     assert "hunter2" not in payload["message"]
@@ -154,4 +158,3 @@ def test_optional_log_file_uses_json_and_rotation_settings(tmp_path: Path) -> No
     assert payload["message"] == "file.logging.ready"
     assert payload["event"] == "logging.test"
     assert payload["environment"] == "test"
-
