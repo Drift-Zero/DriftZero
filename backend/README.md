@@ -50,6 +50,15 @@ recovery plan.
 | `POST` | `/api/v1/models/{id}/diagnoses` | Diagnose the latest deterioration |
 | `GET` | `/api/v1/models/{id}/incidents` | List recent incidents for a model |
 | `GET` | `/api/v1/incidents/{id}` | Read one incident and its lifecycle state |
+| `POST` | `/api/v1/models/{id}/alert-rules` | Create an alert rule |
+| `GET` | `/api/v1/models/{id}/alert-rules` | List a model's alert rules |
+| `GET/PATCH/DELETE` | `/api/v1/alert-rules/{id}` | Manage one alert rule |
+| `POST` | `/api/v1/models/{id}/alerts/evaluate` | Evaluate rules, including freshness |
+| `GET` | `/api/v1/models/{id}/alerts` | List a model's alerts |
+| `GET` | `/api/v1/alerts` | Read the cross-model notification feed |
+| `GET` | `/api/v1/alerts/{id}` | Read alert evidence and lifecycle state |
+| `POST` | `/api/v1/alerts/{id}/acknowledge` | Record an operator acknowledgement |
+| `POST` | `/api/v1/alerts/{id}/resolve` | Resolve an alert with a reason |
 | `GET` | `/api/v1/models/{id}/recovery/latest` | Read the recommended playbook |
 | `POST` | `/api/v1/recovery/{id}/approve` | Record operator approval |
 | `POST` | `/api/v1/recovery/{id}/execute` | Execute and verify the approved plan |
@@ -126,6 +135,60 @@ and whether the signal was observed, inferred, or simulated.
 
 The MVP forecast uses the most recent observed slope with a variability-based interval. This is an
 inspectable baseline, not a guarantee that an incident will occur.
+
+## Alert rules
+
+DriftZero supports five rule strategies:
+
+| Strategy | Metric | Meaning |
+| --- | --- | --- |
+| `threshold` | `score` or a health dimension | A numeric metric crosses a boundary |
+| `transition` | `state` | Health enters a target state |
+| `trajectory` | `forecast_score` or `forecast_change_per_hour` | The projected trajectory crosses a boundary |
+| `coverage` | `coverage` | Evaluation traffic coverage becomes inadequate |
+| `evaluation_freshness` | `evaluation_age_minutes` | No recent evaluation has arrived |
+
+Create a sustained groundedness rule:
+
+```json
+{
+  "name": "groundedness degradation",
+  "rule_type": "threshold",
+  "metric": "groundedness",
+  "comparator": "lt",
+  "threshold": 70,
+  "window_minutes": 30,
+  "minimum_consecutive_windows": 2,
+  "cooldown_minutes": 60,
+  "severity": "high",
+  "channel": "in_app",
+  "actor": "reliability-owner"
+}
+```
+
+Transition rules use `metric: "state"`, set `target_state` to `healthy`,
+`warning`, or `critical`, and send both `comparator` and `threshold` as `null`.
+Trajectory and freshness rules retain a numeric comparator and threshold.
+
+Rules run automatically inside the telemetry transaction. A condition must
+hold for `minimum_consecutive_windows` before firing. One active alert is kept
+per rule; continued failure updates its evidence rather than creating alert
+spam. Clearing the condition resolves it, and `cooldown_minutes` controls when
+the same rule may fire again. Disabling or deleting a rule resolves active
+alerts, while deleting preserves historical alert records.
+
+Freshness rules need evaluation even when telemetry has stopped. Schedule:
+
+```bash
+curl -X POST http://127.0.0.1:8000/api/v1/models/MODEL_ID/alerts/evaluate \
+  -H "Content-Type: application/json" \
+  -d '{"actor":"alerting-scheduler"}'
+```
+
+The current delivery channel is `in_app`. Creating the alert sets
+`notified_at`, and `GET /api/v1/alerts` provides the notification feed and
+firing/acknowledged counts. External email, Slack, webhook, and paging delivery
+are deliberately not claimed until authenticated delivery adapters exist.
 
 ## Configuration
 
