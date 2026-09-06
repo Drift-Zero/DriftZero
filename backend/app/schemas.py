@@ -4,9 +4,9 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from enum import StrEnum
-from typing import Annotated
+from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 Score = Annotated[float, Field(ge=0, le=100)]
 
@@ -87,17 +87,96 @@ class DimensionScores(BaseModel):
     cost: Score | None = None
 
 
+ModelLifecycleState = Literal["active", "paused", "retired"]
+
+
+class ModelVersionCreate(BaseModel):
+    """Controlled inputs that uniquely identify one deployed model version."""
+
+    label: str = Field(min_length=1, max_length=120)
+    model_identifier: str = Field(min_length=1, max_length=160)
+    prompt_version: str = Field(min_length=1, max_length=80)
+    configuration: dict[str, object] = Field(default_factory=dict)
+    tools: list[str] = Field(default_factory=list, max_length=100)
+    corpus_version: str | None = Field(default=None, max_length=80)
+    evaluation_policy_version: str = Field(default="health-v1", min_length=1, max_length=40)
+
+
 class ModelCreate(BaseModel):
     name: str = Field(min_length=1, max_length=120)
     provider: str = Field(default="custom", min_length=1, max_length=80)
     environment: str = Field(default="production", min_length=1, max_length=40)
+    description: str | None = Field(default=None, max_length=2000)
+    retention_days: int = Field(default=30, ge=1, le=3650)
+    initial_version: ModelVersionCreate | None = None
+    actor: str = Field(default="system", min_length=1, max_length=120)
 
 
-class ModelResponse(ModelCreate):
+class ModelResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: str
+    name: str
+    provider: str
+    environment: str
+    description: str | None
+    status: ModelLifecycleState
+    retention_days: int
     created_at: datetime
+    updated_at: datetime
+
+
+class ModelUpdate(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=120)
+    provider: str | None = Field(default=None, min_length=1, max_length=80)
+    environment: str | None = Field(default=None, min_length=1, max_length=40)
+    description: str | None = Field(default=None, max_length=2000)
+    retention_days: int | None = Field(default=None, ge=1, le=3650)
+    actor: str = Field(min_length=1, max_length=120)
+
+    @model_validator(mode="after")
+    def require_change(self) -> ModelUpdate:
+        fields = ("name", "provider", "environment", "description", "retention_days")
+        if not any(field in self.model_fields_set for field in fields):
+            raise ValueError("At least one model field must be supplied.")
+        return self
+
+
+class ModelLifecycleUpdate(BaseModel):
+    status: ModelLifecycleState
+    actor: str = Field(min_length=1, max_length=120)
+
+
+class ModelVersionResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    model_id: str
+    label: str
+    model_identifier: str
+    prompt_version: str
+    config_hash: str
+    tool_set_hash: str
+    corpus_version: str | None
+    evaluation_policy_version: str
+    fingerprint: str
+    active_from: datetime
+    active_to: datetime | None
+    created_at: datetime
+
+
+class RegistrationCheck(BaseModel):
+    code: str
+    passed: bool
+    detail: str
+
+
+class RegistrationStatusResponse(BaseModel):
+    model_id: str
+    ready_for_telemetry: bool
+    monitoring_state: Literal["paused", "awaiting_telemetry", "receiving_telemetry"]
+    active_version_id: str | None
+    checks: list[RegistrationCheck]
 
 
 class TraceCreate(BaseModel):
