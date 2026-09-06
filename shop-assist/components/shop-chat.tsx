@@ -7,11 +7,11 @@ import { ArrowUp, BookOpenText, Box, ChevronRight, CircleCheck, RotateCcw, Searc
 import { products } from '../data/catalog.ts';
 import { answerQuestion, replaceLatestConversationAnswer, type AssistantAnswer, type ConversationContext } from '../lib/assistant.ts';
 import { readScenario, type ScenarioId } from '../lib/demo-state.ts';
-import { sendInteractionTelemetry, type TelemetryDelivery } from '../lib/telemetry.ts';
+import type { TelemetryDelivery } from '../lib/telemetry.ts';
 import { Button } from './ui/button';
 
 type ChatMessage = { id: number; role: 'assistant' | 'user'; text: string; answer?: AssistantAnswer; provider?: string; tokens?: number };
-type AIChatReply = { answer?: unknown; model?: unknown; status?: unknown; sources?: unknown; usage?: { totalTokens?: unknown } };
+type AIChatReply = { answer?: unknown; model?: unknown; status?: unknown; sources?: unknown; telemetry?: unknown; usage?: { totalTokens?: unknown } };
 type ProviderSource = { id: string; label: string };
 
 const initialSuggestions = [
@@ -59,7 +59,7 @@ export function ShopChat() {
     setDelivery('ready');
   }
 
-  async function requestPrimaryModel(question: string): Promise<{ answer: string; model: string; sources: ProviderSource[]; tokens?: number }> {
+  async function requestPrimaryModel(question: string): Promise<{ answer: string; model: string; sources: ProviderSource[]; tokens?: number; telemetry: TelemetryDelivery }> {
     const history = messages.map((message) => ({ role: message.role, text: message.text }));
     const response = await fetch('/api/chat', {
       method: 'POST',
@@ -74,6 +74,7 @@ export function ShopChat() {
       answer: payload.answer.trim(),
       model: typeof payload.model === 'string' ? payload.model : 'AI provider',
       tokens: typeof payload.usage?.totalTokens === 'number' ? payload.usage.totalTokens : undefined,
+      telemetry: payload.telemetry === 'sent' || payload.telemetry === 'error' ? payload.telemetry : 'buffered',
       sources: Array.isArray(payload.sources)
         ? payload.sources.filter((source): source is ProviderSource => Boolean(source) && typeof source === 'object' && 'id' in source && typeof source.id === 'string' && 'label' in source && typeof source.label === 'string')
         : [],
@@ -109,23 +110,14 @@ export function ShopChat() {
       setSuggestions(fallbackAnswer.suggestions);
       setContext(replaceLatestConversationAnswer(fallbackAnswer.context, reply.answer));
       setTyping(false);
-      setDelivery('ready');
+      setDelivery(reply.telemetry);
     }).catch(() => {
       if (activeRequest !== requestVersion.current) return;
       setMessages((current) => [...current, { id: nextId.current++, role: 'assistant', text: fallbackAnswer.text, answer: fallbackAnswer, provider: 'Local fallback' }]);
       setSuggestions(fallbackAnswer.suggestions);
       setContext(fallbackAnswer.context);
       setTyping(false);
-      void sendInteractionTelemetry({
-        question,
-        answer: fallbackAnswer.text,
-        scenario,
-        citations: fallbackAnswer.citations.map((citation) => citation.id),
-        confidence: fallbackAnswer.confidence,
-        groundedness: fallbackAnswer.groundedness,
-        unsupportedClaims: fallbackAnswer.unsupportedClaims,
-        intent: fallbackAnswer.intent,
-      }).then(setDelivery);
+      setDelivery('error');
     });
   }
 

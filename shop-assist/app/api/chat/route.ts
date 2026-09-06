@@ -1,6 +1,8 @@
 import { sendGroqMessage } from '../../../lib/groq.ts';
+import { answerQuestion } from '../../../lib/assistant.ts';
 import { DEFAULT_SCENARIO, isScenarioId } from '../../../lib/demo-state.ts';
 import { buildGroundedPrompt, groundedResponseSchema, MAX_HISTORY_ENTRIES, parseGroundedResponse, resolveGroundingSources, type ChatHistoryEntry } from '../../../lib/shop-assist-prompt.ts';
+import { recordInteraction } from '../../../lib/telemetry.ts';
 
 type ChatRequest = {
   message?: unknown;
@@ -54,17 +56,28 @@ export async function POST(request: Request): Promise<Response> {
   }
 
   const apiKey = process.env.GROQ_API_KEY;
+  const startedAt = Date.now();
+  const reference = answerQuestion(message, scenario);
+
+  const record = (answer: string, citations: string[], inputTokens = 0, outputTokens = 0) => recordInteraction({
+    question: message, answer, scenario, citations, intent: reference.intent,
+    latencyMs: Date.now() - startedAt, inputTokens, outputTokens, status: 'ok',
+  });
+
   if (!apiKey) {
-    return Response.json({ error: 'groq_not_configured', detail: 'The ShopAssist Groq connection is not configured.' }, { status: 503 });
+    const telemetry = await record(reference.text, reference.citations.map((item) => item.id));
+    return Response.json({ answer: reference.text, model: 'Local grounded fallback', status: 'completed', sources: reference.citations, telemetry });
   }
 
   try {
     const prompt = buildGroundedPrompt(message, history, scenario);
     const reply = await sendGroqMessage(prompt, apiKey, groundedResponseSchema);
     const grounded = parseGroundedResponse(reply.answer);
-    return Response.json({ ...reply, answer: grounded.answer, sources: resolveGroundingSources(grounded.sourceIds) });
+    const telemetry = await record(grounded.answer, grounded.sourceIds, reply.usage?.inputTokens, reply.usage?.outputTokens);
+    return Response.json({ ...reply, answer: grounded.answer, sources: resolveGroundingSources(grounded.sourceIds), telemetry });
   } catch (error) {
     console.error('ShopAssist Groq request failed', error instanceof Error ? error.message : 'Unknown error');
-    return Response.json({ error: 'groq_unavailable', detail: 'Groq could not answer right now.' }, { status: 502 });
+    const telemetry = await record(reference.text, reference.citations.map((item) => item.id));
+    return Response.json({ answer: reference.text, model: 'Local grounded fallback', status: 'completed', sources: reference.citations, telemetry, providerError: 'groq_unavailable' });
   }
 }
