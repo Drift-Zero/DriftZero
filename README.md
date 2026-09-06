@@ -1,439 +1,315 @@
 # DriftZero
 
-DriftZero is a hackathon MVP for detecting AI reliability degradation, explaining the likely cause, and running an operator-approved simulated recovery.
+**Detect AI reliability degradation early. Diagnose it with evidence. Recover with verification.**
 
-## Run the complete demo
+DriftZero is an early-warning reliability monitoring and recovery platform for deployed AI systems. It turns normalized evaluation telemetry into health scores, forecasts, incidents, diagnoses, controlled recovery workflows, and an auditable record of what happened. The repository currently provides a working, deterministic vertical slice designed for development and demonstration—not a production-ready control plane.
 
-Requirements: Docker Engine with Docker Compose v2. Git is only needed for repository work, not for running the downloaded project.
+## The problem
+
+AI applications can degrade without a conventional service outage. Hallucinations, grounding failures, inconsistent outputs, prompt or configuration changes, retrieval and data changes, latency regressions, safety failures, and model or data drift can all reduce reliability while the application remains online.
+
+DriftZero helps operators detect these changes early, inspect the evidence behind them, coordinate a proportionate response, and determine whether the response actually improved observed behavior.
+
+## What DriftZero does
+
+DriftZero organizes the reliability lifecycle around a common telemetry contract:
+
+```text
+AI application
+    → evaluator / telemetry collector
+    → normalized telemetry and redacted trace evidence
+    → DriftZero Telemetry API
+    → Health Score and forecast
+    → incident detection and diagnosis
+    → approved recovery actions
+    → verification against new telemetry
+```
+
+Recovery is a lifecycle rather than a button click. A plan can be recommended, approved or rejected, queued, executed, verified, and rolled back. For observed traffic, verification requires post-execution telemetry that meets configured request and coverage gates; a plan is not marked recovered simply because its actions ran.
+
+## Key features
+
+- **Model registry and versioning** — register monitored systems, track lifecycle state, and fingerprint model, prompt, tool, corpus, and evaluation-policy versions.
+- **Telemetry ingestion** — accept provider-neutral health dimensions and optional request-level traces through a versioned API.
+- **Privacy-aware evidence** — redact prompt and response text before storage while retaining hashes, safe trace fields, and configurable retention periods.
+- **Model Health Score** — combine available reliability dimensions into a transparent score with state, confidence, sample size, coverage, policy version, and missing-dimension reporting.
+- **Health history and forecasting** — store health snapshots and short-horizon forecasts, then record forecast outcomes when the horizon passes.
+- **Incident detection and diagnosis** — open incidents from degraded health and generate rule-based probable causes with supporting and contradicting evidence linked to relevant traces.
+- **Alerting** — define threshold, transition, trajectory, coverage, and evaluation-freshness rules with an in-application alert feed and acknowledgement/resolution states.
+- **Recovery lifecycle** — recommend playbooks, enforce approval and role checks, queue idempotent commands, execute through an adapter, record action attempts, and support cancellation and rollback.
+- **Recovery verification** — evaluate new telemetry against health, request-count, coverage, and no-regression checks before resolving an incident.
+- **Stability evaluation** — run semantic and temporal stability tests, preserve evaluator versions, distinguish changed inputs from unexplained drift, and retain claim-level disagreements.
+- **Human review and feedback** — route selected work to a review queue and record human agreement or disagreement with automated judgments.
+- **Audit history** — record model, telemetry, alert, diagnosis, recovery, verification, and governance events.
+- **Dashboard** — explore fleet health, models, model details, incidents, events, recovery state, and deterministic demo controls in a React interface.
+
+## Architecture
+
+```text
+Users
+  ↓
+AI application ───────────────→ Hosted, local, or custom model
+  ↓
+Evaluator / telemetry collector / connector
+  ↓
+POST /api/v1/models/{model_id}/telemetry
+  ↓
+FastAPI service
+  ├── trace redaction and signal inference
+  ├── Health Score and confidence
+  ├── forecast storage and settlement
+  ├── incident detection and diagnosis
+  ├── alert evaluation
+  └── recovery verification queueing
+  ├──────────────→ SQLAlchemy data layer → SQLite by default
+  │                      ↑                 (PostgreSQL driver optional)
+  │                      │
+  │                Background workers
+  │                  ├── alert evaluation
+  │                  ├── recovery command execution
+  │                  └── trace retention
+  │
+  └──────────────→ Versioned read/control API ← React dashboard
+```
+
+The Docker Compose stack runs the API, dashboard, alert worker, recovery worker, and retention worker. Nginx serves the Vite production build and proxies same-origin `/api/` requests to FastAPI.
+
+## Model-agnostic design
+
+DriftZero is designed around the behavior of a monitored application, not a particular model vendor. The monitored system may use a hosted LLM, a local LLM, or another custom AI model. A connector or evaluator maps provider-specific observations into the common telemetry contract and sends them to:
+
+```http
+POST /api/v1/models/{model_id}/telemetry
+```
+
+Each submitted window contains normalized `0–100` health dimensions, its sample size and traffic coverage, a signal source, and optional trace evidence. This boundary allows the scoring, incident, diagnosis, alert, recovery, and verification pipeline to operate independently of the underlying provider. The repository includes a dependency-free synthetic connector example, but it does not yet ship finished connectors for every provider.
+
+See [`docs/HEALTH_EVENT_SCHEMA.md`](docs/HEALTH_EVENT_SCHEMA.md) for the current contract.
+
+## Evaluation layer
+
+The evaluator answers: **How did this model or application behave?**
+
+DriftZero answers: **Is that behavior degrading over time, what evidence points to the cause, and did recovery work?**
+
+Upstream evaluators can combine deterministic task measurements, latency and error signals, grounding checks, safety results, drift statistics, task-specific tests, and optional model-based judgments. They are responsible for normalizing those observations before ingestion. When groundedness or drift is omitted but suitable trace evidence is present, the backend can infer those two dimensions from stored trace signals and historical windows.
+
+The built-in semantic and temporal stability evaluator is a deterministic simulated adapter for the repository's demo scenario. It generates paraphrases or controlled re-runs, extracts material claims, compares agreement, versions its judgments, and records confidence. It does not call an external model. The adapter boundary is intended to support real evaluators later without coupling DriftZero's reliability pipeline to one provider.
+
+## Model Health
+
+The Model Health Score is a policy-versioned summary of available signals, not an objective statement about a model. The current `health-v1` policy uses these dimensions, where higher always means healthier:
+
+- quality
+- groundedness
+- semantic stability
+- temporal stability
+- safety
+- drift health
+- operational reliability
+- latency health
+- cost health
+
+The backend calculates a weighted score from the dimensions that are present and reports missing dimensions explicitly. It also derives confidence from traffic coverage, sample size, and available dimension coverage. By default, fewer than 20 samples, less than 30% traffic coverage, or insufficient dimension weight produces an `insufficient_data` state instead of a misleading score.
+
+Health snapshots preserve the evidence window and scoring policy. The current forecast is an inspectable short-horizon slope projection with a variability-based interval; it is a baseline forecast, not a guarantee of a future incident.
+
+## Incident → recovery → verification
+
+```text
+Healthy
+  → degradation detected
+  → incident opened
+  → diagnosis generated with evidence
+  → recovery plan recommended
+  → approval and durable execution
+  → verification against post-action telemetry
+  → recovered, failed, or rolled back
+```
+
+Diagnosis is currently deterministic and rule-based. It can identify supported patterns such as knowledge freshness failures, safety regressions, operational reliability failures, and semantic or temporal instability; otherwise it reports insufficient evidence.
+
+The default recovery adapter is clearly marked as simulated. The backend also contains an optional HTTPS control-plane adapter, disabled unless server-side configuration is supplied. Recovery commands are persisted before execution, claimed by a worker, retried with stable idempotency keys, and audited. Verification checks a healthy threshold, evidence volume, coverage, and material regressions in quality, safety, latency, reliability, and cost.
+
+## Demo and reference application
+
+[`shop-assist/`](shop-assist/) is the current reference application. It is an e-commerce support assistant with deterministic scenarios for stale return policies, inventory mismatch, expired promotions, outdated warranties, conflicting shipping guidance, and recovery. Its presenter console makes these states repeatable for demonstrations.
+
+ShopAssist is not the core DriftZero product. It uses a deterministic local answer path and can optionally call Gemini through a server-side route when `GEMINI_API_KEY` is configured. The key is never intended for browser code. Its telemetry adapter can send simulated normalized events to a registered DriftZero model; when the API URL or model ID is absent, recent events are buffered in browser session storage.
+
+The backend also retains a deterministic CampusGPT knowledge-freshness fixture for API, stability, recovery, and test coverage. Both scenarios are simulations and do not modify a real model deployment.
+
+## Screenshots
+
+Dashboard screenshots and demo visuals will be added once the frontend is finalized.
+
+## Tech stack
+
+- **Backend:** Python 3.12+, FastAPI, Pydantic, SQLAlchemy, Alembic, Uvicorn
+- **Data:** SQLite for the zero-setup demo; optional PostgreSQL driver support
+- **Dashboard:** React, TypeScript, Vite, React Router, Recharts, Lucide React
+- **Reference app:** React, TypeScript, Vinext/Vite, Tailwind CSS, optional server-side Gemini request path
+- **Quality:** Pytest, Ruff, ESLint, TypeScript compiler, Node test runner
+- **Deployment:** Docker, Docker Compose, Nginx, background worker processes
+
+## Repository structure
+
+```text
+DriftZero/
+├── backend/        FastAPI service, data layer, workers, migrations, and tests
+├── frontend/       React/Vite operations dashboard and Nginx configuration
+├── shop-assist/    Deterministic e-commerce reference application
+├── examples/       Provider-neutral connector example
+├── docs/           Product, schema, data-model, demo, and operations documentation
+├── scripts/        End-to-end smoke-test tooling
+├── deploy/         Single-container demo deployment files
+├── .github/        Continuous-integration workflow
+├── compose.yaml    Local multi-service stack
+└── render.yaml     Render demo blueprint
+```
+
+## Getting started
+
+### Clone the repository
+
+```bash
+git clone https://github.com/Drift-Zero/DriftZero.git
+cd DriftZero
+```
+
+### Run the full local stack with Docker
+
+Requirements: Docker Engine and Docker Compose v2.
 
 ```bash
 cp .env.example .env
 docker compose up --build
 ```
 
-Open <http://localhost:3000>. API documentation is at <http://localhost:8000/docs>.
+Open the dashboard at <http://localhost:3000>, the API documentation at <http://localhost:8000/docs>, and the API health endpoint at <http://localhost:8000/healthz>.
 
-Verify the full seeded degradation and recovery flow:
+Run the deterministic end-to-end recovery smoke test:
 
 ```bash
 python3 scripts/smoke_test.py
 ```
 
-Stop the stack with `docker compose down`. Add `--volumes` only when you deliberately want to delete the local demo database.
+Stop the stack without deleting its database:
 
-The local stack contains:
-
-- `dashboard`: static web UI and same-origin API proxy;
-- `api`: FastAPI ingestion, scoring, diagnosis, recovery, and audit service;
-- `alert-worker`: scheduled alert-rule evaluator;
-- `recovery-worker`: durable executor for approved recovery commands;
-- `retention-worker`: applies trace-retention windows;
-- `driftzero-data`: persistent local SQLite volume.
-
-See [docs/DEVOPS_RUNBOOK.md](docs/DEVOPS_RUNBOOK.md) for setup, service wiring, logs, CI, deployment, troubleshooting, and demo recovery. See [docs/HEALTH_EVENT_SCHEMA.md](docs/HEALTH_EVENT_SCHEMA.md) for the connector contract.
-
-> **Demo boundary:** recovery is simulated. Recovery mutations have operator/admin API-key roles, but the project does not yet provide managed OIDC or complete tenant-scoped authorization. A real HTTPS control-plane adapter exists but is disabled unless server-side configuration is supplied. Do not attach consequential credentials to the public demo, and remove that deployment after judging.
-
-## Project blueprint
-
-## Product definition
-**DriftZero** is an early-warning reliability control plane for deployed AI systems. It detects degrading behavior before it becomes a production incident, diagnoses the most likely cause, and recommends or safely executes a recovery playbook.
-
-**Tagline:** Predict. Diagnose. Recover.
-
-The product is organized into three layers:
-
-1. **Pulse** — calculate model health, identify deterioration, and forecast its trajectory.
-2. **Diagnose** — rank likely root causes and show the evidence behind them.
-3. **Recover** — recommend a recovery playbook and execute approved actions with an audit trail.
-
-The differentiator is not any single metric or automatic mitigation by itself. It is a simple, cohesive workflow that combines prediction, evidence-backed diagnosis, and controlled recovery.
-
----
-
-## Master prompt: PRD first, implementation second
-
-Copy the prompt below into your coding agent. Replace bracketed values if needed.
-
-```text
-You are a senior product manager, AI reliability engineer, data engineer, security architect, and full-stack product designer. Help me create a hackathon-ready but technically credible product named DriftZero.
-
-PRODUCT IDEA
-
-DriftZero is an early-warning reliability control plane for deployed AI systems. It continuously evaluates production model interactions, detects when reliability is deteriorating, predicts near-term health, diagnoses probable causes, and recommends or executes the safest recovery action.
-
-Tagline: Predict. Diagnose. Recover.
-
-Organize the product around exactly three layers:
-
-1. Pulse — Detect degradation
-- Produce a Model Health Score from 0–100.
-- Health dimensions: quality, groundedness, semantic consistency, temporal consistency, safety, data/concept drift, operational reliability, latency, and cost.
-- Show trends and trajectories, not only static values.
-- Example: ShopAssist health 92 → 87 → 74 → 61; predicted health in 30 minutes: 48.
-- Detect meaningful degradation while avoiding alerts caused by normal noise.
-
-2. Diagnose — Find the likely cause
-- Rank probable root causes.
-- Show supporting and contradicting evidence for every diagnosis.
-- Provide a root-cause confidence score that is calibrated and explicitly labeled as an estimate.
-- Example diagnosis: knowledge freshness failure, supported by rising hallucinations and citation mismatches, stale retrieved documents, and falling paraphrase consistency while safety and latency remain normal.
-- Preserve trace-level drill-down so users can inspect the requests behind every claim.
-
-3. Recover — Take the safest action
-- Generate a recovery playbook tied to the diagnosed cause.
-- Possible actions: require citations, suppress unsupported answers, route low-confidence requests to a fallback, send conflicts to human review, roll back a prompt/model/configuration, refresh or disable stale retrieval sources, and re-evaluate after a defined number of requests.
-- Separate recommendation, approval, execution, verification, and rollback.
-- Default to human approval for consequential actions. Only low-risk, explicitly allow-listed actions may auto-execute.
-- Record who or what initiated each action, its reason, affected traffic, result, and rollback status.
-
-SIGNATURE EVALUATIONS
-
-Semantic Stability Test:
-- Generate meaning-preserving paraphrases of a factual question.
-- Evaluate whether the material facts in the responses agree, rather than requiring identical wording.
-- Display the variants, extracted claims, disagreements, stability score, evaluator confidence, and relevant traces.
-
-Temporal Stability Test:
-- Re-run a controlled question over time.
-- Compare answers only when the model, prompt, configuration, tools, retrieval corpus/version, and evaluation policy are unchanged.
-- If an input changed, attribute or annotate the change instead of claiming unexplained model drift.
-
-IMPORTANT PRODUCT CONSTRAINTS
-
-- Do not imply that the health score is objective truth. Make its weights, confidence, data coverage, sample size, and evaluation window visible.
-- Do not claim that the product can guarantee or perfectly predict incidents.
-- Do not market auto-remediation itself as unprecedented.
-- Protect prompt/response data with redaction, tenant isolation, role-based access, configurable retention, and audit logs.
-- Treat evaluator-model outputs as fallible. Allow human feedback, evaluator versioning, and replay.
-- Never expose chain-of-thought. Store and display concise evidence and reason codes instead.
-- Use deterministic seeded demo data so the main failure scenario works reliably during a presentation.
-
-PRIMARY DEMO SCENARIO
-
-Use an e-commerce support assistant called ShopAssist. It answers returns, refunds, and warranty questions using a retrieval knowledge base. A newly issued returns policy changes category-specific rules, but the retriever continues serving a retired document. Over a simulated stream of requests:
-
-- health falls from 92 to 61;
-- the 30-minute forecast falls to 48;
-- hallucination/unsupported-claim rate increases;
-- citation mismatch increases;
-- semantic stability becomes critical;
-- latency and safety remain normal;
-- DriftZero diagnoses knowledge freshness failure;
-- it recommends citation-required mode, suppressing unsupported responses, refreshing the corpus, routing low-confidence queries to a fallback, and human review;
-- a user approves the playbook;
-- the simulator executes it, evaluates the next 50 requests, and shows health recovering.
-
-DEFAULT MVP ASSUMPTIONS
-
-- This is a single-tenant hackathon demo with an architecture that can evolve to multi-tenant production.
-- Use a modern web stack appropriate for a polished interactive dashboard. Prefer Next.js + TypeScript + Tailwind + shadcn/ui, PostgreSQL, and background jobs unless the existing repository dictates otherwise.
-- Build provider adapters so monitored calls and recovery actions are not coupled to one model vendor.
-- Begin with simulated telemetry and mock recovery adapters; clearly label simulations in the UI.
-- Desktop-first, responsive, accessible, dark control-room visual style.
-
-WORKING METHOD — MANDATORY PRD GATE
-
-Phase 1 is product definition only. Before writing application code:
-
-1. Inspect the repository and summarize relevant existing files, constraints, and reusable components.
-2. Create docs/PRD.md containing:
-   - executive summary and positioning;
-   - problem statement and target users;
-   - jobs to be done;
-   - personas and permissions;
-   - assumptions, non-goals, and terminology;
-   - end-to-end user journeys;
-   - prioritized functional requirements with IDs and acceptance criteria;
-   - non-functional requirements;
-   - information architecture and screen specifications;
-   - health-score definition, normalization, weights, missing-data behavior, confidence, and versioning;
-   - degradation detection and forecasting approach;
-   - diagnosis taxonomy and evidence model;
-   - recovery policy, approval levels, rollback, and verification;
-   - semantic and temporal stability methodologies;
-   - data model, event schema, and API contract proposal;
-   - security, privacy, retention, tenancy, and audit requirements;
-   - observability and evaluator-quality requirements;
-   - seeded demo scenario and presentation script;
-   - success metrics;
-   - risks, mitigations, open questions, and post-MVP roadmap.
-3. Create docs/DECISIONS.md containing unresolved decisions with your recommendation, alternatives, and trade-offs.
-4. Create docs/IMPLEMENTATION_PLAN.md with milestones, dependencies, verification steps, and a requirement-to-test traceability table.
-5. Critique the PRD for vague claims, unsafe automation, misleading metrics, missing states, and demo fragility. Revise it once.
-6. Stop. Present a concise summary, the top decisions, and no more than five questions that genuinely block implementation. Explicitly ask for PRD approval.
-
-Do not create application code, install dependencies, initialize services, modify infrastructure, or implement UI before I reply with “Approve PRD” (possibly with requested changes).
-
-PHASE 2 — ONLY AFTER PRD APPROVAL
-
-After I approve the PRD:
-
-1. Convert the approved requirements into small implementation tasks.
-2. Implement a vertical slice first: seeded ShopAssist telemetry → falling health trajectory → diagnosis → approved recovery → verification.
-3. Then complete the remaining approved MVP requirements.
-4. Keep mock and real integrations behind explicit adapters and label mock behavior.
-5. Add tests for score calculation, degradation alerts, stability evaluation, recovery authorization, rollback, and the main user journey.
-6. Run linting, type checks, unit/integration tests, and a browser-based end-to-end check.
-7. Verify loading, empty, partial-data, healthy, warning, critical, recovery-in-progress, recovered, and failed-recovery states.
-8. Update documentation when implementation differs from the PRD; never silently change product behavior.
-9. Finish with a demo script, setup instructions, known limitations, and a requirement-to-evidence report.
-
-QUALITY BAR
-
-- The UI should tell one story: a system is healthy, begins to degrade, DriftZero explains why, an operator acts, and the system verifies recovery.
-- Every important number must have a definition, time window, sample size/coverage, and drill-down evidence.
-- Forecasts and diagnoses must show uncertainty.
-- Recovery must be policy-controlled, reversible where possible, and auditable.
-- Favor a convincing end-to-end vertical slice over many shallow integrations.
-
-Start Phase 1 now. Do not implement the application yet.
+```bash
+docker compose down
 ```
 
----
+See [`docs/DEVOPS_RUNBOOK.md`](docs/DEVOPS_RUNBOOK.md) for service wiring, logs, troubleshooting, and deployment notes.
 
-## Recommended PRD-first workflow
+### Run the backend directly
 
-### Stage 0 — Frame the product
+Requires Python 3.12 or newer.
 
-**Inputs:** concept brief, hackathon constraints, target users, available data/integrations.
-
-**Decisions:**
-
-- Product name: DriftZero.
-- Modules: Pulse, Diagnose, Recover.
-- Primary persona: AI/ML platform or reliability engineer.
-- Secondary persona: product/support operator who can inspect incidents but may not execute high-risk recovery.
-- First scenario: ShopAssist knowledge-freshness failure.
-
-**Exit gate:** one-sentence value proposition, target user, demo scenario, and explicit non-goals are agreed.
-
-### Stage 1 — Produce the PRD
-
-Run Phase 1 of the master prompt. Review the resulting PRD for:
-
-- a precise MVP boundary;
-- requirement IDs and testable acceptance criteria;
-- definitions for every score and confidence value;
-- failure, missing-data, and low-confidence states;
-- permission and rollback rules for recovery actions;
-- a deterministic demo plan;
-- explicit assumptions and open questions.
-
-**Exit gate:** reply `Approve PRD` only after the product behavior and safety boundaries are acceptable.
-
-### Stage 2 — Technical design
-
-Turn the approved PRD into:
-
-- component architecture;
-- event and relational schemas;
-- API contracts;
-- evaluator and scoring interfaces;
-- recovery adapter interface;
-- threat model;
-- test plan and seeded data specification.
-
-Recommended logical flow:
-
-```text
-Model/Agent traffic
-        ↓
-Telemetry ingestion → Redaction → Event store
-        ↓                         ↓
-Online signals               Evaluation jobs
-        └──────────┬──────────────┘
-                   ↓
-          Health-score engine
-                   ↓
-     Trend + degradation detector
-                   ↓
-       Diagnosis/evidence engine
-                   ↓
-        Recovery policy engine
-                   ↓
-     Approval → Action adapter
-                   ↓
-       Verification + audit log
+```bash
+cd backend
+python -m venv .venv
+source .venv/bin/activate
+python -m pip install -e ".[dev]"
+uvicorn app.main:app --reload
 ```
 
-**Exit gate:** every MVP requirement maps to a component, data source, and verification method.
+The API starts at <http://127.0.0.1:8000>. For the complete asynchronous lifecycle, run `python -m app.alert_worker`, `python -m app.recovery_worker`, and `python -m app.retention_worker` in separate backend terminals as needed.
 
-### Stage 3 — Build a vertical slice
+### Run the dashboard directly
 
-Build only the ShopAssist story end to end:
-
-1. Seed a healthy interval.
-2. Introduce stale retrieval results.
-3. Show health deterioration and a bounded forecast.
-4. Surface the knowledge-freshness diagnosis with supporting evidence.
-5. Approve a simulated recovery playbook.
-6. Process 50 evaluation requests.
-7. Show improved health and the audit trail.
-
-**Exit gate:** the full story works from a clean setup without manual database repair or improvised demo actions.
-
-### Stage 4 — Harden the MVP
-
-Add:
-
-- semantic and temporal stability pages;
-- alert policies and notification states;
-- recovery permissions, idempotency, timeouts, partial failure, and rollback;
-- evaluator versioning and replay;
-- privacy controls and data retention;
-- loading, empty, partial-data, and error states;
-- accessibility and responsive layout;
-- automated unit, integration, and end-to-end tests.
-
-**Exit gate:** test suite passes and each approved requirement has evidence.
-
-### Stage 5 — Demo and ship
-
-Prepare a five-minute narrative:
-
-1. **Healthy:** ShopAssist is at 92.
-2. **Early warning:** its trajectory declines and predicts 48 within 30 minutes.
-3. **Diagnosis:** stale knowledge is identified with 87% estimated confidence and trace evidence.
-4. **Recovery:** the operator reviews and approves a safe playbook.
-5. **Verification:** health improves after the next 50 requests; actions are recorded.
-
-Keep a deterministic reset control, preloaded seed data, and a fallback recording/screenshots in case a live model provider is unavailable.
-
----
-
-## Repository documentation
-
-- [`backend/README.md`](backend/README.md) — service setup, endpoints and verification.
-- [`docs/DATA_MODEL.md`](docs/DATA_MODEL.md) — the data model, its enums, migrations and the session contract.
-
----
-
-## MVP scope
-
-### Must have
-
-- Model fleet overview with health, trend, state, and recent incidents.
-- Model detail with health history, component scores, coverage, sample size, and forecast uncertainty.
-- Incident/diagnosis view with ranked causes, supporting/contradicting evidence, and trace drill-down.
-- Recovery playbook with risk level, approval, simulated execution, verification, rollback state, and audit log.
-- Semantic Stability Test.
-- Temporal Stability Test with controlled-input/version checks.
-- Seeded ShopAssist scenario and resettable demo.
-
-### Should have
-
-- Configurable score weights and thresholds.
-- Alert rules.
-- Human-review queue.
-- Evaluator version and replay controls.
-- Provider-neutral adapters and webhook/API ingestion contract.
-
-### Later
-
-- Real-time production integrations across several providers.
-- Learned incident prediction trained on customer outcomes.
-- Autonomous high-impact remediation.
-- Enterprise SSO, complex tenant administration, billing, and broad compliance certification.
-
----
-
-## Important scoring recommendation
-
-Do not simply add raw metrics. Normalize them to a common 0–100 scale, version the policy, and expose the components.
-
-```text
-health = weighted mean of available component scores
-         - explicit incident penalties
+```bash
+cd frontend
+npm install
+npm run dev
 ```
 
-For each result, store and display:
+The frontend defaults to its deterministic demo mode. Copy [`frontend/.env.example`](frontend/.env.example) to `frontend/.env.local` to change the mode or API base URL. The Docker stack avoids CORS through its same-origin Nginx proxy; direct cross-origin Vite-to-FastAPI development requires an appropriate CORS configuration, which the backend does not currently provide.
 
-- score and severity;
-- evaluation window;
-- request count and traffic coverage;
-- component weights and policy version;
-- confidence or uncertainty;
-- missing components;
-- evidence/traces;
-- whether data is observed, inferred, or simulated.
+### Run ShopAssist
 
-If coverage is insufficient, return `Insufficient data` instead of a deceptively precise score. Forecasting should begin with a transparent trend model and prediction interval; advanced ML can come later after real incident labels exist.
+ShopAssist requires the Node version declared in its package configuration.
 
----
+```bash
+cd shop-assist
+npm install
+npm run dev
+```
 
-## Key product decisions and rationale
+Open <http://localhost:3000> for the customer experience or <http://localhost:3000/demo> for presenter controls. See [`shop-assist/README.md`](shop-assist/README.md) for its current behavior and telemetry setup.
 
-- **One brand:** DriftZero is the product; Pulse is a module. This avoids confusing users with DriftZero and ModelPulse as parallel names.
-- **Trajectory before complexity:** the near-term forecast makes the early-warning promise visible. Start with a transparent method because a sophisticated model without incident data would be hard to validate.
-- **Evidence, not hidden reasoning:** diagnoses should expose metrics, traces, versions, and reason codes—not chain-of-thought.
-- **Approval before consequential recovery:** the strongest demo still includes operator control, auditability, verification, and rollback.
-- **Controlled temporal comparisons:** a changed answer is only meaningful if model, prompt, tools, corpus, and configuration are held constant or their changes are explicitly attributed.
-- **Vertical slice first:** one reliable failure-and-recovery narrative is more persuasive than seven disconnected metric pages.
+### Send sample telemetry
 
----
+With the backend running:
 
-## Suggested first PRD approval checklist
+```bash
+python3 examples/connectors/send_sample_telemetry.py --base-url http://localhost:8000
+```
 
-Before approving the PRD, answer these questions:
+The example registers a synthetic model and submits one normalized health window. It requires no model-provider API key.
 
-1. Is the MVP a telemetry simulator, a proxy around real model calls, or both?
-2. Which actions are simulations, and which can touch a real deployment?
-3. Who is allowed to approve low-, medium-, and high-risk recovery actions?
-4. What exact evidence makes “knowledge freshness failure” the leading diagnosis?
-5. What constitutes successful recovery: threshold, evaluation window, request count, and no-regression checks?
+## Environment variables
 
-Locate and inspect the DriftZero repository
-- Confirm its path, branch, stack, existing files, and contribution instructions.
-- Check README, AGENTS.md, package manifests, current changes, and remote configuration.
-- Preserve any existing work.
+Copy the relevant example file before changing local configuration. Never commit real credentials.
 
-Resolve product identity
-- Product: DriftZero
-- Modules: Pulse, Diagnose, Recover
-- Tagline: Predict. Diagnose. Recover.
-- Treat “ModelPulse” as either an internal engine name or remove it to prevent brand confusion.
+- **Root Docker stack:** `DRIFTZERO_DASHBOARD_PORT`, `DRIFTZERO_API_PORT`, `DRIFTZERO_DATABASE_URL`, `DRIFTZERO_API_PREFIX`, `DRIFTZERO_ENVIRONMENT`
+- **Scoring and workers:** `DRIFTZERO_MINIMUM_SAMPLE_SIZE`, `DRIFTZERO_MINIMUM_COVERAGE`, `DRIFTZERO_FORECAST_HORIZON_MINUTES`, `DRIFTZERO_ALERT_EVALUATION_INTERVAL_SECONDS`, `DRIFTZERO_RECOVERY_WORKER_INTERVAL_SECONDS`, `DRIFTZERO_RETENTION_INTERVAL_SECONDS`
+- **Recovery:** `DRIFTZERO_RECOVERY_ALLOW_LOCAL_IDENTITY`, `DRIFTZERO_RECOVERY_OPERATOR_API_KEY`, `DRIFTZERO_RECOVERY_ADMIN_API_KEY`, `DRIFTZERO_RECOVERY_CONTROL_URL`, `DRIFTZERO_RECOVERY_CONTROL_TOKEN`
+- **Observability:** `DRIFTZERO_LOG_LEVEL`, `DRIFTZERO_OTEL_ENABLED`, `OTEL_EXPORTER_OTLP_ENDPOINT`
+- **Dashboard:** `VITE_API_BASE_URL`, `VITE_DEMO_MODE`
+- **ShopAssist:** `NEXT_PUBLIC_DRIFTZERO_API_URL`, `NEXT_PUBLIC_DRIFTZERO_MODEL_ID`, `GEMINI_API_KEY`
 
-Define the first credible MVP
-- Use the ShopAssist knowledge-freshness incident as the primary vertical slice.
-- Begin with seeded, deterministic telemetry.
-- Simulate recovery actions behind provider-neutral adapters.
-- Avoid attempting multiple shallow production integrations initially.
+`GEMINI_API_KEY` and DriftZero recovery credentials are server-side secrets. They must not be exposed through Vite variables, `NEXT_PUBLIC_` variables, or committed environment files.
 
-Write the PRD before application code
-- docs/PRD.md
-- docs/DECISIONS.md
-- docs/IMPLEMENTATION_PLAN.md
-- Include requirement IDs, acceptance criteria, permissions, data states, failure states, scoring definitions, security, demo flow, and non-goals.
+## API overview
 
-Design the Health Score carefully
-- Normalize component metrics to 0–100.
-- Make weights, sample size, coverage, time window, missing data, confidence, and policy version visible.
-- Return “Insufficient data” when the evidence cannot support a score.
-- Use a transparent forecasting method for the MVP.
+The FastAPI service exposes versioned groups for:
 
-Specify diagnosis as evidence-backed inference
-- Rank possible causes.
-- Show supporting and contradicting evidence.
-- Link diagnoses to trace-level observations.
-- Display confidence as an estimate—not certainty or hidden AI reasoning.
+- model registry, lifecycle, and controlled versions
+- telemetry ingestion, traces, health timelines, and forecast history
+- incidents and evidence-backed diagnoses
+- alert rules, alert evaluation, and the in-application notification feed
+- recovery plans, approval decisions, durable commands, execution, verification, cancellation, and rollback
+- review queues and evaluation feedback
+- semantic and temporal stability tests
+- per-model audit history
+- deterministic demo reset
 
-Make recovery controlled and testable
-- Separate recommendation, approval, execution, verification, and rollback.
-- Require human approval for consequential actions.
-- Record every action in an audit log.
-- Define exactly what counts as successful recovery.
+Interactive OpenAPI documentation is available at `/docs` when the backend is running, normally <http://127.0.0.1:8000/docs>. The API prefix defaults to `/api/v1`; service readiness is exposed separately at `/healthz`.
 
-Critique and revise the PRD
-- Look for misleading metrics, unsafe automation, vague requirements, missing edge states, and demo fragility.
-- Revise once before presenting it for approval.
+## Project status
 
-Stop at the PRD gate
-- I’ll show you the important decisions and unresolved questions.
-- I will not begin product implementation until you approve the PRD.
+DriftZero is under active development. The repository implements and tests a substantial end-to-end demo lifecycle: registry and versioning, telemetry and trace storage, health scoring, forecasts, incidents, diagnosis, alerts, recovery command processing, verification, stability evaluation, human feedback, audit history, and a dashboard with independent demo data.
 
-After approval
-- Build the ShopAssist flow end to end.
-- Test it.
-- Commit logically grouped changes.
-- Push only when the repository and branch expectations are confirmed and pushing is part of your instruction.
+Important current boundaries:
+
+- the default evaluator and recovery adapter are deterministic simulations;
+- ShopAssist is a reference application, not a production commerce assistant;
+- the default database is SQLite and the current service model is intended for a local or single-host demo;
+- recovery authentication uses local demo identity or interim operator/admin API keys rather than managed OIDC;
+- the alert delivery channel is currently in-application only;
+- direct standalone browser/API development still needs CORS configuration;
+- the single-container Render deployment files should be revalidated against the current Vite frontend build before use.
+
+Do not attach consequential production credentials or recovery permissions to the demo configuration.
+
+## Roadmap
+
+- Add production evaluator and model/provider connectors behind the existing adapter boundaries.
+- Provide SDK instrumentation for common application and agent frameworks.
+- Make health and evaluation policies configurable per monitored system.
+- Expand task-specific and model-assisted evaluator strategies with calibration and replay.
+- Add authenticated external alert delivery and observability integrations.
+- Replace demo authentication with managed identity and tenant-scoped authorization.
+- Support managed PostgreSQL, horizontally scalable workers, and production deployment patterns.
+- Improve team workflows, collaboration, and operational reporting.
+
+## Team
+
+Built by the DriftZero team.
+
+<!-- Add team member names and roles here -->
+
+## License
+
+DriftZero is available under the [MIT License](LICENSE).
