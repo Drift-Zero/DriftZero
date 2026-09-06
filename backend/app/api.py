@@ -35,6 +35,7 @@ from app.schemas import (
     ModelUpdate,
     ModelVersionCreate,
     ModelVersionResponse,
+    RecoveryCommandResponse,
     RecoveryDecisionRequest,
     RecoveryExecuteRequest,
     RecoveryExecutionResponse,
@@ -343,16 +344,43 @@ def cancel_recovery(
 
 @router.post(
     "/recovery/{plan_id}/execute",
-    response_model=RecoveryPlanResponse,
+    response_model=RecoveryCommandResponse,
+    status_code=status.HTTP_202_ACCEPTED,
     tags=["recover"],
 )
-def execute_recovery(
+def enqueue_recovery(
     plan_id: str,
     payload: RecoveryExecuteRequest,
     session: SessionDependency,
     service: ServiceDependency,
-) -> RecoveryPlanResponse:
-    return service.execute_recovery(session, plan_id, payload)
+) -> RecoveryCommandResponse:
+    return service.enqueue_recovery(session, plan_id, payload)
+
+
+@router.get(
+    "/recovery/{plan_id}/commands",
+    response_model=list[RecoveryCommandResponse],
+    tags=["recover"],
+)
+def recovery_commands(
+    plan_id: str,
+    session: SessionDependency,
+    service: ServiceDependency,
+) -> list[RecoveryCommandResponse]:
+    return service.recovery_commands(session, plan_id)
+
+
+@router.get(
+    "/recovery-commands/{command_id}",
+    response_model=RecoveryCommandResponse,
+    tags=["recover"],
+)
+def get_recovery_command(
+    command_id: str,
+    session: SessionDependency,
+    service: ServiceDependency,
+) -> RecoveryCommandResponse:
+    return service.get_recovery_command(session, command_id)
 
 
 @router.get(

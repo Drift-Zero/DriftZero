@@ -34,6 +34,7 @@ from app.db import (
     ModelStatus,
     ModelVersion,
     RecoveryActionRecord,
+    RecoveryCommand,
     RecoveryExecution,
     ReviewQueueItem,
     StabilityClaim,
@@ -88,6 +89,10 @@ from app.schemas import (
     ModelVersionCreate,
     ModelVersionResponse,
     RecoveryAction,
+    RecoveryCommandResponse,
+    RecoveryCommandState,
+    RecoveryCommandType,
+    RecoveryExecuteRequest,
     RecoveryExecutionResponse,
     RecoveryPlanResponse,
     RecoveryState,
@@ -562,6 +567,88 @@ class DriftZeroService:
     def get_recovery(self, session: Session, plan_id: str) -> RecoveryPlanResponse:
         return self._recovery_response(self._require_plan(session, plan_id))
 
+    def get_recovery_command(
+        self, session: Session, command_id: str
+    ) -> RecoveryCommandResponse:
+        command = session.get(RecoveryCommand, command_id)
+        if command is None:
+            raise ResourceNotFound("Recovery command not found.")
+        return RecoveryCommandResponse.model_validate(command)
+
+    def recovery_commands(
+        self, session: Session, plan_id: str
+    ) -> list[RecoveryCommandResponse]:
+        self._require_plan(session, plan_id)
+        records = session.scalars(
+            select(RecoveryCommand)
+            .where(RecoveryCommand.plan_id == plan_id)
+            .order_by(RecoveryCommand.requested_at)
+        ).all()
+        return [RecoveryCommandResponse.model_validate(record) for record in records]
+
+    def enqueue_recovery(
+        self,
+        session: Session,
+        plan_id: str,
+        payload: RecoveryExecuteRequest,
+    ) -> RecoveryCommandResponse:
+        plan = self._require_plan(session, plan_id)
+        self._check_plan_version(plan, payload)
+        self._authorize_recovery(plan, payload)
+
+        existing = session.scalar(
+            select(RecoveryCommand).where(
+                RecoveryCommand.idempotency_key == payload.idempotency_key
+            )
+        )
+        if existing is not None:
+            if existing.plan_id != plan.id or existing.command_type != RecoveryCommandType.EXECUTE:
+                raise ResourceConflict("Idempotency key belongs to a different command.")
+            return RecoveryCommandResponse.model_validate(existing)
+
+        if plan.state != RecoveryState.APPROVED.value:
+            raise InvalidTransition("Recovery must be approved before it can be queued.")
+        active = session.scalar(
+            select(RecoveryCommand.id).where(
+                RecoveryCommand.plan_id == plan.id,
+                RecoveryCommand.state.in_(
+                    [RecoveryCommandState.PENDING.value, RecoveryCommandState.RUNNING.value]
+                ),
+            )
+        )
+        if active is not None:
+            raise ResourceConflict("A recovery command is already active for this plan.")
+
+        self._validate_blast_radius(session, plan, payload.max_traffic_pct)
+        now = datetime.now(UTC)
+        command = RecoveryCommand(
+            plan_id=plan.id,
+            command_type=RecoveryCommandType.EXECUTE.value,
+            state=RecoveryCommandState.PENDING.value,
+            idempotency_key=payload.idempotency_key,
+            actor=payload.actor,
+            actor_role=payload.role.value,
+            reason=payload.reason,
+            max_traffic_pct=payload.max_traffic_pct,
+            max_attempts=self.settings.recovery_command_max_attempts,
+            requested_at=now,
+            available_at=now,
+        )
+        session.add(command)
+        plan.state = RecoveryState.QUEUED.value
+        plan.idempotency_key = payload.idempotency_key
+        plan.version += 1
+        session.flush()
+        self._audit(
+            session,
+            plan.model_id,
+            "recovery.queued",
+            payload.actor,
+            {"plan_id": plan.id, "command_id": command.id},
+        )
+        session.commit()
+        return RecoveryCommandResponse.model_validate(command)
+
     def recovery_executions(
         self, session: Session, plan_id: str
     ) -> list[RecoveryExecutionResponse]:
@@ -667,6 +754,10 @@ class DriftZeroService:
         plan.state = RecoveryState.CANCELED.value
         plan.failure_reason = payload.reason or "Canceled by operator."
         plan.version += 1
+        for command in plan.commands:
+            if RecoveryCommandState(command.state) is RecoveryCommandState.PENDING:
+                command.state = RecoveryCommandState.CANCELED.value
+                command.completed_at = datetime.now(UTC)
         self._audit(
             session,
             plan.model_id,
@@ -688,31 +779,20 @@ class DriftZeroService:
         self._authorize_recovery(plan, payload)
         idempotency_key = getattr(payload, "idempotency_key", None)
         if plan.idempotency_key is not None:
-            if idempotency_key == plan.idempotency_key:
+            if idempotency_key != plan.idempotency_key:
+                raise ResourceConflict("Recovery already has a different idempotency key.")
+            if plan.state not in {
+                RecoveryState.APPROVED.value,
+                RecoveryState.QUEUED.value,
+            }:
                 return self._recovery_response(plan)
-            raise ResourceConflict("Recovery already has a different idempotency key.")
         if plan.state == RecoveryState.RECOVERED.value:
             return self._recovery_response(plan)
-        if plan.state != RecoveryState.APPROVED.value:
+        if plan.state not in {RecoveryState.APPROVED.value, RecoveryState.QUEUED.value}:
             raise InvalidTransition("Recovery must be approved before execution.")
 
         max_traffic_pct = getattr(payload, "max_traffic_pct", 100.0)
-        for record in self._plan_actions(session, plan.id):
-            action = RecoveryAction(
-                order=record.order,
-                code=record.code,
-                title=record.title,
-                description=record.description,
-                risk=RiskLevel(record.risk),
-                reversible=record.reversible,
-            )
-            estimator = getattr(self.recovery_adapter, "estimate_traffic_pct", None)
-            estimated_traffic_pct = estimator(action=action) if estimator else 100.0
-            if estimated_traffic_pct > max_traffic_pct:
-                raise InvalidTransition(
-                    f"Action '{record.code}' would affect {estimated_traffic_pct}% of traffic; "
-                    f"request permits at most {max_traffic_pct}%."
-                )
+        self._validate_blast_radius(session, plan, max_traffic_pct)
 
         plan.state = RecoveryState.EXECUTING.value
         plan.idempotency_key = idempotency_key
@@ -847,6 +927,26 @@ class DriftZeroService:
             raise
 
         return self._recovery_response(plan)
+
+    def _validate_blast_radius(
+        self, session: Session, plan: RecoveryPlan, max_traffic_pct: float
+    ) -> None:
+        for record in self._plan_actions(session, plan.id):
+            action = RecoveryAction(
+                order=record.order,
+                code=record.code,
+                title=record.title,
+                description=record.description,
+                risk=RiskLevel(record.risk),
+                reversible=record.reversible,
+            )
+            estimator = getattr(self.recovery_adapter, "estimate_traffic_pct", None)
+            estimated_traffic_pct = estimator(action=action) if estimator else 100.0
+            if estimated_traffic_pct > max_traffic_pct:
+                raise InvalidTransition(
+                    f"Action '{record.code}' would affect {estimated_traffic_pct}% of traffic; "
+                    f"request permits at most {max_traffic_pct}%."
+                )
 
     def rollback_recovery(
         self,

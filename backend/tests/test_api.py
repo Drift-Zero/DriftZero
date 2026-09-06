@@ -2,6 +2,7 @@ from fastapi.testclient import TestClient
 
 from app.config import Settings
 from app.main import create_app
+from app.recovery_worker import process_recovery_commands
 
 
 def make_client() -> TestClient:
@@ -67,9 +68,20 @@ def test_campus_demo_runs_from_warning_to_verified_recovery() -> None:
                 "idempotency_key": "demo-run-success",
             },
         )
-        assert execution.status_code == 200
-        assert execution.json()["state"] == "recovered"
-        assert execution.json()["verified_at"] is not None
+        assert execution.status_code == 202
+        assert execution.json()["state"] == "pending"
+
+        summary = process_recovery_commands(
+            client.app.state.database,
+            client.app.state.service,
+            limit=1,
+        )
+        assert summary.succeeded == 1
+        command = client.get(f"/api/v1/recovery-commands/{execution.json()['id']}")
+        assert command.json()["state"] == "succeeded"
+        recovery = client.get(f"/api/v1/recovery/{plan_id}")
+        assert recovery.json()["state"] == "recovered"
+        assert recovery.json()["verified_at"] is not None
 
         timeline = client.get(f"/api/v1/models/{model_id}/health")
         assert timeline.status_code == 200

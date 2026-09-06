@@ -168,6 +168,19 @@ class ExecutionState(StrEnum):
     SKIPPED = "skipped"
 
 
+class RecoveryCommandType(StrEnum):
+    EXECUTE = "execute"
+    ROLLBACK = "rollback"
+
+
+class RecoveryCommandState(StrEnum):
+    PENDING = "pending"
+    RUNNING = "running"
+    SUCCEEDED = "succeeded"
+    FAILED = "failed"
+    CANCELED = "canceled"
+
+
 class ActorType(StrEnum):
     HUMAN = "human"
     SYSTEM = "system"
@@ -564,6 +577,30 @@ class VerificationRunResponse(BaseModel):
     window_end: datetime | None = None
     started_at: datetime
     finished_at: datetime | None = None
+
+
+class RecoveryCommandResponse(BaseModel):
+    """A durable request for a worker to execute a recovery transition."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    plan_id: str
+    command_type: RecoveryCommandType
+    state: RecoveryCommandState
+    idempotency_key: str
+    actor: str
+    actor_role: ActorRole
+    reason: str | None = None
+    max_traffic_pct: float
+    attempt: int
+    max_attempts: int
+    requested_at: datetime
+    available_at: datetime
+    claimed_at: datetime | None = None
+    lease_expires_at: datetime | None = None
+    completed_at: datetime | None = None
+    error: str | None = None
 
 
 class RecoveryPlanResponse(BaseModel):

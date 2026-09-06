@@ -39,6 +39,8 @@ from app.db.enums import (
     IncidentState,
     KnowledgeStatus,
     ModelStatus,
+    RecoveryCommandState,
+    RecoveryCommandType,
     RecoveryState,
     ReviewState,
     RiskLevel,
@@ -63,6 +65,8 @@ TRACE_STATUS = enum_column(TraceStatus, "trace_status")
 SEVERITY = enum_column(Severity, "severity")
 INCIDENT_STATE = enum_column(IncidentState, "incident_state")
 EXECUTION_STATE = enum_column(ExecutionState, "execution_state")
+RECOVERY_COMMAND_STATE = enum_column(RecoveryCommandState, "recovery_command_state")
+RECOVERY_COMMAND_TYPE = enum_column(RecoveryCommandType, "recovery_command_type")
 EVALUATOR_KIND = enum_column(EvaluatorKind, "evaluator_kind")
 STABILITY_KIND = enum_column(StabilityKind, "stability_kind")
 STABILITY_VERDICT = enum_column(StabilityVerdict, "stability_verdict")
@@ -632,6 +636,48 @@ class RecoveryPlan(IdMixin, Base):
     verification_runs: Mapped[list[VerificationRun]] = relationship(
         back_populates="plan", cascade="all, delete-orphan", passive_deletes=True
     )
+    commands: Mapped[list[RecoveryCommand]] = relationship(
+        back_populates="plan", cascade="all, delete-orphan", passive_deletes=True
+    )
+
+
+class RecoveryCommand(IdMixin, Base):
+    """Durable command/outbox row claimed by the recovery worker."""
+
+    __tablename__ = "recovery_commands"
+    __table_args__ = (
+        sa.UniqueConstraint("idempotency_key", name="idempotency_key"),
+        sa.CheckConstraint("attempt >= 0", name="attempt_non_negative"),
+        sa.CheckConstraint("max_attempts >= 1", name="max_attempts_positive"),
+        sa.CheckConstraint(
+            "max_traffic_pct >= 0 AND max_traffic_pct <= 100",
+            name="max_traffic_range",
+        ),
+        sa.Index("ix_recovery_commands_claim", "state", "available_at"),
+    )
+
+    plan_id: Mapped[str] = mapped_column(
+        sa.String(36), sa.ForeignKey("recovery_plans.id", ondelete="CASCADE"), index=True
+    )
+    command_type: Mapped[RecoveryCommandType] = mapped_column(RECOVERY_COMMAND_TYPE)
+    state: Mapped[RecoveryCommandState] = mapped_column(
+        RECOVERY_COMMAND_STATE, default=RecoveryCommandState.PENDING, index=True
+    )
+    idempotency_key: Mapped[str] = mapped_column(sa.String(120))
+    actor: Mapped[str] = mapped_column(sa.String(120))
+    actor_role: Mapped[str] = mapped_column(sa.String(40))
+    reason: Mapped[str | None] = mapped_column(sa.Text())
+    max_traffic_pct: Mapped[float] = mapped_column(default=100.0)
+    attempt: Mapped[int] = mapped_column(default=0)
+    max_attempts: Mapped[int] = mapped_column(default=3)
+    requested_at: Mapped[datetime] = mapped_column(default=utc_now)
+    available_at: Mapped[datetime] = mapped_column(default=utc_now)
+    claimed_at: Mapped[datetime | None] = mapped_column()
+    lease_expires_at: Mapped[datetime | None] = mapped_column()
+    completed_at: Mapped[datetime | None] = mapped_column()
+    error: Mapped[str | None] = mapped_column(sa.Text())
+
+    plan: Mapped[RecoveryPlan] = relationship(back_populates="commands")
 
 
 class RecoveryActionRecord(IdMixin, Base):

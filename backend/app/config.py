@@ -28,6 +28,9 @@ class Settings:
     minimum_coverage: float = 0.30
     forecast_horizon_minutes: int = 30
     alert_evaluation_interval_seconds: int = 60
+    recovery_worker_interval_seconds: int = 2
+    recovery_command_lease_seconds: int = 60
+    recovery_command_max_attempts: int = 3
     log_level: str = "INFO"
     log_file: str | None = None
     log_file_max_bytes: int = 10_485_760
@@ -61,6 +64,33 @@ class Settings:
                     os.getenv(
                         "DRIFTZERO_ALERT_EVALUATION_INTERVAL_SECONDS",
                         str(defaults.alert_evaluation_interval_seconds),
+                    )
+                ),
+            ),
+            recovery_worker_interval_seconds=max(
+                1,
+                int(
+                    os.getenv(
+                        "DRIFTZERO_RECOVERY_WORKER_INTERVAL_SECONDS",
+                        str(defaults.recovery_worker_interval_seconds),
+                    )
+                ),
+            ),
+            recovery_command_lease_seconds=max(
+                5,
+                int(
+                    os.getenv(
+                        "DRIFTZERO_RECOVERY_COMMAND_LEASE_SECONDS",
+                        str(defaults.recovery_command_lease_seconds),
+                    )
+                ),
+            ),
+            recovery_command_max_attempts=max(
+                1,
+                int(
+                    os.getenv(
+                        "DRIFTZERO_RECOVERY_COMMAND_MAX_ATTEMPTS",
+                        str(defaults.recovery_command_max_attempts),
                     )
                 ),
             ),
