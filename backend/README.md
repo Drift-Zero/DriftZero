@@ -170,12 +170,13 @@ Transition rules use `metric: "state"`, set `target_state` to `healthy`,
 `warning`, or `critical`, and send both `comparator` and `threshold` as `null`.
 Trajectory and freshness rules retain a numeric comparator and threshold.
 
-Rules run automatically inside the telemetry transaction. A condition must
-hold for `minimum_consecutive_windows` before firing. One active alert is kept
-per rule; continued failure updates its evidence rather than creating alert
-spam. Clearing the condition resolves it, and `cooldown_minutes` controls when
-the same rule may fire again. Disabling or deleting a rule resolves active
-alerts, while deleting preserves historical alert records.
+Rules run automatically inside the telemetry transaction and are also checked
+immediately when created or updated. A condition must hold for
+`minimum_consecutive_windows` before firing. One active alert is kept per rule;
+continued failure updates its evidence rather than creating alert spam.
+Clearing the condition resolves it, and `cooldown_minutes` controls when the
+same rule may fire again. Disabling or deleting a rule resolves active alerts,
+while deleting preserves historical alert records.
 
 Freshness rules need evaluation even when telemetry has stopped. Run the
 dedicated worker alongside the API:
