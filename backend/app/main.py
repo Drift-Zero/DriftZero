@@ -58,6 +58,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             {"name": "pulse", "description": "Health scoring and trajectory."},
             {"name": "diagnose", "description": "Evidence-backed root causes."},
             {"name": "recover", "description": "Approved recovery playbooks."},
+            {"name": "alerts", "description": "Rules, alert lifecycle, and notifications."},
             {"name": "audit", "description": "Immutable operator action history."},
             {"name": "demo", "description": "Deterministic CampusGPT scenario."},
         ],
