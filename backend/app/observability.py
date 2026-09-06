@@ -82,7 +82,7 @@ class JsonLogFormatter(logging.Formatter):
             "logger": record.name,
             "service": self.service_name,
             "environment": self.environment,
-            "message": record.getMessage(),
+            "message": _sanitize_value(record.getMessage()),
         }
         request_id = getattr(record, "request_id", None) or get_request_id()
         correlation_id = getattr(record, "correlation_id", None) or get_correlation_id()
@@ -95,8 +95,8 @@ class JsonLogFormatter(logging.Formatter):
             if value is not None:
                 payload[field] = value
         if record.exc_info:
-            payload["exception"] = self.formatException(record.exc_info)
-        return json.dumps(_sanitize_value(payload), separators=(",", ":"), default=str)
+            payload["exception"] = _sanitize_value(self.formatException(record.exc_info))
+        return json.dumps(payload, separators=(",", ":"), default=str)
 
 
 def configure_logging(settings: Settings) -> logging.Logger:
