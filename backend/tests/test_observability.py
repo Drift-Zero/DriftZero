@@ -27,6 +27,18 @@ class CollectingHandler(logging.Handler):
         self.records.append(record)
 
 
+def test_configure_logging_reenables_driftzero_namespace() -> None:
+    parent = logging.getLogger("driftzero")
+    child = logging.getLogger("driftzero.http")
+    parent.disabled = True
+    child.disabled = True
+
+    configured = configure_logging(Settings(environment="test"))
+
+    assert configured.disabled is False
+    assert child.disabled is False
+
+
 def test_request_logging_adds_safe_correlation_headers() -> None:
     app = create_app(Settings(database_url="sqlite://", environment="test"))
     handler = CollectingHandler()
