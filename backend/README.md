@@ -133,6 +133,39 @@ Copy `.env.example` values into the deployment environment. Environment variable
 the `DRIFTZERO_` prefix. SQLite is the zero-setup default; set `DRIFTZERO_DATABASE_URL` to another
 SQLAlchemy-compatible database URL for a persistent deployment.
 
+## Operational logging
+
+The API writes one JSON object per line to stdout. Every HTTP response includes
+`X-Request-ID` and `X-Correlation-ID`; callers may supply either header using up
+to 128 letters, numbers, dots, underscores, colons, or hyphens. Invalid values
+are replaced with a generated request ID. The same IDs flow into operational
+logs and into audit events created during that request.
+
+```json
+{"timestamp":"2026-09-06T12:00:00+00:00","level":"info","logger":"driftzero.http","service":"driftzero-api","environment":"production","message":"request.completed","request_id":"request-123","correlation_id":"workflow-456","event":"http.request","http_method":"POST","http_route":"/api/v1/models","status_code":201,"duration_ms":24.7}
+```
+
+Request/response bodies, header values, SQL text, and bound query parameters are
+not logged. Free-text messages and exception text are scrubbed for common direct
+identifiers and secrets. Database errors are logged at `ERROR`, queries slower
+than `DRIFTZERO_SLOW_QUERY_MS` at `WARNING`, and other query timings at `DEBUG`.
+
+Set `DRIFTZERO_LOG_FILE` to also write rotating JSONL files. Rotation defaults
+to five 10 MiB backups and is controlled by `DRIFTZERO_LOG_FILE_MAX_BYTES` and
+`DRIFTZERO_LOG_FILE_BACKUP_COUNT`.
+
+Distributed traces are opt-in:
+
+```bash
+python -m pip install -e ".[observability]"
+export DRIFTZERO_OTEL_ENABLED=true
+export OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318
+```
+
+This instruments FastAPI and SQLAlchemy and exports spans through OTLP/HTTP.
+If the optional packages are absent, the service remains available and records
+an `opentelemetry.unavailable` warning instead of failing startup.
+
 ## Current safety boundary
 
 Authentication and production recovery integrations are intentionally outside this initial slice.
