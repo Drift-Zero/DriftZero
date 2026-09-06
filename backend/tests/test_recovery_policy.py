@@ -18,7 +18,7 @@ from app.schemas import (
     SignalSource,
     TelemetryCreate,
 )
-from app.service import DriftZeroService, InvalidTransition, ResourceConflict
+from app.service import AuthorizationDenied, DriftZeroService, InvalidTransition, ResourceConflict
 
 HEALTHY = DimensionScores(
     quality=92,
@@ -55,7 +55,7 @@ def _plan(session: Session, model: MonitoredModel):
 def test_viewer_cannot_approve_recovery(session: Session, model: MonitoredModel) -> None:
     service, plan = _plan(session, model)
 
-    with pytest.raises(InvalidTransition, match="requires the operator role"):
+    with pytest.raises(AuthorizationDenied, match="requires the operator role"):
         service.approve_recovery(
             session,
             plan.id,

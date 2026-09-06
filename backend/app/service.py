@@ -140,6 +140,10 @@ class InvalidTransition(ServiceError):
     pass
 
 
+class AuthorizationDenied(ServiceError):
+    pass
+
+
 class DriftZeroService:
     def __init__(
         self,
@@ -597,7 +601,7 @@ class DriftZeroService:
         plan_id: str,
         payload: RecoveryExecuteRequest,
     ) -> RecoveryCommandResponse:
-        plan = self._require_plan(session, plan_id)
+        plan = self._require_plan(session, plan_id, for_update=True)
         self._check_plan_version(plan, payload)
         self._authorize_recovery(plan, payload)
 
@@ -660,7 +664,7 @@ class DriftZeroService:
         plan_id: str,
         payload: RecoveryVerifyRequest,
     ) -> RecoveryCommandResponse:
-        plan = self._require_plan(session, plan_id)
+        plan = self._require_plan(session, plan_id, for_update=True)
         self._authorize_recovery(plan, payload)
         if plan.state != RecoveryState.VERIFYING.value:
             raise InvalidTransition("Recovery must be awaiting verification.")
@@ -703,7 +707,7 @@ class DriftZeroService:
         plan_id: str,
         payload: RecoveryRollbackRequest,
     ) -> RecoveryCommandResponse:
-        plan = self._require_plan(session, plan_id)
+        plan = self._require_plan(session, plan_id, for_update=True)
         self._check_plan_version(plan, payload)
         self._authorize_recovery(plan, payload)
         if plan.state not in {RecoveryState.RECOVERED.value, RecoveryState.FAILED.value}:
@@ -781,7 +785,7 @@ class DriftZeroService:
         plan_id: str,
         payload: ActorRequest,
     ) -> RecoveryPlanResponse:
-        plan = self._require_plan(session, plan_id)
+        plan = self._require_plan(session, plan_id, for_update=True)
         self._check_plan_version(plan, payload)
         self._authorize_recovery(plan, payload)
         if plan.state in {RecoveryState.APPROVED.value, RecoveryState.RECOVERED.value}:
@@ -814,7 +818,7 @@ class DriftZeroService:
         plan_id: str,
         payload: ActorRequest,
     ) -> RecoveryPlanResponse:
-        plan = self._require_plan(session, plan_id)
+        plan = self._require_plan(session, plan_id, for_update=True)
         self._check_plan_version(plan, payload)
         self._authorize_recovery(plan, payload)
         if plan.state == RecoveryState.REJECTED.value:
@@ -843,7 +847,7 @@ class DriftZeroService:
         plan_id: str,
         payload: ActorRequest,
     ) -> RecoveryPlanResponse:
-        plan = self._require_plan(session, plan_id)
+        plan = self._require_plan(session, plan_id, for_update=True)
         self._check_plan_version(plan, payload)
         self._authorize_recovery(plan, payload)
         if plan.state == RecoveryState.CANCELED.value:
@@ -879,7 +883,7 @@ class DriftZeroService:
         plan_id: str,
         payload: ActorRequest,
     ) -> RecoveryPlanResponse:
-        plan = self._require_plan(session, plan_id)
+        plan = self._require_plan(session, plan_id, for_update=True)
         self._check_plan_version(plan, payload)
         self._authorize_recovery(plan, payload)
         idempotency_key = getattr(payload, "idempotency_key", None)
@@ -1039,7 +1043,7 @@ class DriftZeroService:
             session.commit()
         except Exception:
             session.rollback()
-            failed_plan = self._require_plan(session, plan_id)
+            failed_plan = self._require_plan(session, plan_id, for_update=True)
             failed_plan.state = RecoveryState.QUEUED.value
             failed_plan.failure_reason = "Recovery execution was interrupted and will be retried."
             failed_plan.version += 1
@@ -1081,7 +1085,7 @@ class DriftZeroService:
         plan_id: str,
         payload: ActorRequest,
     ) -> RecoveryPlanResponse:
-        plan = self._require_plan(session, plan_id)
+        plan = self._require_plan(session, plan_id, for_update=True)
         self._check_plan_version(plan, payload)
         self._authorize_recovery(plan, payload)
         if plan.state == RecoveryState.ROLLED_BACK.value:
@@ -1113,7 +1117,7 @@ class DriftZeroService:
         plan_id: str,
         snapshot_id: str,
     ) -> RecoveryPlanResponse:
-        plan = self._require_plan(session, plan_id)
+        plan = self._require_plan(session, plan_id, for_update=True)
         if plan.state in {RecoveryState.RECOVERED.value, RecoveryState.FAILED.value}:
             return self._recovery_response(plan)
         if plan.state != RecoveryState.VERIFYING.value:
@@ -1187,7 +1191,7 @@ class DriftZeroService:
     ) -> RecoveryPlanResponse:
         """Terminally fail a command after its durable retry budget is exhausted."""
 
-        plan = self._require_plan(session, plan_id)
+        plan = self._require_plan(session, plan_id, for_update=True)
         if plan.state in {
             RecoveryState.RECOVERED.value,
             RecoveryState.FAILED.value,
@@ -1262,7 +1266,7 @@ class DriftZeroService:
             role=payload.role,
         )
         if not decision.allowed:
-            raise InvalidTransition(decision.reason)
+            raise AuthorizationDenied(decision.reason)
 
     @staticmethod
     def _check_plan_version(plan: RecoveryPlan, payload: ActorRequest) -> None:
@@ -3252,8 +3256,16 @@ class DriftZeroService:
         return record
 
     @staticmethod
-    def _require_plan(session: Session, plan_id: str) -> RecoveryPlan:
-        record = session.get(RecoveryPlan, plan_id)
+    def _require_plan(
+        session: Session,
+        plan_id: str,
+        *,
+        for_update: bool = False,
+    ) -> RecoveryPlan:
+        statement = select(RecoveryPlan).where(RecoveryPlan.id == plan_id)
+        if for_update:
+            statement = statement.with_for_update()
+        record = session.scalar(statement)
         if not record:
             raise ResourceNotFound("Recovery plan not found.")
         return record

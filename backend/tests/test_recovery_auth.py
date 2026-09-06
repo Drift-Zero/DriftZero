@@ -3,6 +3,7 @@
 from fastapi.testclient import TestClient
 
 from app.config import Settings
+from app.db import RecoveryPlan, RiskLevel
 from app.main import create_app
 
 
@@ -65,3 +66,30 @@ def test_local_identity_is_forbidden_in_production_even_if_flagged() -> None:
         )
 
     assert response.status_code == 401
+
+
+def test_operator_credential_cannot_self_promote_for_high_risk_plan() -> None:
+    app = create_app(
+        Settings(
+            database_url="sqlite://",
+            environment="test",
+            recovery_operator_api_key="operator-secret",
+        )
+    )
+    with TestClient(app) as client:
+        demo = client.post("/api/v1/demo/reset").json()
+        plan_id = demo["recovery"]["id"]
+        with client.app.state.database.session_factory() as session:
+            plan = session.get(RecoveryPlan, plan_id)
+            plan.risk = RiskLevel.HIGH.value
+            plan.approval_level = RiskLevel.HIGH.value
+            session.commit()
+
+        response = client.post(
+            f"/api/v1/recovery/{plan_id}/approve",
+            json={"actor": "forged-admin", "role": "admin"},
+            headers={"Authorization": "Bearer operator-secret"},
+        )
+
+    assert response.status_code == 403
+    assert response.json()["error"] == "forbidden"

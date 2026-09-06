@@ -20,6 +20,7 @@ from app.observability import (
     configure_opentelemetry,
 )
 from app.service import (
+    AuthorizationDenied,
     DriftZeroService,
     InvalidTransition,
     ResourceConflict,
@@ -97,6 +98,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return JSONResponse(
             status_code=status.HTTP_409_CONFLICT,
             content={"error": "invalid_transition", "detail": str(exc)},
+        )
+
+    @application.exception_handler(AuthorizationDenied)
+    async def authorization_handler(_: Request, exc: AuthorizationDenied) -> JSONResponse:
+        return JSONResponse(
+            status_code=status.HTTP_403_FORBIDDEN,
+            content={"error": "forbidden", "detail": str(exc)},
         )
 
     if runtime_settings.frontend_dir:
