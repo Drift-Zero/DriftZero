@@ -81,7 +81,12 @@ jobs:
         run: python scripts/smoke_test.py --base-url http://localhost:3000
       - name: Verify single-container deployment
         run: |
-          docker run --detach --name driftzero-deploy-test --env PORT=10000 --publish 3100:10000 driftzero-deploy:test
+          docker run --detach --name driftzero-deploy-test \
+            --env PORT=10000 \
+            --env DRIFTZERO_ENVIRONMENT=development \
+            --env DRIFTZERO_RECOVERY_ALLOW_LOCAL_IDENTITY=true \
+            --publish 3100:10000 \
+            driftzero-deploy:test
           python scripts/smoke_test.py --base-url http://localhost:3100
       - name: Print logs after failure
         if: failure()
