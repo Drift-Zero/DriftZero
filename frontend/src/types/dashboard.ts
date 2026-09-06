@@ -10,7 +10,7 @@ export interface ModelView {
   forecast?:{score:number;direction:string;horizonMinutes:number}|null
 }
 export interface RecoveryView {
-  id:string; state:string; risk:string; requiresApproval:boolean
+  id:string; state:string; risk:string; requiresApproval:boolean; version?:number; approvalLevel?:string; failureReason?:string|null
   actions:Array<{code:string;title:string;description:string;risk:string;reversible:boolean}>
   verification?:{baselineScore?:number|null;postScore?:number|null;passed?:boolean|null;observedRequests:number;requiredRequests:number}|null
 }

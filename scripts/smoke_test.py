@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 import time
 import urllib.error
 import urllib.request
@@ -114,6 +115,9 @@ def run(base_url: str, timeout: int) -> None:
 
 
 if __name__ == "__main__":
+    # A Windows console defaults to cp1252, which cannot encode the arrows in the summary.
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     parser = argparse.ArgumentParser()
     parser.add_argument("--base-url", default="http://localhost:3000")
     parser.add_argument("--timeout", type=int, default=90)

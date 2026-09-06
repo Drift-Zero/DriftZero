@@ -202,6 +202,50 @@ docker compose down
 
 See [`docs/DEVOPS_RUNBOOK.md`](docs/DEVOPS_RUNBOOK.md) for service wiring, logs, troubleshooting, and deployment notes.
 
+### Run the full local stack without Docker
+
+Requirements: Python 3.12 or newer with the backend dependencies installed, and Node.js with
+`frontend/node_modules` present (see the two sections below for the one-time setup).
+
+```bash
+python scripts/run_local.py
+```
+
+That starts five processes and shuts them all down together on Ctrl+C:
+
+| Service | URL | Role |
+| --- | --- | --- |
+| API | <http://127.0.0.1:8000> | REST surface, OpenAPI docs at `/docs` |
+| Recovery worker | — | Applies approved recovery plans and records verification |
+| Alert worker | — | Evaluates alert rules |
+| Dashboard | <http://localhost:5173> | Operator view: health, incidents, recovery |
+| ShopAssist | <http://localhost:3000> | The monitored chatbot; presenter controls at `/demo` |
+
+It also seeds the deterministic ShopAssist scenario, writes `frontend/.env.local` so the
+dashboard talks to the API it just started, and sets `DRIFTZERO_API_URL` for ShopAssist so its
+telemetry flows back to that same API. Every twenty chat interactions become one health
+snapshot, which is what drives the dashboard's incidents.
+
+The recovery worker is what makes **Approve & apply recovery** complete. Approving a plan only
+queues a command, so an API running on its own leaves every recovery stuck in `queued`.
+
+ShopAssist needs no model credentials — without `GROQ_API_KEY` it answers from its local
+grounded fallback, with citations. Set the key in `shop-assist/.env.local` to route through Groq
+instead.
+
+Useful flags:
+
+| Flag | Purpose |
+| --- | --- |
+| `--api-port` / `--dashboard-port` / `--shop-assist-port` | Move off the 8000 / 5173 / 3000 defaults when they are taken. |
+| `--no-seed` | Keep the existing database instead of reseeding the demo scenario. |
+| `--no-dashboard` / `--no-shop-assist` | Leave one of the web apps out. |
+| `--database` | Point at a different SQLAlchemy URL. |
+
+Next.js allows only one dev server per project directory, so stop any existing
+`shop-assist` dev server before starting this one.
+
+
 ### Run the backend directly
 
 Requires Python 3.12 or newer.
@@ -224,7 +268,7 @@ npm install
 npm run dev
 ```
 
-The frontend defaults to its deterministic demo mode. Copy [`frontend/.env.example`](frontend/.env.example) to `frontend/.env.local` to change the mode or API base URL. The Docker stack avoids CORS through its same-origin Nginx proxy; direct cross-origin Vite-to-FastAPI development requires an appropriate CORS configuration, which the backend does not currently provide.
+The frontend defaults to its deterministic demo mode. Copy [`frontend/.env.example`](frontend/.env.example) to `frontend/.env.local` to change the mode or API base URL. The Docker stack avoids CORS through its same-origin Nginx proxy. Running Vite against FastAPI directly is cross-origin, so the backend allows `localhost:5173` and `127.0.0.1:5173` outside production; set `DRIFTZERO_CORS_ORIGINS` for any other port. Privileged recovery actions also need a credential — either run the API with `DRIFTZERO_RECOVERY_ALLOW_LOCAL_IDENTITY=true` or set `VITE_RECOVERY_API_KEY`. `scripts/run_local.py` configures both for you.
 
 ### Run ShopAssist
 
