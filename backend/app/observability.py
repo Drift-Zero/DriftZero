@@ -103,8 +103,12 @@ def configure_logging(settings: Settings) -> logging.Logger:
     """Configure DriftZero loggers for stdout and optional rotating files."""
 
     logger = logging.getLogger("driftzero")
+    logger.disabled = False
     logger.setLevel(_log_level(settings.log_level))
     logger.propagate = False
+    for name, candidate in logger.manager.loggerDict.items():
+        if name.startswith("driftzero.") and isinstance(candidate, logging.Logger):
+            candidate.disabled = False
     for handler in logger.handlers[:]:
         logger.removeHandler(handler)
         handler.close()
