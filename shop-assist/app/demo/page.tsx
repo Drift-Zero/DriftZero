@@ -1,11 +1,11 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import Link from 'next/link';
 import { Activity, ArrowLeft, Check, CircleAlert, Database, RotateCcw, ShieldCheck, Sparkles } from 'lucide-react';
 
 import { Badge } from '../../components/ui/badge';
 import { Button } from '../../components/ui/button';
+import { Link000, Link001, Link005 } from '../../components/ui/skiper-ui/skiper40';
 import { readScenario, scenarios, writeScenario, type ScenarioId } from '../../lib/demo-state.ts';
 
 type ModelContextDocument = Document & {
@@ -83,7 +83,7 @@ export default function DemoConsole() {
     <main className="demo-shell">
       <header className="demo-topbar">
         <div className="demo-brand"><span><Sparkles size={18} /></span><div><strong>ShopAssist Lab</strong><small>DriftZero scenario console</small></div></div>
-        <Link href="/"><ArrowLeft size={15} />Customer view</Link>
+        <Link000 href="/"><ArrowLeft size={15} />Customer view</Link000>
       </header>
 
       <section className="demo-layout">
@@ -119,13 +119,14 @@ export default function DemoConsole() {
           ) : (
             <Button variant="outline" onClick={() => setActive('healthy')}><RotateCcw size={16} />Reset baseline</Button>
           )}
-          <Link className="open-customer" href="/">Open customer view <Activity size={15} /></Link>
+          <Link005 className="open-customer" href="/">Open customer view <Activity size={15} /></Link005>
           <ol className="demo-steps">
             <li><span>1</span>Activate a failure scenario.</li>
             <li><span>2</span>Ask a matching question in customer view.</li>
             <li><span>3</span>Inspect the trace in DriftZero.</li>
             <li><span>4</span>Apply recovery and ask again.</li>
           </ol>
+          <p className="demo-credit">Interface motion by <Link001 href="https://skiper-ui.com">Skiper UI</Link001></p>
         </aside>
       </section>
     </main>

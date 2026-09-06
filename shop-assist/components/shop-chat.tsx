@@ -9,6 +9,7 @@ import { answerQuestion, replaceLatestConversationAnswer, type AssistantAnswer, 
 import { readScenario, type ScenarioId } from '../lib/demo-state.ts';
 import type { TelemetryDelivery } from '../lib/telemetry.ts';
 import { Button } from './ui/button';
+import { Link000, Link001 } from './ui/skiper-ui/skiper40';
 
 type ChatMessage = { id: number; role: 'assistant' | 'user'; text: string; answer?: AssistantAnswer; provider?: string; tokens?: number };
 type AIChatReply = { answer?: unknown; model?: unknown; status?: unknown; sources?: unknown; telemetry?: unknown; usage?: { totalTokens?: unknown } };
@@ -33,7 +34,7 @@ export function ShopChat() {
   const [delivery, setDelivery] = useState<TelemetryDelivery>('ready');
   const nextId = useRef(2);
   const requestVersion = useRef(0);
-  const messageEnd = useRef<HTMLDivElement>(null);
+  const conversation = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     queueMicrotask(() => setScenario(readScenario()));
@@ -47,7 +48,7 @@ export function ShopChat() {
   }, []);
 
   useEffect(() => {
-    messageEnd.current?.scrollIntoView({ behavior: 'smooth' });
+    conversation.current?.scrollTo({ top: conversation.current.scrollHeight, behavior: 'smooth' });
   }, [messages, typing]);
 
   function resetConversation() {
@@ -131,7 +132,7 @@ export function ShopChat() {
         <div className="store-search" aria-hidden="true"><Search size={16} /><span>Search the store</span></div>
         <nav className="store-nav" aria-label="Utility navigation">
           <span className="service-online"><i /> Online</span>
-          <Link href="/demo">Presenter console</Link>
+          <Link000 href="/demo">Presenter console</Link000>
         </nav>
       </header>
 
@@ -152,6 +153,7 @@ export function ShopChat() {
             ))}
           </div>
           <div className="trust-note"><ShieldCheck size={17} /><span><strong>Evidence-backed answers</strong><small>Policy sources are shown with every factual response.</small></span></div>
+          <p className="ui-credit">Interface motion by <Link001 href="https://skiper-ui.com">Skiper UI</Link001></p>
         </aside>
 
         <section className="customer-chat" aria-label="Chat with ShopAssist">
@@ -159,7 +161,7 @@ export function ShopChat() {
             <div><p className="eyebrow">Shopping assistant</p><h2>Ask ShopAssist</h2></div>
             <Button variant="ghost" size="sm" onClick={resetConversation}><RotateCcw size={15} />New chat</Button>
           </div>
-          <div className="conversation" aria-live="polite">
+          <div ref={conversation} className="conversation" aria-live="polite">
             {messages.map((message) => (
               <article key={message.id} className={`chat-line ${message.role}`}>
                 {message.role === 'assistant' && <span className="chat-avatar"><Sparkles size={16} /></span>}
@@ -180,7 +182,6 @@ export function ShopChat() {
               </article>
             ))}
             {typing && <div className="typing-row"><span className="chat-avatar"><Sparkles size={16} /></span><span className="typing-dots"><i /><i /><i /></span></div>}
-            <div ref={messageEnd} />
           </div>
           <div className="chat-composer-area">
             <div className="prompt-row" aria-label="Suggested questions">
