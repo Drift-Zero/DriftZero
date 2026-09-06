@@ -343,3 +343,57 @@ Before approving the PRD, answer these questions:
 4. What exact evidence makes “knowledge freshness failure” the leading diagnosis?
 5. What constitutes successful recovery: threshold, evaluation window, request count, and no-regression checks?
 
+Locate and inspect the DriftZero repository
+- Confirm its path, branch, stack, existing files, and contribution instructions.
+- Check README, AGENTS.md, package manifests, current changes, and remote configuration.
+- Preserve any existing work.
+
+Resolve product identity
+- Product: DriftZero
+- Modules: Pulse, Diagnose, Recover
+- Tagline: Predict. Diagnose. Recover.
+- Treat “ModelPulse” as either an internal engine name or remove it to prevent brand confusion.
+
+Define the first credible MVP
+- Use the CampusGPT knowledge-freshness incident as the primary vertical slice.
+- Begin with seeded, deterministic telemetry.
+- Simulate recovery actions behind provider-neutral adapters.
+- Avoid attempting multiple shallow production integrations initially.
+
+Write the PRD before application code
+- docs/PRD.md
+- docs/DECISIONS.md
+- docs/IMPLEMENTATION_PLAN.md
+- Include requirement IDs, acceptance criteria, permissions, data states, failure states, scoring definitions, security, demo flow, and non-goals.
+
+Design the Health Score carefully
+- Normalize component metrics to 0–100.
+- Make weights, sample size, coverage, time window, missing data, confidence, and policy version visible.
+- Return “Insufficient data” when the evidence cannot support a score.
+- Use a transparent forecasting method for the MVP.
+
+Specify diagnosis as evidence-backed inference
+- Rank possible causes.
+- Show supporting and contradicting evidence.
+- Link diagnoses to trace-level observations.
+- Display confidence as an estimate—not certainty or hidden AI reasoning.
+
+Make recovery controlled and testable
+- Separate recommendation, approval, execution, verification, and rollback.
+- Require human approval for consequential actions.
+- Record every action in an audit log.
+- Define exactly what counts as successful recovery.
+
+Critique and revise the PRD
+- Look for misleading metrics, unsafe automation, vague requirements, missing edge states, and demo fragility.
+- Revise once before presenting it for approval.
+
+Stop at the PRD gate
+- I’ll show you the important decisions and unresolved questions.
+- I will not begin product implementation until you approve the PRD.
+
+After approval
+- Build the CampusGPT flow end to end.
+- Test it.
+- Commit logically grouped changes.
+- Push only when the repository and branch expectations are confirmed and pushing is part of your instruction.
