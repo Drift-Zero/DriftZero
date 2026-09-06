@@ -56,6 +56,11 @@ _LOG_FIELDS = (
     "model_id",
     "entity_type",
     "entity_id",
+    "evaluated_models",
+    "evaluated_rules",
+    "alerts_fired",
+    "alerts_resolved",
+    "failed_models",
 )
 
 
