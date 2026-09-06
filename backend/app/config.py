@@ -27,6 +27,7 @@ class Settings:
     minimum_sample_size: int = 20
     minimum_coverage: float = 0.30
     forecast_horizon_minutes: int = 30
+    alert_evaluation_interval_seconds: int = 60
     log_level: str = "INFO"
     log_file: str | None = None
     log_file_max_bytes: int = 10_485_760
@@ -53,6 +54,15 @@ class Settings:
                     "DRIFTZERO_FORECAST_HORIZON_MINUTES",
                     str(defaults.forecast_horizon_minutes),
                 )
+            ),
+            alert_evaluation_interval_seconds=max(
+                1,
+                int(
+                    os.getenv(
+                        "DRIFTZERO_ALERT_EVALUATION_INTERVAL_SECONDS",
+                        str(defaults.alert_evaluation_interval_seconds),
+                    )
+                ),
             ),
             log_level=os.getenv("DRIFTZERO_LOG_LEVEL", defaults.log_level),
             log_file=os.getenv("DRIFTZERO_LOG_FILE") or defaults.log_file,
