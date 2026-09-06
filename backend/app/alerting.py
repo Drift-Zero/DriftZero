@@ -144,9 +144,7 @@ class AlertEvaluator:
             session.scalars(
                 select(Alert).where(
                     Alert.rule_id == rule_id,
-                    Alert.state.in_(
-                        [AlertState.FIRING.value, AlertState.ACKNOWLEDGED.value]
-                    ),
+                    Alert.state.in_([AlertState.FIRING.value, AlertState.ACKNOWLEDGED.value]),
                 )
             ).all()
         )
@@ -171,7 +169,12 @@ class AlertEvaluator:
         if rule_type is AlertRuleType.EVALUATION_FRESHNESS:
             latest_at = current.observed_at if current is not None else model.created_at
             value = max(0.0, (evaluated_at - _as_utc(latest_at)).total_seconds() / 60)
-            return self._numeric_decision(rule, [value], value, extra={"latest_at": latest_at})
+            return self._numeric_decision(
+                rule,
+                [value],
+                value,
+                extra={"latest_at": _as_utc(latest_at).isoformat()},
+            )
 
         if current is None:
             return self._inconclusive(rule, "No health snapshot is available.")
@@ -182,7 +185,6 @@ class AlertEvaluator:
             return self._trajectory_decision(rule, snapshots)
 
         values = [self._snapshot_value(item, AlertMetric(rule.metric)) for item in snapshots]
-        values = [value for value in values if value is not None]
         current_value = self._snapshot_value(current, AlertMetric(rule.metric))
         if current_value is None:
             return self._inconclusive(rule, f"{rule.metric} is not available.")
@@ -191,7 +193,7 @@ class AlertEvaluator:
     def _numeric_decision(
         self,
         rule: AlertRule,
-        values: list[float],
+        values: list[float | None],
         current_value: float,
         *,
         extra: dict[str, object] | None = None,
@@ -205,7 +207,7 @@ class AlertEvaluator:
         should_fire = (
             len(recent_values) >= required
             and condition_active
-            and all(breached(value, threshold) for value in recent_values)
+            and all(value is not None and breached(value, threshold) for value in recent_values)
         )
         details: dict[str, object] = {
             "rule_name": rule.name,
@@ -279,9 +281,7 @@ class AlertEvaluator:
         snapshots: list[HealthSnapshot],
     ) -> RuleDecision:
         points = [
-            (item.observed_at, float(item.score))
-            for item in snapshots
-            if item.score is not None
+            (item.observed_at, float(item.score)) for item in snapshots if item.score is not None
         ]
         forecasts = []
         for index in range(2, len(points) + 1):
@@ -367,9 +367,7 @@ class AlertEvaluator:
         )
         if recent is None or recent.resolved_at is None:
             return False
-        return evaluated_at < _as_utc(recent.resolved_at) + timedelta(
-            minutes=rule.cooldown_minutes
-        )
+        return evaluated_at < _as_utc(recent.resolved_at) + timedelta(minutes=rule.cooldown_minutes)
 
     @staticmethod
     def _resolve(alert: Alert, evaluated_at: datetime, reason: str) -> None:
