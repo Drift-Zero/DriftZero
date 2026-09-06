@@ -956,31 +956,37 @@ class AuditEvent(IdMixin, TenantMixin, Base):
 
 
 class AlertRule(IdMixin, Base):
-    """A threshold that turns a metric into an alert."""
+    """A versioned strategy that turns health evidence into an alert."""
 
     __tablename__ = "alert_rules"
     __table_args__ = (
         sa.UniqueConstraint("model_id", "name", name="model_name"),
         sa.CheckConstraint("window_minutes > 0", name="window_positive"),
+        sa.CheckConstraint("cooldown_minutes >= 0", name="cooldown_non_negative"),
+        sa.CheckConstraint(
+            "minimum_consecutive_windows > 0", name="consecutive_windows_positive"
+        ),
     )
 
     model_id: Mapped[str] = mapped_column(
         sa.String(36), sa.ForeignKey(_MODEL_FK, ondelete="CASCADE"), index=True
     )
     name: Mapped[str] = mapped_column(sa.String(120))
+    rule_type: Mapped[str] = mapped_column(sa.String(40), default="threshold")
     metric: Mapped[str] = mapped_column(sa.String(80))
-    comparator: Mapped[str] = mapped_column(sa.String(10), default="lt")
-    threshold: Mapped[float] = mapped_column()
+    comparator: Mapped[str | None] = mapped_column(sa.String(10), default="lt")
+    threshold: Mapped[float | None] = mapped_column()
+    target_state: Mapped[str | None] = mapped_column(sa.String(40))
     window_minutes: Mapped[int] = mapped_column(default=15)
     cooldown_minutes: Mapped[int] = mapped_column(default=30)
+    minimum_consecutive_windows: Mapped[int] = mapped_column(default=1)
     severity: Mapped[Severity] = mapped_column(SEVERITY, default=Severity.MEDIUM)
     channel: Mapped[str] = mapped_column(sa.String(40), default="in_app")
     is_enabled: Mapped[bool] = mapped_column(default=True)
     created_at: Mapped[datetime] = mapped_column(default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(default=utc_now, onupdate=utc_now)
 
-    alerts: Mapped[list[Alert]] = relationship(
-        back_populates="rule", cascade="all, delete-orphan", passive_deletes=True
-    )
+    alerts: Mapped[list[Alert]] = relationship(back_populates="rule", passive_deletes=True)
 
 
 class Alert(IdMixin, Base):
@@ -990,7 +996,7 @@ class Alert(IdMixin, Base):
     __table_args__ = (sa.Index("ix_alerts_model_fired", "model_id", "fired_at"),)
 
     rule_id: Mapped[str | None] = mapped_column(
-        sa.String(36), sa.ForeignKey("alert_rules.id", ondelete="CASCADE"), index=True
+        sa.String(36), sa.ForeignKey("alert_rules.id", ondelete="SET NULL"), index=True
     )
     model_id: Mapped[str] = mapped_column(
         sa.String(36), sa.ForeignKey(_MODEL_FK, ondelete="CASCADE"), index=True
@@ -1004,10 +1010,13 @@ class Alert(IdMixin, Base):
     state: Mapped[AlertState] = mapped_column(ALERT_STATE, default=AlertState.FIRING, index=True)
     severity: Mapped[Severity] = mapped_column(SEVERITY, default=Severity.MEDIUM)
     message: Mapped[str] = mapped_column(sa.Text())
+    observed_value: Mapped[float | None] = mapped_column()
+    details: Mapped[dict[str, Any]] = mapped_column(default=dict)
     fired_at: Mapped[datetime] = mapped_column(default=utc_now, index=True)
     acknowledged_at: Mapped[datetime | None] = mapped_column()
     acknowledged_by: Mapped[str | None] = mapped_column(sa.String(120))
     resolved_at: Mapped[datetime | None] = mapped_column()
+    resolution_reason: Mapped[str | None] = mapped_column(sa.Text())
     notified_at: Mapped[datetime | None] = mapped_column()
 
     rule: Mapped[AlertRule | None] = relationship(back_populates="alerts")
