@@ -49,10 +49,11 @@ from app.db import (
 from app.diagnosis import diagnose_change
 from app.evaluation import EvaluatorAdapter, SimulatedEvaluator
 from app.observability import get_request_id
-from app.recovery import RecoveryAdapter, SimulatedRecoveryAdapter, build_playbook
+from app.recovery import RecoveryAdapter, RecoveryPolicy, SimulatedRecoveryAdapter, build_playbook
 from app.redaction import REDACTION_POLICY_VERSION, content_hash, redact
 from app.schemas import (
     ActorRequest,
+    ActorRole,
     ActorType,
     AlertEvaluationRequest,
     AlertEvaluationResponse,
@@ -138,6 +139,7 @@ class DriftZeroService:
     ) -> None:
         self.settings = settings
         self.recovery_adapter = recovery_adapter or SimulatedRecoveryAdapter()
+        self.recovery_policy = RecoveryPolicy()
         self.evaluator = evaluator or SimulatedEvaluator()
         self.alert_evaluator = AlertEvaluator()
 
@@ -495,6 +497,9 @@ class DriftZeroService:
             incident_id=diagnosis.incident_id,
             state=RecoveryState.RECOMMENDED.value,
             risk=playbook.risk.value,
+            approval_level=playbook.risk.value,
+            requires_approval=True,
+            policy_version=self.recovery_policy.version,
             actions=[action.model_dump(mode="json") for action in playbook.actions],
             simulation=self.recovery_adapter.simulation,
         )
@@ -554,6 +559,30 @@ class DriftZeroService:
             raise ResourceNotFound("No recovery plan exists for this model.")
         return self._recovery_response(record)
 
+    def get_recovery(self, session: Session, plan_id: str) -> RecoveryPlanResponse:
+        return self._recovery_response(self._require_plan(session, plan_id))
+
+    def recovery_executions(
+        self, session: Session, plan_id: str
+    ) -> list[RecoveryExecutionResponse]:
+        plan = self._require_plan(session, plan_id)
+        return [
+            RecoveryExecutionResponse.model_validate(execution)
+            for action in plan.action_items
+            for execution in sorted(action.executions, key=lambda item: item.attempt)
+        ]
+
+    def recovery_verification(
+        self, session: Session, plan_id: str
+    ) -> VerificationRunResponse:
+        plan = self._require_plan(session, plan_id)
+        verification = max(
+            plan.verification_runs, key=lambda run: run.started_at, default=None
+        )
+        if verification is None:
+            raise ResourceNotFound("No verification run exists for this recovery plan.")
+        return VerificationRunResponse.model_validate(verification)
+
     def approve_recovery(
         self,
         session: Session,
@@ -561,6 +590,8 @@ class DriftZeroService:
         payload: ActorRequest,
     ) -> RecoveryPlanResponse:
         plan = self._require_plan(session, plan_id)
+        self._check_plan_version(plan, payload)
+        self._authorize_recovery(plan, payload)
         if plan.state in {RecoveryState.APPROVED.value, RecoveryState.RECOVERED.value}:
             return self._recovery_response(plan)
         if plan.state != RecoveryState.RECOMMENDED.value:
@@ -569,6 +600,9 @@ class DriftZeroService:
         plan.state = RecoveryState.APPROVED.value
         plan.approved_at = datetime.now(UTC)
         plan.approved_by = payload.actor
+        plan.approved_role = payload.role.value
+        plan.approval_reason = payload.reason
+        plan.version += 1
         self._advance_incident(
             session, self._open_incident(session, plan.model_id), IncidentState.MITIGATING
         )
@@ -582,6 +616,67 @@ class DriftZeroService:
         session.commit()
         return self._recovery_response(plan)
 
+    def reject_recovery(
+        self,
+        session: Session,
+        plan_id: str,
+        payload: ActorRequest,
+    ) -> RecoveryPlanResponse:
+        plan = self._require_plan(session, plan_id)
+        self._check_plan_version(plan, payload)
+        self._authorize_recovery(plan, payload)
+        if plan.state == RecoveryState.REJECTED.value:
+            return self._recovery_response(plan)
+        if plan.state != RecoveryState.RECOMMENDED.value:
+            raise InvalidTransition(f"Cannot reject a plan in '{plan.state}' state.")
+
+        plan.state = RecoveryState.REJECTED.value
+        plan.rejected_at = datetime.now(UTC)
+        plan.rejected_by = payload.actor
+        plan.rejected_reason = payload.reason
+        plan.version += 1
+        self._audit(
+            session,
+            plan.model_id,
+            "recovery.rejected",
+            payload.actor,
+            {"plan_id": plan.id, "reason": payload.reason},
+        )
+        session.commit()
+        return self._recovery_response(plan)
+
+    def cancel_recovery(
+        self,
+        session: Session,
+        plan_id: str,
+        payload: ActorRequest,
+    ) -> RecoveryPlanResponse:
+        plan = self._require_plan(session, plan_id)
+        self._check_plan_version(plan, payload)
+        self._authorize_recovery(plan, payload)
+        if plan.state == RecoveryState.CANCELED.value:
+            return self._recovery_response(plan)
+        cancelable = {
+            RecoveryState.RECOMMENDED.value,
+            RecoveryState.APPROVED.value,
+            RecoveryState.QUEUED.value,
+        }
+        if plan.state not in cancelable:
+            raise InvalidTransition(f"Cannot cancel a plan in '{plan.state}' state.")
+
+        plan.state = RecoveryState.CANCELED.value
+        plan.failure_reason = payload.reason or "Canceled by operator."
+        plan.version += 1
+        self._audit(
+            session,
+            plan.model_id,
+            "recovery.canceled",
+            payload.actor,
+            {"plan_id": plan.id, "reason": plan.failure_reason},
+        )
+        session.commit()
+        return self._recovery_response(plan)
+
     def execute_recovery(
         self,
         session: Session,
@@ -589,13 +684,40 @@ class DriftZeroService:
         payload: ActorRequest,
     ) -> RecoveryPlanResponse:
         plan = self._require_plan(session, plan_id)
+        self._check_plan_version(plan, payload)
+        self._authorize_recovery(plan, payload)
+        idempotency_key = getattr(payload, "idempotency_key", None)
+        if plan.idempotency_key is not None:
+            if idempotency_key == plan.idempotency_key:
+                return self._recovery_response(plan)
+            raise ResourceConflict("Recovery already has a different idempotency key.")
         if plan.state == RecoveryState.RECOVERED.value:
             return self._recovery_response(plan)
         if plan.state != RecoveryState.APPROVED.value:
             raise InvalidTransition("Recovery must be approved before execution.")
 
+        max_traffic_pct = getattr(payload, "max_traffic_pct", 100.0)
+        for record in self._plan_actions(session, plan.id):
+            action = RecoveryAction(
+                order=record.order,
+                code=record.code,
+                title=record.title,
+                description=record.description,
+                risk=RiskLevel(record.risk),
+                reversible=record.reversible,
+            )
+            estimator = getattr(self.recovery_adapter, "estimate_traffic_pct", None)
+            estimated_traffic_pct = estimator(action=action) if estimator else 100.0
+            if estimated_traffic_pct > max_traffic_pct:
+                raise InvalidTransition(
+                    f"Action '{record.code}' would affect {estimated_traffic_pct}% of traffic; "
+                    f"request permits at most {max_traffic_pct}%."
+                )
+
         plan.state = RecoveryState.EXECUTING.value
+        plan.idempotency_key = idempotency_key
         plan.executed_at = datetime.now(UTC)
+        plan.version += 1
         incident = self._open_incident(session, plan.model_id)
         self._advance_incident(session, incident, IncidentState.VERIFYING)
         self._audit(
@@ -621,6 +743,7 @@ class DriftZeroService:
             if failed_execution is not None:
                 self._rollback_actions(session, plan, executions, payload.actor)
                 plan.state = RecoveryState.FAILED.value
+                plan.version += 1
                 plan.failure_reason = (
                     failed_execution.error
                     or f"Recovery action {failed_execution.action_id} failed."
@@ -647,6 +770,8 @@ class DriftZeroService:
                 session.commit()
                 return self._recovery_response(plan)
 
+            plan.state = RecoveryState.VERIFYING.value
+            plan.version += 1
             result = self.recovery_adapter.execute(model_id=plan.model_id, plan_id=plan.id)
             snapshot = self._record_telemetry(
                 session,
@@ -672,6 +797,7 @@ class DriftZeroService:
             plan.state = (
                 RecoveryState.RECOVERED.value if recovered else RecoveryState.FAILED.value
             )
+            plan.version += 1
             plan.verified_at = datetime.now(UTC)
             if not recovered:
                 # Leave the system no worse than we found it: undo what can be
@@ -708,6 +834,8 @@ class DriftZeroService:
             session.rollback()
             failed_plan = self._require_plan(session, plan_id)
             failed_plan.state = RecoveryState.FAILED.value
+            failed_plan.failure_reason = "Recovery adapter raised an exception."
+            failed_plan.version += 1
             self._audit(
                 session,
                 failed_plan.model_id,
@@ -719,6 +847,54 @@ class DriftZeroService:
             raise
 
         return self._recovery_response(plan)
+
+    def rollback_recovery(
+        self,
+        session: Session,
+        plan_id: str,
+        payload: ActorRequest,
+    ) -> RecoveryPlanResponse:
+        plan = self._require_plan(session, plan_id)
+        self._check_plan_version(plan, payload)
+        self._authorize_recovery(plan, payload)
+        if plan.state == RecoveryState.ROLLED_BACK.value:
+            return self._recovery_response(plan)
+        if plan.state not in {RecoveryState.RECOVERED.value, RecoveryState.FAILED.value}:
+            raise InvalidTransition(f"Cannot roll back a plan in '{plan.state}' state.")
+
+        executions = [
+            execution
+            for action in plan.action_items
+            for execution in action.executions
+        ]
+        if not any(
+            ExecutionState(execution.state) is ExecutionState.SUCCEEDED
+            for execution in executions
+        ):
+            raise InvalidTransition("No applied recovery actions are available to roll back.")
+
+        self._rollback_actions(session, plan, executions, payload.actor)
+        plan.state = RecoveryState.ROLLED_BACK.value
+        plan.rolled_back_at = datetime.now(UTC)
+        plan.version += 1
+        session.commit()
+        return self._recovery_response(plan)
+
+    def _authorize_recovery(self, plan: RecoveryPlan, payload: ActorRequest) -> None:
+        decision = self.recovery_policy.authorize(
+            risk=RiskLevel(plan.risk),
+            role=payload.role,
+        )
+        if not decision.allowed:
+            raise InvalidTransition(decision.reason)
+
+    @staticmethod
+    def _check_plan_version(plan: RecoveryPlan, payload: ActorRequest) -> None:
+        expected = getattr(payload, "expected_version", None)
+        if expected is not None and expected != plan.version:
+            raise ResourceConflict(
+                f"Recovery plan version changed: expected {expected}, current {plan.version}."
+            )
 
     def _plan_actions(self, session: Session, plan_id: str) -> list[RecoveryActionRecord]:
         return list(
@@ -2600,13 +2776,24 @@ class DriftZeroService:
             incident_id=record.incident_id,
             state=RecoveryState(record.state),
             risk=RiskLevel(record.risk),
+            version=record.version,
+            approval_level=RiskLevel(record.approval_level),
+            requires_approval=record.requires_approval,
+            policy_version=record.policy_version,
             actions=[RecoveryAction.model_validate(item) for item in record.actions],
             simulation=record.simulation,
+            failure_reason=record.failure_reason,
             created_at=record.created_at,
             approved_at=record.approved_at,
             approved_by=record.approved_by,
+            approved_role=ActorRole(record.approved_role) if record.approved_role else None,
+            approval_reason=record.approval_reason,
+            rejected_at=record.rejected_at,
+            rejected_by=record.rejected_by,
+            rejected_reason=record.rejected_reason,
             executed_at=record.executed_at,
             verified_at=record.verified_at,
+            rolled_back_at=record.rolled_back_at,
             executions=[
                 RecoveryExecutionResponse.model_validate(execution) for execution in executions
             ],

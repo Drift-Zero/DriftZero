@@ -35,6 +35,9 @@ from app.schemas import (
     ModelUpdate,
     ModelVersionCreate,
     ModelVersionResponse,
+    RecoveryDecisionRequest,
+    RecoveryExecuteRequest,
+    RecoveryExecutionResponse,
     RecoveryPlanResponse,
     RegistrationStatusResponse,
     ReviewDecisionRequest,
@@ -44,6 +47,7 @@ from app.schemas import (
     StabilityRunRequest,
     StabilityTestResponse,
     TelemetryCreate,
+    VerificationRunResponse,
 )
 from app.service import DriftZeroService
 
@@ -282,6 +286,19 @@ def latest_recovery(
     return service.latest_recovery(session, model_id)
 
 
+@router.get(
+    "/recovery/{plan_id}",
+    response_model=RecoveryPlanResponse,
+    tags=["recover"],
+)
+def get_recovery(
+    plan_id: str,
+    session: SessionDependency,
+    service: ServiceDependency,
+) -> RecoveryPlanResponse:
+    return service.get_recovery(session, plan_id)
+
+
 @router.post(
     "/recovery/{plan_id}/approve",
     response_model=RecoveryPlanResponse,
@@ -289,11 +306,39 @@ def latest_recovery(
 )
 def approve_recovery(
     plan_id: str,
-    payload: ActorRequest,
+    payload: RecoveryDecisionRequest,
     session: SessionDependency,
     service: ServiceDependency,
 ) -> RecoveryPlanResponse:
     return service.approve_recovery(session, plan_id, payload)
+
+
+@router.post(
+    "/recovery/{plan_id}/reject",
+    response_model=RecoveryPlanResponse,
+    tags=["recover"],
+)
+def reject_recovery(
+    plan_id: str,
+    payload: RecoveryDecisionRequest,
+    session: SessionDependency,
+    service: ServiceDependency,
+) -> RecoveryPlanResponse:
+    return service.reject_recovery(session, plan_id, payload)
+
+
+@router.post(
+    "/recovery/{plan_id}/cancel",
+    response_model=RecoveryPlanResponse,
+    tags=["recover"],
+)
+def cancel_recovery(
+    plan_id: str,
+    payload: RecoveryDecisionRequest,
+    session: SessionDependency,
+    service: ServiceDependency,
+) -> RecoveryPlanResponse:
+    return service.cancel_recovery(session, plan_id, payload)
 
 
 @router.post(
@@ -303,11 +348,51 @@ def approve_recovery(
 )
 def execute_recovery(
     plan_id: str,
-    payload: ActorRequest,
+    payload: RecoveryExecuteRequest,
     session: SessionDependency,
     service: ServiceDependency,
 ) -> RecoveryPlanResponse:
     return service.execute_recovery(session, plan_id, payload)
+
+
+@router.get(
+    "/recovery/{plan_id}/executions",
+    response_model=list[RecoveryExecutionResponse],
+    tags=["recover"],
+)
+def recovery_executions(
+    plan_id: str,
+    session: SessionDependency,
+    service: ServiceDependency,
+) -> list[RecoveryExecutionResponse]:
+    return service.recovery_executions(session, plan_id)
+
+
+@router.get(
+    "/recovery/{plan_id}/verification",
+    response_model=VerificationRunResponse,
+    tags=["recover"],
+)
+def recovery_verification(
+    plan_id: str,
+    session: SessionDependency,
+    service: ServiceDependency,
+) -> VerificationRunResponse:
+    return service.recovery_verification(session, plan_id)
+
+
+@router.post(
+    "/recovery/{plan_id}/rollback",
+    response_model=RecoveryPlanResponse,
+    tags=["recover"],
+)
+def rollback_recovery(
+    plan_id: str,
+    payload: RecoveryDecisionRequest,
+    session: SessionDependency,
+    service: ServiceDependency,
+) -> RecoveryPlanResponse:
+    return service.rollback_recovery(session, plan_id, payload)
 
 
 @router.get(

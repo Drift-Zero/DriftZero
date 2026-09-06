@@ -44,7 +44,10 @@ def test_campus_demo_runs_from_warning_to_verified_recovery() -> None:
 
         blocked = client.post(
             f"/api/v1/recovery/{plan_id}/execute",
-            json={"actor": "demo-operator"},
+            json={
+                "actor": "demo-operator",
+                "idempotency_key": "demo-run-blocked",
+            },
         )
         assert blocked.status_code == 409
         assert blocked.json()["error"] == "invalid_transition"
@@ -59,7 +62,10 @@ def test_campus_demo_runs_from_warning_to_verified_recovery() -> None:
 
         execution = client.post(
             f"/api/v1/recovery/{plan_id}/execute",
-            json={"actor": "demo-operator"},
+            json={
+                "actor": "demo-operator",
+                "idempotency_key": "demo-run-success",
+            },
         )
         assert execution.status_code == 200
         assert execution.json()["state"] == "recovered"
@@ -107,4 +113,3 @@ def test_unknown_resources_return_stable_error_contract() -> None:
             "error": "not_found",
             "detail": "Monitored model not found.",
         }
-

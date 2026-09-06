@@ -146,9 +146,14 @@ class DiagnosisStatus(StrEnum):
 class RecoveryState(StrEnum):
     RECOMMENDED = "recommended"
     APPROVED = "approved"
+    QUEUED = "queued"
     EXECUTING = "executing"
+    VERIFYING = "verifying"
     RECOVERED = "recovered"
     FAILED = "failed"
+    REJECTED = "rejected"
+    CANCELED = "canceled"
+    ROLLED_BACK = "rolled_back"
 
 
 class ExecutionState(StrEnum):
@@ -167,6 +172,15 @@ class ActorType(StrEnum):
     HUMAN = "human"
     SYSTEM = "system"
     AGENT = "agent"
+
+
+class ActorRole(StrEnum):
+    """Recovery authorization role asserted by the authenticated API layer."""
+
+    VIEWER = "viewer"
+    OPERATOR = "operator"
+    ADMIN = "admin"
+    SERVICE = "service"
 
 
 class RiskLevel(StrEnum):
@@ -527,6 +541,7 @@ class RecoveryExecutionResponse(BaseModel):
     result: dict[str, object] = Field(default_factory=dict)
     error: str | None = None
     rolled_back_at: datetime | None = None
+    rollback_result: dict[str, object] = Field(default_factory=dict)
 
 
 class VerificationRunResponse(BaseModel):
@@ -558,13 +573,24 @@ class RecoveryPlanResponse(BaseModel):
     incident_id: str | None = None
     state: RecoveryState
     risk: RiskLevel
+    version: int
+    approval_level: RiskLevel
+    requires_approval: bool
+    policy_version: str
     actions: list[RecoveryAction]
     simulation: bool
+    failure_reason: str | None = None
     created_at: datetime
     approved_at: datetime | None = None
     approved_by: str | None = None
+    approved_role: ActorRole | None = None
+    approval_reason: str | None = None
+    rejected_at: datetime | None = None
+    rejected_by: str | None = None
+    rejected_reason: str | None = None
     executed_at: datetime | None = None
     verified_at: datetime | None = None
+    rolled_back_at: datetime | None = None
     executions: list[RecoveryExecutionResponse] = Field(default_factory=list)
     verification: VerificationRunResponse | None = None
 
@@ -770,6 +796,18 @@ class EvaluationFeedbackResponse(BaseModel):
 
 class ActorRequest(BaseModel):
     actor: str = Field(min_length=1, max_length=120)
+    role: ActorRole = ActorRole.OPERATOR
+    reason: str | None = Field(default=None, max_length=500)
+
+
+class RecoveryDecisionRequest(ActorRequest):
+    expected_version: int | None = Field(default=None, ge=1)
+
+
+class RecoveryExecuteRequest(ActorRequest):
+    idempotency_key: str = Field(min_length=8, max_length=120)
+    expected_version: int | None = Field(default=None, ge=1)
+    max_traffic_pct: float = Field(default=100.0, ge=0, le=100)
 
 
 class AuditEventResponse(BaseModel):

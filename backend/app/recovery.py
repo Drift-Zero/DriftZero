@@ -5,7 +5,46 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Protocol
 
-from app.schemas import DimensionScores, RecoveryAction, RiskLevel
+from app.schemas import ActorRole, DimensionScores, RecoveryAction, RiskLevel
+
+RECOVERY_POLICY_VERSION = "recovery-v2"
+
+
+@dataclass(frozen=True, slots=True)
+class RecoveryPolicyDecision:
+    allowed: bool
+    required_role: ActorRole
+    reason: str
+
+
+class RecoveryPolicy:
+    """Small, deterministic authorization policy for privileged recovery actions."""
+
+    version = RECOVERY_POLICY_VERSION
+    _ROLE_RANK = {
+        ActorRole.VIEWER: 0,
+        ActorRole.SERVICE: 1,
+        ActorRole.OPERATOR: 2,
+        ActorRole.ADMIN: 3,
+    }
+    _REQUIRED_ROLE = {
+        RiskLevel.LOW: ActorRole.OPERATOR,
+        RiskLevel.MEDIUM: ActorRole.OPERATOR,
+        RiskLevel.HIGH: ActorRole.ADMIN,
+    }
+
+    def authorize(self, *, risk: RiskLevel, role: ActorRole) -> RecoveryPolicyDecision:
+        required = self._REQUIRED_ROLE[risk]
+        allowed = self._ROLE_RANK[role] >= self._ROLE_RANK[required]
+        return RecoveryPolicyDecision(
+            allowed=allowed,
+            required_role=required,
+            reason=(
+                "authorized"
+                if allowed
+                else f"{risk.value}-risk recovery requires the {required.value} role"
+            ),
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -42,6 +81,8 @@ class RecoveryAdapter(Protocol):
 
     simulation: bool
 
+    def estimate_traffic_pct(self, *, action: RecoveryAction) -> float: ...
+
     def execute(self, *, model_id: str, plan_id: str) -> RecoveryExecutionResult: ...
 
     def execute_action(
@@ -75,13 +116,16 @@ class SimulatedRecoveryAdapter:
 
     simulation = True
 
+    def estimate_traffic_pct(self, *, action: RecoveryAction) -> float:
+        return SIMULATED_TRAFFIC_SHARE.get(action.code, 100.0)
+
     def execute_action(
         self, *, model_id: str, plan_id: str, action: RecoveryAction
     ) -> RecoveryActionResult:
         del model_id, plan_id
         return RecoveryActionResult(
             succeeded=True,
-            affected_traffic_pct=SIMULATED_TRAFFIC_SHARE.get(action.code, 100.0),
+            affected_traffic_pct=self.estimate_traffic_pct(action=action),
             detail={"simulated": True, "code": action.code},
         )
 
@@ -98,7 +142,7 @@ class SimulatedRecoveryAdapter:
             )
         return RecoveryActionResult(
             succeeded=True,
-            affected_traffic_pct=SIMULATED_TRAFFIC_SHARE.get(action.code, 100.0),
+            affected_traffic_pct=self.estimate_traffic_pct(action=action),
             detail={"simulated": True, "code": action.code, "rolled_back": True},
         )
 
