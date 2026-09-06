@@ -79,7 +79,7 @@ def upgrade() -> None:
             ondelete="CASCADE",
         ),
         sa.PrimaryKeyConstraint("id", name=op.f("pk_recovery_commands")),
-        sa.UniqueConstraint("idempotency_key", name="idempotency_key"),
+        sa.UniqueConstraint("idempotency_key", name="recovery_command_idempotency_key"),
     )
     with op.batch_alter_table("recovery_commands") as batch_op:
         batch_op.create_index("ix_recovery_commands_claim", ["state", "available_at"])

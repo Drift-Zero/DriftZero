@@ -588,7 +588,7 @@ class RecoveryPlan(IdMixin, Base):
 
     __tablename__ = "recovery_plans"
     __table_args__ = (
-        sa.UniqueConstraint("idempotency_key", name="idempotency_key"),
+        sa.UniqueConstraint("idempotency_key", name="recovery_plan_idempotency_key"),
     )
 
     model_id: Mapped[str] = mapped_column(
@@ -646,7 +646,7 @@ class RecoveryCommand(IdMixin, Base):
 
     __tablename__ = "recovery_commands"
     __table_args__ = (
-        sa.UniqueConstraint("idempotency_key", name="idempotency_key"),
+        sa.UniqueConstraint("idempotency_key", name="recovery_command_idempotency_key"),
         sa.CheckConstraint("attempt >= 0", name="attempt_non_negative"),
         sa.CheckConstraint("max_attempts >= 1", name="max_attempts_positive"),
         sa.CheckConstraint(

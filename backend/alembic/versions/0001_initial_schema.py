@@ -505,7 +505,7 @@ def upgrade() -> None:
     sa.ForeignKeyConstraint(['incident_id'], ['incidents.id'], name=op.f('fk_recovery_plans_incident_id'), ondelete='CASCADE'),
     sa.ForeignKeyConstraint(['model_id'], ['monitored_models.id'], name=op.f('fk_recovery_plans_model_id'), ondelete='CASCADE'),
     sa.PrimaryKeyConstraint('id', name=op.f('pk_recovery_plans')),
-    sa.UniqueConstraint('idempotency_key', name='idempotency_key')
+    sa.UniqueConstraint('idempotency_key', name='recovery_plan_idempotency_key')
     )
     with op.batch_alter_table('recovery_plans', schema=None) as batch_op:
         batch_op.create_index(batch_op.f('ix_recovery_plans_diagnosis_id'), ['diagnosis_id'], unique=False)
