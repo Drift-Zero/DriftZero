@@ -69,7 +69,7 @@ class RefusingAdapter(FailingAdapter):
 
 
 def _run_demo_recovery(session: Session, adapter: object | None = None) -> DriftZeroService:
-    """Seed the CampusGPT scenario and drive it through recovery."""
+    """Seed the ShopAssist scenario and drive it through recovery."""
 
     service = DriftZeroService(Settings(), recovery_adapter=adapter)
     demo = service.reset_demo(session)
@@ -83,8 +83,10 @@ def _run_demo_recovery(session: Session, adapter: object | None = None) -> Drift
     return service
 
 
-def _source(session: Session) -> KnowledgeSource:
-    return session.scalars(sa.select(KnowledgeSource)).one()
+def _source(session: Session, suffix: str = "Current") -> KnowledgeSource:
+    return session.scalars(
+        sa.select(KnowledgeSource).where(KnowledgeSource.name.endswith(suffix))
+    ).one()
 
 
 def _superseding(session: Session) -> KnowledgeDocument:
@@ -103,9 +105,12 @@ class TestSuccessfulRefresh:
     def test_the_source_becomes_fresh(self, session: Session) -> None:
         _run_demo_recovery(session)
 
-        source = _source(session)
-        assert KnowledgeStatus(source.status) is KnowledgeStatus.FRESH
-        assert source.last_refreshed_at is not None
+        current = _source(session)
+        retired = _source(session, "Retired")
+        assert KnowledgeStatus(current.status) is KnowledgeStatus.FRESH
+        assert KnowledgeStatus(retired.status) is KnowledgeStatus.DISABLED
+        assert current.last_refreshed_at is not None
+        assert retired.last_refreshed_at is not None
 
     def test_the_superseding_document_is_finally_indexed(self, session: Session) -> None:
         """This is the actual fix: it was never indexed, which is why the
@@ -130,7 +135,7 @@ class TestSuccessfulRefresh:
         _run_demo_recovery(session)
 
         # The seeded stale corpus; refreshing must leave it behind.
-        assert _source(session).corpus_version != "2026-01-14"
+        assert _source(session).corpus_version == "2026-09-01"
 
     def test_the_superseded_document_stays_stale(self, session: Session) -> None:
         """It really was superseded. That is a fact about the document, not a
@@ -156,7 +161,7 @@ class TestRefreshIsNotClaimedFalsely:
 
         _run_demo_recovery(session, RefusingAdapter())
 
-        source = _source(session)
+        source = _source(session, "Retired")
         assert KnowledgeStatus(source.status) is KnowledgeStatus.STALE
         assert _superseding(session).indexed_at is None
 
@@ -172,10 +177,17 @@ class TestRefreshIsNotClaimedFalsely:
 
 
 class TestControlledInputs:
-    def test_no_active_version_refreshes_without_raising(self, session: Session) -> None:
-        """The demo model registers no version; refreshing must still work."""
+    def test_refresh_registers_the_current_policy_version(self, session: Session) -> None:
+        """Recovery records the controlled-input change from retired to current policy."""
 
         _run_demo_recovery(session)
 
         assert KnowledgeStatus(_source(session).status) is KnowledgeStatus.FRESH
-        assert session.scalar(sa.select(sa.func.count()).select_from(ModelVersion)) == 0
+        versions = session.scalars(
+            sa.select(ModelVersion).order_by(ModelVersion.active_from)
+        ).all()
+        assert len(versions) == 2
+        assert versions[0].corpus_version == "returns-policy-2026-06-01"
+        assert versions[0].active_to is not None
+        assert versions[1].corpus_version == "2026-09-01"
+        assert versions[1].active_to is None

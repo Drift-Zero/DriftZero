@@ -271,7 +271,7 @@ class TestDemoScenario:
 
         trace = session.get(Trace, linked[0].trace_ids[0])
         assert trace.is_simulated
-        assert trace.retrieved_document_ids == ["policy/exam-fee-2025-11"]
+        assert trace.retrieved_document_ids == ["policy/returns-2026-06-retired"]
 
     def test_scores_are_unchanged(self, session: Session) -> None:
         """Traces are recorded alongside the aggregates, never in place of them."""

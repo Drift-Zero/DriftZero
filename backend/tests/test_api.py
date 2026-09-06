@@ -98,6 +98,8 @@ def test_shopassist_demo_runs_from_warning_to_verified_recovery() -> None:
         assert recovery.json()["state"] == "recovered"
         assert recovery.json()["verified_at"] is not None
         assert recovery.json()["verification"]["observed_requests"] == 50
+        assert recovery.json()["verification"]["observed_requests"] >= 20
+        assert recovery.json()["verification"]["passed"] is True
 
         timeline = client.get(f"/api/v1/models/{model_id}/health")
         assert timeline.status_code == 200

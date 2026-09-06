@@ -111,7 +111,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @application.exception_handler(TelemetryIngestionError)
     async def telemetry_handler(_: Request, exc: TelemetryIngestionError) -> JSONResponse:
         return JSONResponse(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             content={"error": "telemetry_ingestion_failed", "detail": str(exc)},
         )
 

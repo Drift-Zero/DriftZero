@@ -2585,14 +2585,17 @@ class DriftZeroService:
                 newest.indexed_at = now
                 source.corpus_version = self._corpus_version_for(newest, previous_version)
                 source.status = KnowledgeStatus.FRESH.value
+                version_id = self._register_corpus_version(
+                    session, model_id, source.corpus_version
+                )
             else:
                 # A source containing only superseded policy must not be made
                 # healthy by a refresh. Remove it from serving instead.
                 source.status = KnowledgeStatus.DISABLED.value
+                version_id = None
             source.last_refreshed_at = now
             refreshed += 1
 
-            version_id = self._register_corpus_version(session, model_id, source.corpus_version)
             self._audit(
                 session,
                 model_id,

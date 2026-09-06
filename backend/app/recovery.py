@@ -204,7 +204,10 @@ class SimulatedRecoveryAdapter:
             ),
             evaluated_requests=50,
             coverage=0.98,
-            summary="Simulated safeguards restored health after 50 evaluation requests.",
+            summary=(
+                "ShopAssist stopped serving the retired returns policy; 50 evaluation "
+                "requests verified the current policy and restored health."
+            ),
         )
 
 
