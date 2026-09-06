@@ -43,6 +43,9 @@ The current backend already implements a simplified version of this path. The pl
 - rule-based diagnosis for four cause families plus insufficient evidence;
 - cause-specific playbook generation;
 - approval-gated simulated recovery and verification;
+- persisted threshold, transition, trajectory, coverage, and freshness alerts;
+- alert cooldown, deduplication, acknowledgement, resolution, incident linking,
+  audit events, and an in-product notification feed;
 - audit events and deterministic demo reset;
 - relational entities for future incidents, action executions, verification, stability tests, alerts, review, evaluator versions, and tenancy;
 - Alembic migration and SQLite/PostgreSQL schema compatibility tests.
@@ -51,7 +54,7 @@ The current backend already implements a simplified version of this path. The pl
 
 - tenancy exists in storage but is not enforced through authentication context;
 - recovery stages exist in models, but service/API behavior is plan-level and simplified;
-- incident, alert, review, stability, policy, source/version, and evaluator entities exist but are not full user-facing flows;
+- policy and source administration remain incomplete user-facing flows;
 - evidence links exist, but pagination and complete trace exploration contracts are incomplete;
 - forecast calculation exists, but forecasts are not persisted and evaluated end to end;
 - demo verification produces a final snapshot, but full criterion-by-criterion verification records need wiring.
@@ -241,15 +244,20 @@ Exit criteria:
 
 **Goal:** turn analysis into an operable workflow beyond the guided demo.
 
+**Status:** Alert rules, lifecycle, audit integration, and the in-product feed
+are complete. External delivery remains deliberately deferred. Policy
+administration is still outstanding.
+
 Tasks:
 
 1. Implement versioned health and degradation policy reads; add safe create-new-version admin flow if approved.
-2. Implement alert rules for thresholds, transitions, trajectory, coverage, and evaluation freshness.
-3. Add cooldown, deduplication, acknowledgement, resolution, severity, and incident linking.
+2. Complete — alert rules cover thresholds, transitions, trajectory, coverage, and evaluation freshness.
+3. Complete — cooldown, deduplication, acknowledgement, resolution, severity, and incident linking.
 4. Implement human review queue for traces, claim conflicts, diagnosis feedback, and recovery exceptions.
 5. Add assignment, priority, status, decision, notes, and due date.
-6. Add in-product notification center; defer external channels unless separately approved.
-7. Audit every state-changing operation.
+6. Complete — the tenant alert feed is the in-product notification center;
+   external channels remain deferred unless separately approved.
+7. Complete for alert and review state changes.
 
 Tests:
 
@@ -402,7 +410,15 @@ POST   /api/v1/evaluations/temporal
 GET    /api/v1/evaluations/{id}
 POST   /api/v1/evaluations/{id}/feedback
 GET    /api/v1/alerts
+GET    /api/v1/alerts/{id}
 POST   /api/v1/alerts/{id}/acknowledge
+POST   /api/v1/alerts/{id}/resolve
+POST   /api/v1/models/{id}/alert-rules
+GET    /api/v1/models/{id}/alert-rules
+GET    /api/v1/alert-rules/{id}
+PATCH  /api/v1/alert-rules/{id}
+DELETE /api/v1/alert-rules/{id}
+POST   /api/v1/models/{id}/alerts/evaluate
 GET    /api/v1/review
 PATCH  /api/v1/review/{id}
 GET    /api/v1/policies/health
