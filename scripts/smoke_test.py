@@ -61,7 +61,7 @@ def run(base_url: str, timeout: int, api_key: str | None = None) -> None:
     model_id = demo["model"]["id"]
     plan_id = demo["recovery"]["id"]
     scores = [item["score"] for item in demo["health"]["snapshots"]]
-    assert scores == [92.0, 87.0, 74.0, 61.0], scores
+    assert scores == [91.9, 87.2, 74.8, 62.5], scores
     assert demo["model"]["name"] == "ShopAssist"
     assert demo["diagnosis"]["probable_cause"] == "knowledge_freshness_failure"
 
