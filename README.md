@@ -350,6 +350,14 @@ or reset demo state. Never put these management keys in a browser bundle; place 
 gateway or backend-for-frontend in front of DriftZero for a multi-user deployment. The
 `hackathon-demo` environment remains explicitly keyless so the public demonstration works.
 
+For multi-user deployments, DriftZero also provides `POST /api/v1/auth/register`,
+`/login`, `/logout`, and `/me`. Passwords are Argon2id hashes; browser sessions are opaque,
+revocable, `HttpOnly`, `SameSite=Lax` cookies; and every cookie-authenticated mutation requires
+an in-memory `X-CSRF-Token`. Registration creates an isolated tenant and administrator membership.
+Production registration requires `DRIFTZERO_AUTH_REGISTRATION_TOKEN`. Dashboard health projections
+are cached only in tenant-namespaced, short-lived server memory and are invalidated on telemetry
+writes; credentials, tokens, and passwords are never cacheable.
+
 ## API overview
 
 The FastAPI service exposes versioned groups for:
