@@ -33,6 +33,7 @@ from app.db import (
     KnowledgeDocument,
     KnowledgeSource,
     KnowledgeStatus,
+    ModelConnection,
     ModelStatus,
     ModelVersion,
     RecoveryActionRecord,
@@ -88,6 +89,8 @@ from app.schemas import (
     HealthTimelineResponse,
     IncidentResponse,
     IncidentState,
+    ConnectionCreate,
+    ConnectionResponse,
     ModelCreate,
     ModelLifecycleUpdate,
     ModelResponse,
@@ -207,6 +210,52 @@ class DriftZeroService:
             .order_by(MonitoredModel.name)
         ).all()
         return [self._model_response(record) for record in records]
+
+    def create_connection(
+        self, session: Session, model_id: str, payload: ConnectionCreate
+    ) -> ConnectionResponse:
+        model = self._require_model(session, model_id)
+        existing = session.scalar(
+            select(ModelConnection).where(
+                ModelConnection.model_id == model_id,
+                ModelConnection.kind == payload.kind.value,
+                ModelConnection.name == payload.name,
+            )
+        )
+        if existing:
+            raise ResourceConflict("A connection with this name and type already exists.")
+        values = payload.model_dump(exclude={"actor", "api_key"})
+        values["kind"] = payload.kind.value
+        values["credential_configured"] = bool(payload.api_key)
+        values["status"] = (
+            "configured"
+            if payload.api_key or payload.kind.value == "telemetry"
+            else "needs_setup"
+        )
+        record = ModelConnection(model_id=model.id, tenant_id=model.tenant_id, **values)
+        session.add(record)
+        self._audit(
+            session,
+            model.id,
+            "model.connection_created",
+            payload.actor,
+            {
+                "connection_id": record.id,
+                "kind": payload.kind.value,
+                "credential_configured": record.credential_configured,
+            },
+        )
+        session.commit()
+        return ConnectionResponse.model_validate(record)
+
+    def list_connections(self, session: Session, model_id: str) -> list[ConnectionResponse]:
+        self._require_model(session, model_id)
+        records = session.scalars(
+            select(ModelConnection)
+            .where(ModelConnection.model_id == model_id)
+            .order_by(ModelConnection.created_at)
+        ).all()
+        return [ConnectionResponse.model_validate(record) for record in records]
 
     def get_model(self, session: Session, model_id: str) -> ModelResponse:
         return self._model_response(self._require_model(session, model_id))

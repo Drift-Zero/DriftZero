@@ -136,6 +136,37 @@ class MonitoredModel(IdMixin, TenantMixin, Base):
     incidents: Mapped[list[Incident]] = relationship(
         back_populates="model", cascade="all, delete-orphan", passive_deletes=True
     )
+    connections: Mapped[list[ModelConnection]] = relationship(
+        back_populates="model", cascade="all, delete-orphan", passive_deletes=True
+    )
+
+
+class ModelConnection(IdMixin, TenantMixin, Base):
+    """A source of code, telemetry, or black-box observations for a model."""
+
+    __tablename__ = "model_connections"
+    __table_args__ = (
+        sa.UniqueConstraint("model_id", "kind", "name", name="model_connection_identity"),
+    )
+
+    model_id: Mapped[str] = mapped_column(
+        sa.String(36), sa.ForeignKey(_MODEL_FK, ondelete="CASCADE"), index=True
+    )
+    kind: Mapped[str] = mapped_column(sa.String(20), index=True)
+    name: Mapped[str] = mapped_column(sa.String(120))
+    url: Mapped[str | None] = mapped_column(sa.String(2000))
+    repository: Mapped[str | None] = mapped_column(sa.String(240))
+    branch: Mapped[str | None] = mapped_column(sa.String(160))
+    api_endpoint: Mapped[str | None] = mapped_column(sa.String(2000))
+    auth_scheme: Mapped[str | None] = mapped_column(sa.String(40))
+    credential_configured: Mapped[bool] = mapped_column(default=False)
+    status: Mapped[str] = mapped_column(sa.String(20), default="needs_setup")
+    config: Mapped[dict[str, Any]] = mapped_column(default=dict)
+    last_checked_at: Mapped[datetime | None] = mapped_column()
+    created_at: Mapped[datetime] = mapped_column(default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(default=utc_now, onupdate=utc_now)
+
+    model: Mapped[MonitoredModel] = relationship(back_populates="connections")
 
 
 class ModelVersion(IdMixin, Base):

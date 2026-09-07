@@ -203,6 +203,21 @@ class RiskLevel(StrEnum):
     HIGH = "high"
 
 
+class ConnectionKind(StrEnum):
+    """Ways a monitored AI system can be connected to DriftZero."""
+
+    GITHUB = "github"
+    TELEMETRY = "telemetry"
+    API = "api"
+    WEBSITE = "website"
+
+
+class ConnectionStatus(StrEnum):
+    CONFIGURED = "configured"
+    NEEDS_SETUP = "needs_setup"
+    PAUSED = "paused"
+
+
 class DimensionScores(BaseModel):
     """Normalized component scores where 100 always means healthier."""
 
@@ -241,6 +256,53 @@ class ModelCreate(BaseModel):
     retention_days: int = Field(default=30, ge=1, le=3650)
     initial_version: ModelVersionCreate | None = None
     actor: str = Field(default="system", min_length=1, max_length=120)
+
+
+class ConnectionCreate(BaseModel):
+    """A connection descriptor; secrets are accepted but never persisted."""
+
+    kind: ConnectionKind
+    name: str = Field(min_length=1, max_length=120)
+    url: str | None = Field(default=None, max_length=2000)
+    repository: str | None = Field(default=None, max_length=240)
+    branch: str | None = Field(default=None, max_length=160)
+    api_endpoint: str | None = Field(default=None, max_length=2000)
+    auth_scheme: str | None = Field(default=None, max_length=40)
+    api_key: str | None = Field(default=None, min_length=1, max_length=4096)
+    config: dict[str, object] = Field(default_factory=dict)
+    actor: str = Field(default="system", min_length=1, max_length=120)
+
+    @model_validator(mode="after")
+    def validate_target(self) -> ConnectionCreate:
+        if self.kind is ConnectionKind.GITHUB and not (self.repository or self.url):
+            raise ValueError("GitHub connections require a repository or URL.")
+        if self.kind is ConnectionKind.API and not self.api_endpoint:
+            raise ValueError("API connections require api_endpoint.")
+        if self.kind is ConnectionKind.WEBSITE and not self.url:
+            raise ValueError("Website connections require url.")
+        if self.kind is ConnectionKind.TELEMETRY and not self.url and not self.config:
+            raise ValueError("Telemetry connections require an ingest URL or config.")
+        return self
+
+
+class ConnectionResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    model_id: str
+    kind: ConnectionKind
+    name: str
+    url: str | None
+    repository: str | None
+    branch: str | None
+    api_endpoint: str | None
+    auth_scheme: str | None
+    credential_configured: bool
+    status: ConnectionStatus
+    config: dict[str, object]
+    last_checked_at: datetime | None
+    created_at: datetime
+    updated_at: datetime
 
 
 class ModelResponse(BaseModel):

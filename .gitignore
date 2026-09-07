@@ -12,6 +12,7 @@ uv.lock
 *.sqlite
 *.sqlite3
 .env
+.env.example
 backend/logs/
 
 # Editors and operating systems
