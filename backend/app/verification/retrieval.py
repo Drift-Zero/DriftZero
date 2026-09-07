@@ -23,7 +23,7 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.db.models import CorpusVersion, EvidenceChunk, VerificationSource
+from app.db.models import CorpusVersion, VerificationEvidenceChunk, VerificationSource
 from app.schemas import VerificationSourceStatus
 from app.verification.text import stems
 
@@ -66,9 +66,7 @@ def _fact_terms(structured: dict[str, Any]) -> list[set[str]]:
             continue
         terms = fact.get("terms")
         if isinstance(terms, list) and terms:
-            groups.append(
-                {s for term in terms for s in stems(str(term))}
-            )
+            groups.append({s for term in terms for s in stems(str(term))})
     return groups
 
 
@@ -105,8 +103,11 @@ def retrieve_evidence(
     """
 
     query = (
-        select(EvidenceChunk, CorpusVersion, VerificationSource)
-        .join(CorpusVersion, EvidenceChunk.corpus_version_id == CorpusVersion.id)
+        select(VerificationEvidenceChunk, CorpusVersion, VerificationSource)
+        .join(
+            CorpusVersion,
+            VerificationEvidenceChunk.corpus_version_id == CorpusVersion.id,
+        )
         .join(VerificationSource, CorpusVersion.source_id == VerificationSource.id)
         .where(
             VerificationSource.tenant_id == tenant_id,

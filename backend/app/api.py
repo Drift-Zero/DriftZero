@@ -22,6 +22,8 @@ from app.schemas import (
     AlertRuleUpdate,
     AlertState,
     AuditEventResponse,
+    AutomatedEvaluationRequest,
+    AutomatedEvaluationResponse,
     ConnectionCheckResponse,
     ConnectionCreate,
     ConnectionCreatedResponse,
@@ -151,6 +153,23 @@ def evaluate_groq_model(
     service: ServiceDependency,
 ) -> GroqEvaluationResponse:
     return service.evaluate_groq_model(session, model_id, payload)
+
+
+@router.post(
+    "/models/{model_id}/automated-evaluations",
+    response_model=AutomatedEvaluationResponse,
+    status_code=status.HTTP_201_CREATED,
+    tags=["pulse"],
+)
+def run_automated_evaluation(
+    model_id: str,
+    payload: AutomatedEvaluationRequest,
+    session: SessionDependency,
+    service: ServiceDependency,
+) -> AutomatedEvaluationResponse:
+    """Generate questions from approved JSON and test the registered model."""
+
+    return service.run_automated_evaluation(session, model_id, payload)
 
 
 @router.get("/models", response_model=list[ModelResponse], tags=["models"])
@@ -288,9 +307,7 @@ def list_connections(
     return service.list_connections(session, model_id)
 
 
-@router.get(
-    "/connections/{connection_id}", response_model=ConnectionResponse, tags=["models"]
-)
+@router.get("/connections/{connection_id}", response_model=ConnectionResponse, tags=["models"])
 def get_connection(
     connection_id: str,
     session: SessionDependency,
@@ -299,9 +316,7 @@ def get_connection(
     return service.get_connection(session, connection_id)
 
 
-@router.patch(
-    "/connections/{connection_id}", response_model=ConnectionResponse, tags=["models"]
-)
+@router.patch("/connections/{connection_id}", response_model=ConnectionResponse, tags=["models"])
 def update_connection(
     connection_id: str,
     payload: ConnectionUpdate,
@@ -351,9 +366,7 @@ def record_telemetry(
     service: ServiceDependency,
     ingestion_key: str | None = Header(default=None, alias="X-DriftZero-Ingest-Key"),
 ) -> HealthSnapshotResponse:
-    return service.record_telemetry(
-        session, model_id, payload, ingestion_key=ingestion_key
-    )
+    return service.record_telemetry(session, model_id, payload, ingestion_key=ingestion_key)
 
 
 @router.post(
@@ -487,9 +500,7 @@ def approve_recovery(
     service: ServiceDependency,
     principal: RecoveryPrincipalDependency,
 ) -> RecoveryPlanResponse:
-    return service.approve_recovery(
-        session, plan_id, _trusted_recovery_request(payload, principal)
-    )
+    return service.approve_recovery(session, plan_id, _trusted_recovery_request(payload, principal))
 
 
 @router.post(
@@ -504,9 +515,7 @@ def reject_recovery(
     service: ServiceDependency,
     principal: RecoveryPrincipalDependency,
 ) -> RecoveryPlanResponse:
-    return service.reject_recovery(
-        session, plan_id, _trusted_recovery_request(payload, principal)
-    )
+    return service.reject_recovery(session, plan_id, _trusted_recovery_request(payload, principal))
 
 
 @router.post(
@@ -521,9 +530,7 @@ def cancel_recovery(
     service: ServiceDependency,
     principal: RecoveryPrincipalDependency,
 ) -> RecoveryPlanResponse:
-    return service.cancel_recovery(
-        session, plan_id, _trusted_recovery_request(payload, principal)
-    )
+    return service.cancel_recovery(session, plan_id, _trusted_recovery_request(payload, principal))
 
 
 @router.post(
@@ -539,9 +546,7 @@ def enqueue_recovery(
     service: ServiceDependency,
     principal: RecoveryPrincipalDependency,
 ) -> RecoveryCommandResponse:
-    return service.enqueue_recovery(
-        session, plan_id, _trusted_recovery_request(payload, principal)
-    )
+    return service.enqueue_recovery(session, plan_id, _trusted_recovery_request(payload, principal))
 
 
 @router.get(
@@ -627,9 +632,7 @@ def rollback_recovery(
     service: ServiceDependency,
     principal: RecoveryPrincipalDependency,
 ) -> RecoveryCommandResponse:
-    return service.enqueue_rollback(
-        session, plan_id, _trusted_recovery_request(payload, principal)
-    )
+    return service.enqueue_rollback(session, plan_id, _trusted_recovery_request(payload, principal))
 
 
 @router.get(

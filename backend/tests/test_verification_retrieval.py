@@ -8,7 +8,7 @@ import pytest
 from sqlalchemy.orm import Session
 
 from app.db import Tenant
-from app.db.models import CorpusVersion, EvidenceChunk, VerificationSource
+from app.db.models import CorpusVersion, VerificationEvidenceChunk, VerificationSource
 from app.schemas import VerificationSourceStatus
 from app.verification.retrieval import retrieve_evidence
 
@@ -56,7 +56,7 @@ def build_source(
     session.flush()
 
     session.add(
-        EvidenceChunk(
+        VerificationEvidenceChunk(
             corpus_version_id=version.id,
             text=text,
             structured_facts=facts or {},
@@ -172,9 +172,7 @@ def test_structured_fact_matches_outrank_mere_word_overlap(
         name="Chatty page",
         text="Returns for electronics are a common question about returns and electronics.",
     )
-    build_source(
-        session, name="Returns policy", text=CURRENT_POLICY, facts=RETURN_FACT
-    )
+    build_source(session, name="Returns policy", text=CURRENT_POLICY, facts=RETURN_FACT)
 
     found = retrieve_evidence(
         session, tenant_id=tenant_id, claim_text="electronics returns within 30 days"

@@ -1,11 +1,11 @@
-"""Add the verification corpus and claim-evaluation tables.
+"""Add the verification corpus and claim-evaluation tables as revision 0013.
 
 Purely additive: six new tables for trusted sources, their immutable corpus
 versions, retrievable evidence, and the claim/verdict record behind every
 groundedness figure. No existing table is altered.
 
-Revision ID: 0012
-Revises: 0011
+Revision ID: 0013
+Revises: 0012
 Create Date: 2026-09-07 15:27:33.002865
 """
 
@@ -18,8 +18,8 @@ from sqlalchemy.dialects import postgresql
 
 from alembic import op
 
-revision: str = "0012"
-down_revision: str | None = "0011"
+revision: str = "0013"
+down_revision: str | None = "0012"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
@@ -79,8 +79,8 @@ def upgrade() -> None:
             batch_op.create_index(batch_op.f('ix_corpus_versions_retired_at'), ['retired_at'], unique=False)
             batch_op.create_index(batch_op.f('ix_corpus_versions_source_id'), ['source_id'], unique=False)
 
-    if "evidence_chunks" not in existing:
-        op.create_table('evidence_chunks',
+    if "verification_evidence_chunks" not in existing:
+        op.create_table('verification_evidence_chunks',
         sa.Column('corpus_version_id', sa.String(length=36), nullable=False),
         sa.Column('text', sa.Text(), nullable=False),
         sa.Column('structured_facts', sa.JSON().with_variant(postgresql.JSONB(astext_type=sa.Text()), 'postgresql'), nullable=False),
@@ -88,12 +88,12 @@ def upgrade() -> None:
         sa.Column('token_count', sa.Integer(), nullable=False),
         sa.Column('chunk_metadata', sa.JSON().with_variant(postgresql.JSONB(astext_type=sa.Text()), 'postgresql'), nullable=False),
         sa.Column('id', sa.String(length=36), nullable=False),
-        sa.ForeignKeyConstraint(['corpus_version_id'], ['corpus_versions.id'], name=op.f('fk_evidence_chunks_corpus_version_id'), ondelete='CASCADE'),
-        sa.PrimaryKeyConstraint('id', name=op.f('pk_evidence_chunks'))
+        sa.ForeignKeyConstraint(['corpus_version_id'], ['corpus_versions.id'], name=op.f('fk_verification_evidence_chunks_corpus_version_id'), ondelete='CASCADE'),
+        sa.PrimaryKeyConstraint('id', name=op.f('pk_verification_evidence_chunks'))
         )
-        with op.batch_alter_table('evidence_chunks', schema=None) as batch_op:
-            batch_op.create_index(batch_op.f('ix_evidence_chunks_corpus_version_id'), ['corpus_version_id'], unique=False)
-            batch_op.create_index('ix_evidence_chunks_version_sequence', ['corpus_version_id', 'sequence'], unique=False)
+        with op.batch_alter_table('verification_evidence_chunks', schema=None) as batch_op:
+            batch_op.create_index(batch_op.f('ix_verification_evidence_chunks_corpus_version_id'), ['corpus_version_id'], unique=False)
+            batch_op.create_index('ix_verification_evidence_chunks_version_sequence', ['corpus_version_id', 'sequence'], unique=False)
 
     if "evaluation_runs" not in existing:
         op.create_table('evaluation_runs',
@@ -150,7 +150,7 @@ def upgrade() -> None:
         sa.Column('created_at', sa.DateTime(timezone=True), nullable=False),
         sa.Column('id', sa.String(length=36), nullable=False),
         sa.ForeignKeyConstraint(['claim_id'], ['extracted_claims.id'], name=op.f('fk_claim_verdicts_claim_id'), ondelete='CASCADE'),
-        sa.ForeignKeyConstraint(['evidence_chunk_id'], ['evidence_chunks.id'], name=op.f('fk_claim_verdicts_evidence_chunk_id'), ondelete='SET NULL'),
+        sa.ForeignKeyConstraint(['evidence_chunk_id'], ['verification_evidence_chunks.id'], name=op.f('fk_claim_verdicts_evidence_chunk_id'), ondelete='SET NULL'),
         sa.PrimaryKeyConstraint('id', name=op.f('pk_claim_verdicts'))
         )
         with op.batch_alter_table('claim_verdicts', schema=None) as batch_op:
@@ -184,11 +184,11 @@ def downgrade() -> None:
             batch_op.drop_index(batch_op.f('ix_evaluation_runs_created_at'))
         op.drop_table('evaluation_runs')
 
-    if "evidence_chunks" in existing:
-        with op.batch_alter_table('evidence_chunks', schema=None) as batch_op:
-            batch_op.drop_index('ix_evidence_chunks_version_sequence')
-            batch_op.drop_index(batch_op.f('ix_evidence_chunks_corpus_version_id'))
-        op.drop_table('evidence_chunks')
+    if "verification_evidence_chunks" in existing:
+        with op.batch_alter_table('verification_evidence_chunks', schema=None) as batch_op:
+            batch_op.drop_index('ix_verification_evidence_chunks_version_sequence')
+            batch_op.drop_index(batch_op.f('ix_verification_evidence_chunks_corpus_version_id'))
+        op.drop_table('verification_evidence_chunks')
 
     if "corpus_versions" in existing:
         with op.batch_alter_table('corpus_versions', schema=None) as batch_op:
