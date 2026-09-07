@@ -8,7 +8,7 @@ import pytest
 from sqlalchemy.orm import Session
 
 from app.db import Tenant
-from app.db.models import CorpusVersion, EvidenceChunk, VerificationSource
+from app.db.models import CorpusVersion, VerificationChunk, VerificationSource
 from app.schemas import VerificationSourceStatus
 from app.verification.retrieval import retrieve_evidence
 
@@ -56,7 +56,7 @@ def build_source(
     session.flush()
 
     session.add(
-        EvidenceChunk(
+        VerificationChunk(
             corpus_version_id=version.id,
             text=text,
             structured_facts=facts or {},

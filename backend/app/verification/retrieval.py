@@ -23,7 +23,7 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.db.models import CorpusVersion, EvidenceChunk, VerificationSource
+from app.db.models import CorpusVersion, VerificationChunk, VerificationSource
 from app.schemas import VerificationSourceStatus
 from app.verification.text import stems
 
@@ -105,8 +105,8 @@ def retrieve_evidence(
     """
 
     query = (
-        select(EvidenceChunk, CorpusVersion, VerificationSource)
-        .join(CorpusVersion, EvidenceChunk.corpus_version_id == CorpusVersion.id)
+        select(VerificationChunk, CorpusVersion, VerificationSource)
+        .join(CorpusVersion, VerificationChunk.corpus_version_id == CorpusVersion.id)
         .join(VerificationSource, CorpusVersion.source_id == VerificationSource.id)
         .where(
             VerificationSource.tenant_id == tenant_id,

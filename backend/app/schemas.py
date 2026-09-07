@@ -1232,3 +1232,145 @@ class DemoResetResponse(BaseModel):
     diagnosis: DiagnosisResponse
     recovery: RecoveryPlanResponse
     incident: IncidentResponse | None = None
+
+
+class VerificationChunkResponse(BaseModel):
+    """One retrievable passage, with the provenance an operator needs."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    text: str
+    structured_facts: dict[str, object] = Field(default_factory=dict)
+    sequence: int
+    token_count: int
+
+
+class CorpusVersionResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    version: int
+    content_hash: str
+    effective_from: datetime | None = None
+    imported_at: datetime
+    approved_at: datetime | None = None
+    approved_by: str | None = None
+    retired_at: datetime | None = None
+    source_metadata: dict[str, object] = Field(default_factory=dict)
+    chunk_count: int = 0
+    fact_count: int = 0
+
+
+class VerificationSourceResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    name: str
+    source_type: VerificationSourceType
+    status: VerificationSourceStatus
+    description: str | None = None
+    original_filename: str | None = None
+    source_url: str | None = None
+    created_at: datetime
+    created_by: str
+    versions: list[CorpusVersionResponse] = Field(default_factory=list)
+
+
+class VerificationSourceDecision(BaseModel):
+    """Who is approving, rejecting or retiring, and why."""
+
+    actor: str = Field(min_length=1, max_length=120)
+    reason: str | None = Field(default=None, max_length=500)
+
+
+class ClaimEvidenceResponse(BaseModel):
+    chunk_id: str
+    text: str
+    score: float
+    source_name: str
+    version: int
+    exact_fact_match: bool
+
+
+class ClaimVerdictResponse(BaseModel):
+    text: str
+    claim_type: str
+    importance: str
+    verdict: ClaimVerdictValue
+    method: VerificationMethod
+    explanation: str
+    evidence_chunk_id: str | None = None
+    verifier_confidence: float | None = None
+    evidence: list[ClaimEvidenceResponse] = Field(default_factory=list)
+
+
+class GroundednessBreakdown(BaseModel):
+    """Everything needed to re-derive the number, not just the number."""
+
+    groundedness: float | None
+    confirmed_hallucination_rate: float | None
+    evidence_coverage: float | None
+    supported_weight: int
+    contradicted_weight: int
+    insufficient_weight: int
+    total_factual_weight: int
+    central_contradiction: bool
+    capped: bool
+    formula: str
+    verdict_counts: dict[str, int] = Field(default_factory=dict)
+
+
+class QualityBreakdown(BaseModel):
+    quality: float | None
+    correctness: float | None
+    correctness_confidence: str
+    correctness_capped: bool
+    components: dict[str, float | None] = Field(default_factory=dict)
+    missing_components: list[str] = Field(default_factory=list)
+
+
+class EvaluationRequest(BaseModel):
+    question: str = Field(min_length=1, max_length=4000)
+    answer: str = Field(min_length=1, max_length=8000)
+    trace_id: str | None = None
+
+
+class EvaluationResponse(BaseModel):
+    """A verification run and its complete reasoning chain."""
+
+    id: str
+    model_id: str
+    status: EvaluationRunStatus
+    evaluator_provider: str | None = None
+    evaluator_model: str | None = None
+    extractor_version: str
+    verifier_version: str
+    corpus_versions: list[str] = Field(default_factory=list)
+    created_at: datetime
+    completed_at: datetime | None = None
+    error: str | None = None
+    claims: list[ClaimVerdictResponse] = Field(default_factory=list)
+    groundedness: GroundednessBreakdown | None = None
+    quality: QualityBreakdown | None = None
+
+
+class EvaluationSummaryResponse(BaseModel):
+    """Window aggregate. Never a health score below the evidence gate."""
+
+    model_id: str
+    evaluated_interactions: int
+    minimum_window: int
+    meets_minimum: bool
+    groundedness_mean: float | None = None
+    groundedness_median: float | None = None
+    groundedness_p10: float | None = None
+    quality_mean: float | None = None
+    quality_median: float | None = None
+    quality_p10: float | None = None
+    evidence_coverage_mean: float | None = None
+    evaluator_error_rate: float = 0.0
+    supported_claims: int = 0
+    contradicted_claims: int = 0
+    insufficient_claims: int = 0
+    not_verifiable_claims: int = 0
