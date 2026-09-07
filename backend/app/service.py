@@ -601,6 +601,15 @@ class DriftZeroService:
         ingestion_key: str | None = None,
     ) -> HealthSnapshotResponse:
         self._require_model(session, model_id)
+        observed_at = payload.observed_at
+        if observed_at.tzinfo is None:
+            observed_at = observed_at.replace(tzinfo=UTC)
+        if observed_at > datetime.now(UTC) + timedelta(
+            seconds=self.settings.telemetry_max_future_skew_seconds
+        ):
+            raise TelemetryIngestionError(
+                "Telemetry observed_at is too far in the future. Check the producer clock."
+            )
         telemetry_connections = session.scalars(
             select(ModelConnection).where(
                 ModelConnection.model_id == model_id,
@@ -608,6 +617,13 @@ class DriftZeroService:
                 ModelConnection.status != "paused",
             )
         ).all()
+        if not telemetry_connections and self.settings.environment.lower() in {
+            "production",
+            "prod",
+        }:
+            raise AuthorizationDenied(
+                "Configure a telemetry connection before ingesting production telemetry."
+            )
         if telemetry_connections:
             supplied_hash = hashlib.sha256((ingestion_key or "").encode()).hexdigest()
             if not any(
@@ -616,6 +632,15 @@ class DriftZeroService:
                 for connection in telemetry_connections
             ):
                 raise AuthorizationDenied("A valid telemetry ingestion key is required.")
+        if payload.event_id:
+            existing = session.scalar(
+                select(HealthSnapshot).where(
+                    HealthSnapshot.model_id == model_id,
+                    HealthSnapshot.event_id == payload.event_id,
+                )
+            )
+            if existing is not None:
+                return self._snapshot_response(existing)
         record = self._record_telemetry(session, model_id, payload)
         self._audit(
             session,
@@ -3213,6 +3238,8 @@ class DriftZeroService:
 
         record = HealthSnapshot(
             model_id=model_id,
+            event_id=payload.event_id,
+            schema_version=payload.schema_version,
             observed_at=payload.observed_at,
             window_start=window_start,
             window_end=window_end,
@@ -3694,6 +3721,8 @@ class DriftZeroService:
         return HealthSnapshotResponse(
             id=record.id,
             model_id=record.model_id,
+            event_id=record.event_id,
+            schema_version=record.schema_version,
             observed_at=record.observed_at,
             window_start=record.window_start,
             window_end=record.window_end,
