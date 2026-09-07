@@ -188,6 +188,77 @@ class ActorType(StrEnum):
     AGENT = "agent"
 
 
+class VerificationSourceType(StrEnum):
+    """How a trusted source was supplied by the application owner."""
+
+    PDF = "pdf"
+    JSON = "json"
+    CSV = "csv"
+    TEXT = "text"
+    MARKDOWN = "markdown"
+    WEBSITE = "website"
+    DEMO = "demo"
+
+
+class VerificationSourceStatus(StrEnum):
+    """Approval lifecycle. Only ``APPROVED`` sources may verify a claim."""
+
+    AWAITING_REVIEW = "awaiting_review"
+    APPROVED = "approved"
+    REJECTED = "rejected"
+    RETIRED = "retired"
+
+
+class ClaimType(StrEnum):
+    POLICY = "policy"
+    PRICE = "price"
+    INVENTORY = "inventory"
+    SPECIFICATION = "specification"
+    DATE = "date"
+    IDENTITY = "identity"
+    EVENT = "event"
+    PREDICTION = "prediction"
+    OTHER = "other"
+
+
+class ClaimImportance(StrEnum):
+    """Weighting for a claim's contribution to groundedness."""
+
+    CENTRAL = "central"
+    SUPPORTING = "supporting"
+    MINOR = "minor"
+
+
+class ClaimVerdictValue(StrEnum):
+    """A claim's status against approved evidence.
+
+    ``INSUFFICIENT_EVIDENCE`` is deliberately distinct from ``CONTRADICTED``:
+    absent evidence is not a confirmed hallucination and must never be
+    reported as one.
+    """
+
+    SUPPORTED = "supported"
+    CONTRADICTED = "contradicted"
+    INSUFFICIENT_EVIDENCE = "insufficient_evidence"
+    NOT_VERIFIABLE = "not_verifiable"
+    NOT_APPLICABLE = "not_applicable"
+
+
+class EvaluationRunStatus(StrEnum):
+    PENDING = "pending"
+    RUNNING = "running"
+    COMPLETED = "completed"
+    FAILED = "failed"
+
+
+class VerificationMethod(StrEnum):
+    """Which mechanism produced a verdict, surfaced to the operator."""
+
+    DETERMINISTIC = "deterministic"
+    LLM_VERIFIER = "llm_verifier"
+    NO_EVIDENCE = "no_evidence"
+
+
 class ActorRole(StrEnum):
     """Recovery authorization role asserted by the authenticated API layer."""
 

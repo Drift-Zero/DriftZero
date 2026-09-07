@@ -31,7 +31,11 @@ from app.db.base import (
 from app.db.enums import (
     ActorType,
     AlertState,
+    ClaimImportance,
+    ClaimType,
+    ClaimVerdictValue,
     DiagnosisStatus,
+    EvaluationRunStatus,
     EvaluatorKind,
     ExecutionState,
     FeedbackVerdict,
@@ -49,6 +53,9 @@ from app.db.enums import (
     StabilityKind,
     StabilityVerdict,
     TraceStatus,
+    VerificationMethod,
+    VerificationSourceStatus,
+    VerificationSourceType,
 )
 
 # Enum column types. Each needs a distinct name per table so the CHECK
@@ -74,6 +81,13 @@ REVIEW_STATE = enum_column(ReviewState, "review_state")
 ALERT_STATE = enum_column(AlertState, "alert_state")
 ACTOR_TYPE = enum_column(ActorType, "actor_type")
 FEEDBACK_VERDICT = enum_column(FeedbackVerdict, "feedback_verdict")
+VERIFICATION_SOURCE_TYPE = enum_column(VerificationSourceType, "verification_source_type")
+VERIFICATION_SOURCE_STATUS = enum_column(VerificationSourceStatus, "verification_source_status")
+CLAIM_TYPE = enum_column(ClaimType, "claim_type")
+CLAIM_IMPORTANCE = enum_column(ClaimImportance, "claim_importance")
+CLAIM_VERDICT = enum_column(ClaimVerdictValue, "claim_verdict_value")
+EVALUATION_RUN_STATUS = enum_column(EvaluationRunStatus, "evaluation_run_status")
+VERIFICATION_METHOD = enum_column(VerificationMethod, "verification_method")
 
 _MODEL_FK = "monitored_models.id"
 
@@ -1183,3 +1197,190 @@ class Alert(IdMixin, Base):
     notified_at: Mapped[datetime | None] = mapped_column()
 
     rule: Mapped[AlertRule | None] = relationship(back_populates="alerts")
+
+
+# --------------------------------------------------------------------------- #
+# Verification: trusted sources, extracted claims and evidence-backed verdicts
+# --------------------------------------------------------------------------- #
+
+
+class VerificationSource(IdMixin, TenantMixin, Base):
+    """A trusted information source an application owner has connected.
+
+    DriftZero cannot author truth. It normalizes what the owner already trusts --
+    a policy PDF, a catalogue export, an approved page -- and verifies model
+    claims against that. A source is inert until an operator approves it.
+    """
+
+    __tablename__ = "verification_sources"
+    __table_args__ = (
+        sa.UniqueConstraint("tenant_id", "name", name="uq_verification_source_name"),
+        sa.Index("ix_verification_sources_tenant_status", "tenant_id", "status"),
+    )
+
+    name: Mapped[str] = mapped_column(sa.String(160))
+    source_type: Mapped[VerificationSourceType] = mapped_column(VERIFICATION_SOURCE_TYPE)
+    original_filename: Mapped[str | None] = mapped_column(sa.String(255))
+    source_url: Mapped[str | None] = mapped_column(sa.Text())
+    status: Mapped[VerificationSourceStatus] = mapped_column(
+        VERIFICATION_SOURCE_STATUS, default=VerificationSourceStatus.AWAITING_REVIEW, index=True
+    )
+    description: Mapped[str | None] = mapped_column(sa.Text())
+    created_at: Mapped[datetime] = mapped_column(default=utc_now, index=True)
+    created_by: Mapped[str] = mapped_column(sa.String(120))
+
+    versions: Mapped[list[CorpusVersion]] = relationship(
+        back_populates="source", cascade="all, delete-orphan", order_by="CorpusVersion.version"
+    )
+
+
+class CorpusVersion(IdMixin, Base):
+    """One immutable import of a source.
+
+    Re-importing never overwrites: it creates the next version, so a superseded
+    policy stays readable as history while ceasing to be current truth.
+    """
+
+    __tablename__ = "corpus_versions"
+    __table_args__ = (
+        sa.UniqueConstraint("source_id", "version", name="uq_corpus_version_sequence"),
+        sa.CheckConstraint("version >= 1", name="corpus_version_positive"),
+    )
+
+    source_id: Mapped[str] = mapped_column(
+        sa.String(36), sa.ForeignKey("verification_sources.id", ondelete="CASCADE"), index=True
+    )
+    version: Mapped[int] = mapped_column(default=1)
+    content_hash: Mapped[str] = mapped_column(sa.String(64), index=True)
+    effective_from: Mapped[datetime | None] = mapped_column()
+    imported_at: Mapped[datetime] = mapped_column(default=utc_now, index=True)
+    approved_at: Mapped[datetime | None] = mapped_column()
+    approved_by: Mapped[str | None] = mapped_column(sa.String(120))
+    retired_at: Mapped[datetime | None] = mapped_column(index=True)
+    source_metadata: Mapped[dict[str, Any]] = mapped_column(default=dict)
+
+    source: Mapped[VerificationSource] = relationship(back_populates="versions")
+    chunks: Mapped[list[EvidenceChunk]] = relationship(
+        back_populates="corpus_version",
+        cascade="all, delete-orphan",
+        order_by="EvidenceChunk.sequence",
+    )
+
+    @property
+    def is_usable(self) -> bool:
+        """Approved and not retired -- the only state verification may read."""
+
+        return self.approved_at is not None and self.retired_at is None
+
+
+class EvidenceChunk(IdMixin, Base):
+    """One retrievable passage, plus any structured facts parsed from it.
+
+    ``structured_facts`` carries exact values (prices, windows, counts) so a
+    numeric claim can be settled by comparison instead of by an opinion.
+    """
+
+    __tablename__ = "evidence_chunks"
+    __table_args__ = (
+        sa.Index("ix_evidence_chunks_version_sequence", "corpus_version_id", "sequence"),
+    )
+
+    corpus_version_id: Mapped[str] = mapped_column(
+        sa.String(36), sa.ForeignKey("corpus_versions.id", ondelete="CASCADE"), index=True
+    )
+    text: Mapped[str] = mapped_column(sa.Text())
+    structured_facts: Mapped[dict[str, Any]] = mapped_column(default=dict)
+    sequence: Mapped[int] = mapped_column(default=0)
+    token_count: Mapped[int] = mapped_column(default=0)
+    chunk_metadata: Mapped[dict[str, Any]] = mapped_column(default=dict)
+
+    corpus_version: Mapped[CorpusVersion] = relationship(back_populates="chunks")
+
+
+class EvaluationRun(IdMixin, TenantMixin, Base):
+    """One verification pass over a single monitored response.
+
+    The evaluator identity and corpus versions are recorded so a displayed
+    metric can be reproduced and audited long after the fact.
+    """
+
+    __tablename__ = "evaluation_runs"
+    __table_args__ = (sa.Index("ix_evaluation_runs_model_created", "model_id", "created_at"),)
+
+    model_id: Mapped[str] = mapped_column(
+        sa.String(36), sa.ForeignKey(_MODEL_FK, ondelete="CASCADE"), index=True
+    )
+    trace_id: Mapped[str | None] = mapped_column(
+        sa.String(36), sa.ForeignKey("traces.id", ondelete="SET NULL"), index=True
+    )
+    evaluator_provider: Mapped[str | None] = mapped_column(sa.String(40))
+    evaluator_model: Mapped[str | None] = mapped_column(sa.String(120))
+    extractor_version: Mapped[str] = mapped_column(sa.String(40), default="extract-v1")
+    verifier_version: Mapped[str] = mapped_column(sa.String(40), default="verify-v1")
+    corpus_versions: Mapped[list[str]] = mapped_column(default=list)
+    status: Mapped[EvaluationRunStatus] = mapped_column(
+        EVALUATION_RUN_STATUS, default=EvaluationRunStatus.PENDING, index=True
+    )
+    created_at: Mapped[datetime] = mapped_column(default=utc_now, index=True)
+    completed_at: Mapped[datetime | None] = mapped_column()
+    error: Mapped[str | None] = mapped_column(sa.Text())
+
+    claims: Mapped[list[ExtractedClaim]] = relationship(
+        back_populates="evaluation_run",
+        cascade="all, delete-orphan",
+        order_by="ExtractedClaim.sequence",
+    )
+
+
+class ExtractedClaim(IdMixin, Base):
+    """One atomic, independently verifiable proposition from a response."""
+
+    __tablename__ = "extracted_claims"
+    __table_args__ = (
+        sa.Index("ix_extracted_claims_run_sequence", "evaluation_run_id", "sequence"),
+    )
+
+    evaluation_run_id: Mapped[str] = mapped_column(
+        sa.String(36), sa.ForeignKey("evaluation_runs.id", ondelete="CASCADE"), index=True
+    )
+    text: Mapped[str] = mapped_column(sa.Text())
+    claim_type: Mapped[ClaimType] = mapped_column(CLAIM_TYPE, default=ClaimType.OTHER)
+    importance: Mapped[ClaimImportance] = mapped_column(
+        CLAIM_IMPORTANCE, default=ClaimImportance.SUPPORTING
+    )
+    sequence: Mapped[int] = mapped_column(default=0)
+
+    evaluation_run: Mapped[EvaluationRun] = relationship(back_populates="claims")
+    verdict: Mapped[ClaimVerdict | None] = relationship(
+        back_populates="claim", cascade="all, delete-orphan", uselist=False
+    )
+
+
+class ClaimVerdict(IdMixin, Base):
+    """The evidence-backed outcome for one claim.
+
+    ``verifier_confidence`` is retained as evaluator metadata only. It is never
+    an input to a displayed metric -- a self-reported certainty is not evidence.
+    """
+
+    __tablename__ = "claim_verdicts"
+
+    claim_id: Mapped[str] = mapped_column(
+        sa.String(36),
+        sa.ForeignKey("extracted_claims.id", ondelete="CASCADE"),
+        unique=True,
+        index=True,
+    )
+    verdict: Mapped[ClaimVerdictValue] = mapped_column(CLAIM_VERDICT, index=True)
+    evidence_chunk_id: Mapped[str | None] = mapped_column(
+        sa.String(36), sa.ForeignKey("evidence_chunks.id", ondelete="SET NULL")
+    )
+    explanation: Mapped[str | None] = mapped_column(sa.Text())
+    verifier_confidence: Mapped[float | None] = mapped_column()
+    deterministic_match: Mapped[bool] = mapped_column(default=False)
+    method: Mapped[VerificationMethod] = mapped_column(
+        VERIFICATION_METHOD, default=VerificationMethod.LLM_VERIFIER
+    )
+    created_at: Mapped[datetime] = mapped_column(default=utc_now)
+
+    claim: Mapped[ExtractedClaim] = relationship(back_populates="verdict")

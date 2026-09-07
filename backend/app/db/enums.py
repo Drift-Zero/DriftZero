@@ -13,7 +13,11 @@ from enum import StrEnum
 from app.schemas import (
     ActorType,
     AlertState,
+    ClaimImportance,
+    ClaimType,
+    ClaimVerdictValue,
     DiagnosisStatus,
+    EvaluationRunStatus,
     EvaluatorKind,
     ExecutionState,
     FeedbackVerdict,
@@ -29,6 +33,9 @@ from app.schemas import (
     StabilityKind,
     StabilityVerdict,
     TraceStatus,
+    VerificationMethod,
+    VerificationSourceStatus,
+    VerificationSourceType,
 )
 
 __all__ = [
@@ -52,6 +59,13 @@ __all__ = [
     "StabilityKind",
     "StabilityVerdict",
     "TraceStatus",
+    "ClaimImportance",
+    "ClaimType",
+    "ClaimVerdictValue",
+    "EvaluationRunStatus",
+    "VerificationMethod",
+    "VerificationSourceStatus",
+    "VerificationSourceType",
 ]
 
 
