@@ -56,7 +56,16 @@ def main() -> int:
     else:
         return 1
 
-    processes.append(subprocess.Popen([sys.executable, "-m", "app.recovery_worker"]))
+    # The single-container deployment is a hackathon compromise for hosts where
+    # separate services cannot share the ephemeral SQLite database. Keep every
+    # long-running worker beside the API so hosted behavior matches Compose.
+    processes.extend(
+        [
+            subprocess.Popen([sys.executable, "-m", "app.alert_worker"]),
+            subprocess.Popen([sys.executable, "-m", "app.recovery_worker"]),
+            subprocess.Popen([sys.executable, "-m", "app.retention_worker"]),
+        ]
+    )
     signal.signal(signal.SIGTERM, stop)
     signal.signal(signal.SIGINT, stop)
     try:

@@ -77,7 +77,12 @@ def backend_environment(args: argparse.Namespace) -> dict[str, str]:
     )
 
 
-def spawn(label: str, command: list[str], environment: dict[str, str], cwd: Path) -> subprocess.Popen[bytes]:
+def spawn(
+    label: str,
+    command: list[str],
+    environment: dict[str, str],
+    cwd: Path,
+) -> subprocess.Popen[bytes]:
     print(f"  starting {label}")
     process = subprocess.Popen(command, env=environment, cwd=str(cwd))
     processes.append((label, process))
@@ -141,9 +146,15 @@ def main() -> int:
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--database", help="SQLAlchemy URL (default: backend/driftzero.db)")
     parser.add_argument("--shop-assist-port", type=int, default=3000)
-    parser.add_argument("--no-seed", action="store_true", help="Keep the existing database contents")
-    parser.add_argument("--no-dashboard", action="store_true", help="Do not run the operator dashboard")
-    parser.add_argument("--no-shop-assist", action="store_true", help="Do not run the ShopAssist chatbot")
+    parser.add_argument(
+        "--no-seed", action="store_true", help="Keep the existing database contents"
+    )
+    parser.add_argument(
+        "--no-dashboard", action="store_true", help="Do not run the operator dashboard"
+    )
+    parser.add_argument(
+        "--no-shop-assist", action="store_true", help="Do not run the ShopAssist chatbot"
+    )
     args = parser.parse_args()
 
     npm = shutil.which("npm")
@@ -153,7 +164,10 @@ def main() -> int:
     if not args.no_shop_assist:
         node_apps.append(("shop-assist", SHOP_ASSIST, args.shop_assist_port, "--shop-assist-port"))
     if node_apps and npm is None:
-        sys.exit("npm was not found on PATH. Install Node.js, or pass --no-dashboard --no-shop-assist.")
+        sys.exit(
+            "npm was not found on PATH. Install Node.js, or pass "
+            "--no-dashboard --no-shop-assist."
+        )
     for label, directory, _, _ in node_apps:
         if not (directory / "node_modules").exists():
             sys.exit(f"Install the {label} dependencies first:\n  cd {directory}\n  npm install")
@@ -192,6 +206,7 @@ def main() -> int:
     # Started after the API so the schema exists before a worker runs its first query.
     spawn("recovery worker", [python, "-m", "app.recovery_worker"], environment, BACKEND)
     spawn("alert worker", [python, "-m", "app.alert_worker"], environment, BACKEND)
+    spawn("retention worker", [python, "-m", "app.retention_worker"], environment, BACKEND)
 
     urls: list[tuple[str, str]] = [("API", f"{base_url}  (OpenAPI docs at {base_url}/docs)")]
     if not args.no_dashboard and npm is not None:
@@ -211,10 +226,20 @@ def main() -> int:
         spawn(
             "shop-assist",
             [npm, "run", "dev", "--", "--port", str(args.shop_assist_port)],
-            dict(os.environ, DRIFTZERO_API_URL=base_url),
+            dict(
+                os.environ,
+                DRIFTZERO_API_URL=base_url,
+                SHOPASSIST_PUBLIC_URL=f"http://localhost:{args.shop_assist_port}",
+            ),
             SHOP_ASSIST,
         )
-        urls.append(("shop-assist", f"http://localhost:{args.shop_assist_port}  (presenter controls at /demo)"))
+        urls.append(
+            (
+                "shop-assist",
+                f"http://localhost:{args.shop_assist_port}  "
+                "(presenter controls at /demo)",
+            )
+        )
 
     print("\nready")
     for label, url in urls:

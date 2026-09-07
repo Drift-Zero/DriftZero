@@ -36,6 +36,11 @@ the server process and is retried when the next interaction completes the window
 The demo is explicitly simulated. It does not call a production model or modify
 an external commerce system.
 
+For the complete local stack, run Docker Compose from the repository root. The
+container receives `DRIFTZERO_API_URL`, `GROQ_API_KEY`, and the reserved
+`GEMINI_API_KEY` only at runtime; none is copied into browser variables. Set
+`SHOPASSIST_PUBLIC_URL` to the deployed origin so social preview links are valid.
+
 ## AI providers
 
 ShopAssist uses Groq's `openai/gpt-oss-120b` as its primary conversational model.

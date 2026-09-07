@@ -138,7 +138,7 @@ The default recovery adapter is clearly marked as simulated. The backend also co
 
 [`shop-assist/`](shop-assist/) is the current reference application. It is an e-commerce support assistant with deterministic scenarios for stale return policies, inventory mismatch, expired promotions, outdated warranties, conflicting shipping guidance, and recovery. Its presenter console makes these states repeatable for demonstrations.
 
-ShopAssist is not the core DriftZero product. It uses a deterministic local answer path and can optionally call Gemini through a server-side route when `GEMINI_API_KEY` is configured. The key is never intended for browser code. Its telemetry adapter can send simulated normalized events to a registered DriftZero model; when the API URL or model ID is absent, recent events are buffered in browser session storage.
+ShopAssist is not the core DriftZero product. It uses a deterministic local answer path and can optionally call Groq through a server-side route when `GROQ_API_KEY` is configured. The key is never sent to browser code. Its server route evaluates observed answers, batches 20 interactions, and posts one normalized telemetry window to DriftZero. Failed delivery remains buffered in the server process for retry.
 
 The backend also retains a deterministic CampusGPT knowledge-freshness fixture for API, stability, recovery, and test coverage. Both scenarios are simulations and do not modify a real model deployment.
 
@@ -151,7 +151,7 @@ Dashboard screenshots and demo visuals will be added once the frontend is finali
 - **Backend:** Python 3.12+, FastAPI, Pydantic, SQLAlchemy, Alembic, Uvicorn
 - **Data:** SQLite for the zero-setup demo; optional PostgreSQL driver support
 - **Dashboard:** React, TypeScript, Vite, React Router, Recharts, Lucide React
-- **Reference app:** React, TypeScript, Vinext/Vite, Tailwind CSS, optional server-side Gemini request path
+- **Reference app:** Next.js, React, TypeScript, Tailwind CSS, optional server-side Groq request path
 - **Quality:** Pytest, Ruff, ESLint, TypeScript compiler, Node test runner
 - **Deployment:** Docker, Docker Compose, Nginx, background worker processes
 
@@ -189,7 +189,8 @@ cp .env.example .env
 docker compose up --build
 ```
 
-Open the dashboard at <http://localhost:3000>, the API documentation at <http://localhost:8000/docs>, and the API health endpoint at <http://localhost:8000/healthz>.
+Open the dashboard at <http://localhost:3000>, ShopAssist at
+<http://localhost:3100>, and the API documentation at <http://localhost:8000/docs>.
 
 Run the deterministic end-to-end recovery smoke test:
 
@@ -214,13 +215,14 @@ Requirements: Python 3.12 or newer with the backend dependencies installed, and 
 python scripts/run_local.py
 ```
 
-That starts five processes and shuts them all down together on Ctrl+C:
+That starts six processes and shuts them all down together on Ctrl+C:
 
 | Service | URL | Role |
 | --- | --- | --- |
 | API | <http://127.0.0.1:8000> | REST surface, OpenAPI docs at `/docs` |
 | Recovery worker | — | Applies approved recovery plans and records verification |
 | Alert worker | — | Evaluates alert rules |
+| Retention worker | — | Removes traces beyond each model's retention window |
 | Dashboard | <http://localhost:5173> | Operator view: health, incidents, recovery |
 | ShopAssist | <http://localhost:3000> | The monitored chatbot; presenter controls at `/demo` |
 
@@ -316,6 +318,7 @@ deployment that omits them builds successfully and then fails at runtime against
 | Dashboard | `VITE_DEMO_MODE` | `false` for live data, `true` for the offline demo |
 | ShopAssist | `DRIFTZERO_API_URL` | The same Render service URL |
 | ShopAssist | `GROQ_API_KEY` | Optional; without it ShopAssist uses its local grounded fallback |
+| ShopAssist | `SHOPASSIST_PUBLIC_URL` | The public ShopAssist origin used for social metadata |
 
 `frontend/.env.local` is gitignored, so whatever the local stack writes there does not reach a
 deployment — the Vercel values are the only ones that apply.
@@ -335,7 +338,7 @@ Copy the relevant example file before changing local configuration. Never commit
 - **Connections:** `DRIFTZERO_CONNECTION_SECRET_KEY`, `DRIFTZERO_CONNECTION_CHECK_TIMEOUT_SECONDS`
 - **Observability:** `DRIFTZERO_LOG_LEVEL`, `DRIFTZERO_OTEL_ENABLED`, `OTEL_EXPORTER_OTLP_ENDPOINT`
 - **Dashboard:** `VITE_API_BASE_URL`, `VITE_DEMO_MODE`, `VITE_RECOVERY_API_KEY`, `VITE_RECOVERY_ACTOR`, `VITE_RECOVERY_ROLE`
-- **ShopAssist:** `DRIFTZERO_API_URL`, `GROQ_API_KEY`
+- **ShopAssist:** `DRIFTZERO_API_URL`, `SHOPASSIST_PUBLIC_URL`, `GROQ_API_KEY`; `GEMINI_API_KEY` is reserved for the documented future failover adapter
 
 `GROQ_API_KEY` and DriftZero recovery credentials are server-side secrets. They must not be
 exposed through `NEXT_PUBLIC_` variables or committed environment files. Note that every
@@ -350,6 +353,14 @@ keys are read-only, operator keys may mutate but not delete, and administrator k
 or reset demo state. Never put these management keys in a browser bundle; place a real user-auth
 gateway or backend-for-frontend in front of DriftZero for a multi-user deployment. The
 `hackathon-demo` environment remains explicitly keyless so the public demonstration works.
+
+For multi-user deployments, DriftZero also provides `POST /api/v1/auth/register`,
+`/login`, `/logout`, and `/me`. Passwords are Argon2id hashes; browser sessions are opaque,
+revocable, `HttpOnly`, `SameSite=Lax` cookies; and every cookie-authenticated mutation requires
+an in-memory `X-CSRF-Token`. Registration creates an isolated tenant and administrator membership.
+Production registration requires `DRIFTZERO_AUTH_REGISTRATION_TOKEN`. Dashboard health projections
+are cached only in tenant-namespaced, short-lived server memory and are invalidated on telemetry
+writes; credentials, tokens, and passwords are never cacheable.
 
 ## API overview
 

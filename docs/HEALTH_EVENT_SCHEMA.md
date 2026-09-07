@@ -61,3 +61,14 @@ python3 examples/connectors/send_sample_telemetry.py
 ```
 
 This example sends synthetic data. It does not call OpenAI or another provider, so it requires no API key.
+
+## ShopAssist adapter
+
+ShopAssist evaluates answers inside its `/api/chat` server route and keeps a
+server-side buffer. Every complete 20-interaction batch is normalized into this
+contract and sent to `POST /api/v1/shopassist/telemetry` using the server-only
+`DRIFTZERO_API_URL`. Browser JavaScript never reads provider keys or the API URL.
+
+The window uses `source: "observed"` because its scores are derived from the 20
+actual ShopAssist responses. Individual traces retain `is_simulated: true` for
+controlled failure scenarios and `false` for healthy or recovered scenarios.
