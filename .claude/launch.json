@@ -1,0 +1,29 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "driftzero-backend",
+      "runtimeExecutable": "C:\\Users\\t4tto\\OneDrive\\Desktop\\DriftZero\\backend\\.venv\\Scripts\\uvicorn.exe",
+      "runtimeArgs": ["app.main:app", "--host", "127.0.0.1", "--port", "8000"],
+      "cwd": "C:\\Users\\t4tto\\OneDrive\\Desktop\\DriftZero\\backend",
+      "env": {
+        "DRIFTZERO_RECOVERY_ALLOW_LOCAL_IDENTITY": "true"
+      },
+      "port": 8000
+    },
+    {
+      "name": "driftzero-dashboard",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "dev"],
+      "cwd": "C:\\Users\\t4tto\\OneDrive\\Desktop\\DriftZero\\frontend",
+      "port": 5173
+    },
+    {
+      "name": "shop-assist",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "dev"],
+      "cwd": "C:\\Users\\t4tto\\OneDrive\\Desktop\\DriftZero\\shop-assist",
+      "port": 3000
+    }
+  ]
+}
