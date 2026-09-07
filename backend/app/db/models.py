@@ -106,8 +106,9 @@ class User(IdMixin, Base):
     """A human identity. Passwords are represented only by Argon2 hashes."""
 
     __tablename__ = "users"
+    __table_args__ = (sa.UniqueConstraint("email", name="uq_users_email"),)
 
-    email: Mapped[str] = mapped_column(sa.String(320), unique=True, index=True)
+    email: Mapped[str] = mapped_column(sa.String(320), index=True)
     display_name: Mapped[str] = mapped_column(sa.String(120))
     password_hash: Mapped[str] = mapped_column(sa.Text())
     is_active: Mapped[bool] = mapped_column(default=True)
@@ -138,8 +139,11 @@ class UserSession(IdMixin, Base):
     """Revocable opaque browser session; raw tokens are never persisted."""
 
     __tablename__ = "user_sessions"
+    __table_args__ = (
+        sa.UniqueConstraint("token_hash", name="uq_user_sessions_token_hash"),
+    )
 
-    token_hash: Mapped[str] = mapped_column(sa.String(64), unique=True, index=True)
+    token_hash: Mapped[str] = mapped_column(sa.String(64), index=True)
     csrf_token_hash: Mapped[str] = mapped_column(sa.String(64))
     user_id: Mapped[str] = mapped_column(
         sa.String(36), sa.ForeignKey("users.id", ondelete="CASCADE"), index=True
