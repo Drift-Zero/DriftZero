@@ -103,6 +103,7 @@ class FetchedPage:
     status_code: int
     latency_ms: int
     content_hash: str
+    structured_data: object | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -124,7 +125,10 @@ def fetch_website(url: str, settings: Settings) -> FetchedPage:
     request = urllib.request.Request(
         url,
         headers={
-            "Accept": "text/html,application/xhtml+xml,text/plain;q=0.8",
+            "Accept": (
+                "application/json,application/geo+json,text/html,"
+                "application/xhtml+xml,text/plain;q=0.8"
+            ),
             "User-Agent": "DriftZero-Website-Monitor/1.0",
         },
     )
@@ -136,7 +140,13 @@ def fetch_website(url: str, settings: Settings) -> FetchedPage:
             timeout=settings.website_fetch_timeout_seconds,
         ) as response:
             content_type = response.headers.get_content_type()
-            if content_type not in {"text/html", "application/xhtml+xml", "text/plain"}:
+            if content_type not in {
+                "application/json",
+                "application/geo+json",
+                "text/html",
+                "application/xhtml+xml",
+                "text/plain",
+            }:
                 raise WebsiteSyncError(f"Unsupported website content type: {content_type}.")
             raw = response.read(settings.website_max_response_bytes + 1)
             status_code = response.status
@@ -148,22 +158,35 @@ def fetch_website(url: str, settings: Settings) -> FetchedPage:
     if len(raw) > settings.website_max_response_bytes:
         raise WebsiteSyncError("The website response exceeded the configured size limit.")
     try:
-        html = raw.decode(charset, errors="replace")
+        decoded = raw.decode(charset, errors="replace")
     except LookupError as exc:
         raise WebsiteSyncError("The website declared an unsupported character encoding.") from exc
-    parser = _ReadableHTML(url)
-    parser.feed(html)
-    text = parser.text
-    if not text:
-        raise WebsiteSyncError("The website contained no readable text.")
+    structured_data: object | None = None
+    if content_type in {"application/json", "application/geo+json"}:
+        try:
+            structured_data = json.loads(decoded)
+        except json.JSONDecodeError as exc:
+            raise WebsiteSyncError("The website returned invalid JSON.") from exc
+        text = json.dumps(structured_data, ensure_ascii=False, sort_keys=True)
+        title = urlparse(url).path.rsplit("/", 1)[-1] or urlparse(url).hostname or "JSON source"
+        links: list[dict[str, str]] = []
+    else:
+        parser = _ReadableHTML(url)
+        parser.feed(decoded)
+        text = parser.text
+        if not text:
+            raise WebsiteSyncError("The website contained no readable text.")
+        title = parser.title or urlparse(url).hostname or "Website"
+        links = parser.links[:100]
     return FetchedPage(
         url=url,
-        title=parser.title or urlparse(url).hostname or "Website",
+        title=title,
         text=text,
-        links=parser.links[:100],
+        links=links,
         status_code=status_code,
         latency_ms=max(1, round((time.perf_counter() - started) * 1000)),
         content_hash=hashlib.sha256(text.encode()).hexdigest(),
+        structured_data=structured_data,
     )
 
 
@@ -300,8 +323,10 @@ class WebsiteSyncService:
                     0,
                     "Website content has not changed.",
                 )
-            use_xai = bool((connection.config or {}).get("use_xai", True))
-            if use_xai:
+            use_xai = bool((connection.config or {}).get("use_xai", False))
+            if page.structured_data is not None:
+                data = page.structured_data
+            elif use_xai:
                 data = XaiWebsiteStructurer(self.settings).structure(page)
             else:
                 lines = [
@@ -346,6 +371,12 @@ class WebsiteSyncService:
                     source.id,
                     EvidenceReviewRequest(status="approved", actor=actor),
                 )
+            extracted_facts = data.get("facts") if isinstance(data, dict) else None
+            fact_count = (
+                len(extracted_facts)
+                if isinstance(extracted_facts, list)
+                else source.chunk_count
+            )
             self._update_connection(
                 connection,
                 page,
@@ -360,7 +391,7 @@ class WebsiteSyncService:
                 source.id,
                 fetched_at,
                 page.content_hash,
-                len(data.get("facts", [])),
+                fact_count,
                 (
                     "Website evidence was refreshed and approved."
                     if auto_approve

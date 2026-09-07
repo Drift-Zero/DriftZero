@@ -56,7 +56,7 @@ export function EvidencePage() {
   const [websiteUrl, setWebsiteUrl] = useState('')
   const [websiteName, setWebsiteName] = useState('')
   const [websiteInterval, setWebsiteInterval] = useState(10)
-  const [websiteUseXai, setWebsiteUseXai] = useState(true)
+  const [websiteUseXai, setWebsiteUseXai] = useState(false)
   const [websiteAutoApprove, setWebsiteAutoApprove] = useState(false)
   const [websiteResult, setWebsiteResult] = useState<ApiWebsiteRefresh | null>(null)
   const [answer, setAnswer] = useState('')
@@ -283,12 +283,12 @@ export function EvidencePage() {
     </section>
 
     <section className="panel website-monitor">
-      <div className="panel-heading"><div><p className="panel-label">Live source / Website to JSON</p><h2>Keep reference data current</h2><p>DriftZero fetches the page, asks Grok for strict JSON, validates every extracted value against an exact quote, and checks again on schedule.</p></div><Globe2 size={18}/></div>
+      <div className="panel-heading"><div><p className="panel-label">Live source / Website to JSON</p><h2>Keep reference data current</h2><p>DriftZero reads JSON and GeoJSON directly. For webpages, Grok can optionally extract source-backed facts before scheduled checks.</p></div><Globe2 size={18}/></div>
       <form className="website-monitor-form" onSubmit={connectWebsite}>
         <label><span>Website URL</span><input type="url" value={websiteUrl} onChange={event => setWebsiteUrl(event.target.value)} placeholder="https://example.com/policies" required/></label>
         <label><span>Source name <em>optional</em></span><input value={websiteName} onChange={event => setWebsiteName(event.target.value)} placeholder="Current returns policy"/></label>
         <label><span>Refresh every</span><select value={websiteInterval} onChange={event => setWebsiteInterval(Number(event.target.value))}><option value={10}>10 minutes</option><option value={30}>30 minutes</option><option value={60}>1 hour</option><option value={360}>6 hours</option><option value={1440}>24 hours</option></select></label>
-        <label className="website-option"><input type="checkbox" checked={websiteUseXai} onChange={event => setWebsiteUseXai(event.target.checked)}/><span><strong>Structure with Grok</strong><small>Uses the server-side XAI_API_KEY. The key never reaches the browser.</small></span></label>
+        <label className="website-option"><input type="checkbox" checked={websiteUseXai} onChange={event => setWebsiteUseXai(event.target.checked)}/><span><strong>Structure webpages with Grok</strong><small>Optional for HTML or plain text. JSON feeds work without a key.</small></span></label>
         <label className="website-option"><input type="checkbox" checked={websiteAutoApprove} onChange={event => setWebsiteAutoApprove(event.target.checked)}/><span><strong>Automatically approve changes</strong><small>Leave off when a person should review each website revision before it affects scoring.</small></span></label>
         <button className="button primary" type="submit" disabled={busy || !modelId || !websiteUrl.trim()}>{busy ? <><Loader2 size={13} className="spin"/> Fetching website…</> : <><Globe2 size={14}/> Add and fetch website</>}</button>
       </form>

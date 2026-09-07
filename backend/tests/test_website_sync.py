@@ -123,6 +123,52 @@ def test_website_refresh_creates_approved_json_and_detects_no_change(monkeypatch
     assert sources[0]["filename"] == "website-example.com.json"
 
 
+def test_website_refresh_imports_structured_json_without_xai(monkeypatch) -> None:
+    app = create_app(Settings(database_url="sqlite://", environment="test"))
+    page = FetchedPage(
+        url="https://example.com/catalog.json",
+        title="catalog.json",
+        text='{"price": 149, "stock": 18}',
+        links=[],
+        status_code=200,
+        latency_ms=12,
+        content_hash="json-hash",
+        structured_data={"product": "Nova ANC Headphones", "price": 149, "stock": 18},
+    )
+    monkeypatch.setattr("app.website_sync.fetch_website", lambda *_args, **_kwargs: page)
+
+    def fail_if_called(*_args, **_kwargs) -> None:
+        raise AssertionError("Structured JSON must not be sent to xAI")
+
+    monkeypatch.setattr("app.website_sync.XaiWebsiteStructurer.structure", fail_if_called)
+    with TestClient(app) as client:
+        model = client.post(
+            "/api/v1/models", json={"name": "JSON feed model", "provider": "custom"}
+        ).json()
+        connection = client.post(
+            f"/api/v1/models/{model['id']}/connections",
+            json={
+                "kind": "website",
+                "name": "Catalog feed",
+                "url": page.url,
+                "config": {"refresh_interval_minutes": 10, "use_xai": True},
+            },
+        ).json()
+
+        response = client.post(
+            f"/api/v1/connections/{connection['id']}/website-refresh",
+            json={"actor": "test"},
+        )
+        sources = client.get(f"/api/v1/models/{model['id']}/evidence-sources").json()
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "updated"
+    assert response.json()["fact_count"] == 1
+    assert len(sources) == 1
+    assert sources[0]["chunk_count"] == 1
+    assert "Nova ANC Headphones" in sources[0]["chunks"][0]["text"]
+
+
 def test_connection_due_uses_configured_interval() -> None:
     from app.db import ModelConnection
     from app.website_sync import connection_is_due
