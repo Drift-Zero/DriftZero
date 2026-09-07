@@ -91,6 +91,11 @@ class SecurityPrincipal:
     role: ActorRole
     tenant_id: str
     credential_id: str
+    auth_method: str = "bearer"
+    user_id: str | None = None
+    email: str | None = None
+    display_name: str | None = None
+    tenant_name: str | None = None
 
 
 class SecurityMiddleware(BaseHTTPMiddleware):
@@ -140,11 +145,28 @@ class SecurityMiddleware(BaseHTTPMiddleware):
         }
 
     def _authenticate_api_request(self, request: Request) -> Response | None:
-        if request.method == "OPTIONS" or not self._auth_required():
+        if request.method == "OPTIONS":
             return None
 
         path = request.url.path
+        if path in {
+            f"{self.settings.api_prefix}/auth/register",
+            f"{self.settings.api_prefix}/auth/login",
+        }:
+            return None
         if self._is_telemetry_ingest(path):
+            return None
+        session_principal = self._session_principal(request)
+        if session_principal is not None:
+            request.state.principal = session_principal
+            if request.method not in {"GET", "HEAD"}:
+                supplied_csrf = request.headers.get("x-csrf-token", "")
+                if not request.app.state.auth_service.csrf_matches(
+                    request.state.auth_identity, supplied_csrf
+                ):
+                    return self._forbidden("A valid CSRF token is required.")
+            return self._authorize_role(request, session_principal)
+        if not self._auth_required():
             return None
         # Keep the stable production denial contract for an endpoint that can
         # never execute in production anyway.
@@ -195,7 +217,13 @@ class SecurityMiddleware(BaseHTTPMiddleware):
             tenant_id="00000000-0000-0000-0000-000000000001",
             credential_id=credential_id,
         )
+        return self._authorize_role(request, request.state.principal)
 
+    def _authorize_role(
+        self, request: Request, principal: SecurityPrincipal
+    ) -> Response | None:
+        role = principal.role
+        path = request.url.path
         if request.method not in {"GET", "HEAD"} and role is ActorRole.VIEWER:
             return self._forbidden("Viewer credentials are read-only.")
         if request.method == "DELETE" and role is not ActorRole.ADMIN:
@@ -203,6 +231,28 @@ class SecurityMiddleware(BaseHTTPMiddleware):
         if path == f"{self.settings.api_prefix}/demo/reset" and role is not ActorRole.ADMIN:
             return self._forbidden("Administrator credentials are required to reset demo data.")
         return None
+
+    def _session_principal(self, request: Request) -> SecurityPrincipal | None:
+        token = request.cookies.get(self.settings.auth_cookie_name)
+        if not token or not hasattr(request.app.state, "auth_service"):
+            return None
+        database = request.app.state.database
+        with database.session_factory() as session:
+            identity = request.app.state.auth_service.authenticate(session, token)
+        if identity is None:
+            return None
+        request.state.auth_identity = identity
+        return SecurityPrincipal(
+            actor=identity.email,
+            role=identity.role,
+            tenant_id=identity.tenant_id,
+            credential_id=identity.session_id,
+            auth_method="session",
+            user_id=identity.user_id,
+            email=identity.email,
+            display_name=identity.display_name,
+            tenant_name=identity.tenant_name,
+        )
 
     def _configured_credentials(self) -> list[tuple[str, ActorRole, str]]:
         credentials = (
