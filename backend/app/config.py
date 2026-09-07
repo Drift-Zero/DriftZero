@@ -58,6 +58,10 @@ class Settings:
     trusted_hosts: tuple[str, ...] = ("localhost", "127.0.0.1", "testserver")
     telemetry_max_future_skew_seconds: int = 300
     docs_enabled: bool = True
+    auth_registration_token: str | None = None
+    auth_session_ttl_hours: int = 168
+    auth_cookie_name: str = "driftzero_session"
+    dashboard_cache_ttl_seconds: int = 30
     recovery_allow_local_identity: bool = False
     log_level: str = "INFO"
     log_file: str | None = None
@@ -221,6 +225,28 @@ class Settings:
             docs_enabled=_environment_bool(
                 "DRIFTZERO_DOCS_ENABLED",
                 defaults.docs_enabled,
+            ),
+            auth_registration_token=os.getenv("DRIFTZERO_AUTH_REGISTRATION_TOKEN") or None,
+            auth_session_ttl_hours=max(
+                1,
+                int(
+                    os.getenv(
+                        "DRIFTZERO_AUTH_SESSION_TTL_HOURS",
+                        str(defaults.auth_session_ttl_hours),
+                    )
+                ),
+            ),
+            auth_cookie_name=os.getenv(
+                "DRIFTZERO_AUTH_COOKIE_NAME", defaults.auth_cookie_name
+            ),
+            dashboard_cache_ttl_seconds=max(
+                0,
+                int(
+                    os.getenv(
+                        "DRIFTZERO_DASHBOARD_CACHE_TTL_SECONDS",
+                        str(defaults.dashboard_cache_ttl_seconds),
+                    )
+                ),
             ),
             recovery_allow_local_identity=_environment_bool(
                 "DRIFTZERO_RECOVERY_ALLOW_LOCAL_IDENTITY",
