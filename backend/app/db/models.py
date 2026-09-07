@@ -102,6 +102,57 @@ class Tenant(IdMixin, Base):
     )
 
 
+class User(IdMixin, Base):
+    """A human identity. Passwords are represented only by Argon2 hashes."""
+
+    __tablename__ = "users"
+
+    email: Mapped[str] = mapped_column(sa.String(320), unique=True, index=True)
+    display_name: Mapped[str] = mapped_column(sa.String(120))
+    password_hash: Mapped[str] = mapped_column(sa.Text())
+    is_active: Mapped[bool] = mapped_column(default=True)
+    created_at: Mapped[datetime] = mapped_column(default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(default=utc_now, onupdate=utc_now)
+
+
+class TenantMembership(IdMixin, Base):
+    """Role granted to one user inside one tenant."""
+
+    __tablename__ = "tenant_memberships"
+    __table_args__ = (
+        sa.UniqueConstraint("tenant_id", "user_id", name="tenant_user"),
+        sa.CheckConstraint("role IN ('viewer', 'operator', 'admin')", name="membership_role"),
+    )
+
+    tenant_id: Mapped[str] = mapped_column(
+        sa.String(36), sa.ForeignKey("tenants.id", ondelete="CASCADE"), index=True
+    )
+    user_id: Mapped[str] = mapped_column(
+        sa.String(36), sa.ForeignKey("users.id", ondelete="CASCADE"), index=True
+    )
+    role: Mapped[str] = mapped_column(sa.String(20))
+    created_at: Mapped[datetime] = mapped_column(default=utc_now)
+
+
+class UserSession(IdMixin, Base):
+    """Revocable opaque browser session; raw tokens are never persisted."""
+
+    __tablename__ = "user_sessions"
+
+    token_hash: Mapped[str] = mapped_column(sa.String(64), unique=True, index=True)
+    csrf_token_hash: Mapped[str] = mapped_column(sa.String(64))
+    user_id: Mapped[str] = mapped_column(
+        sa.String(36), sa.ForeignKey("users.id", ondelete="CASCADE"), index=True
+    )
+    tenant_id: Mapped[str] = mapped_column(
+        sa.String(36), sa.ForeignKey("tenants.id", ondelete="CASCADE"), index=True
+    )
+    expires_at: Mapped[datetime] = mapped_column(index=True)
+    last_used_at: Mapped[datetime] = mapped_column(default=utc_now)
+    revoked_at: Mapped[datetime | None] = mapped_column()
+    created_at: Mapped[datetime] = mapped_column(default=utc_now)
+
+
 class MonitoredModel(IdMixin, TenantMixin, Base):
     """An AI system under observation."""
 
