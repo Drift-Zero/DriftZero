@@ -1,5 +1,5 @@
 import { apiRequest,recoveryActor,recoveryHeaders,recoveryRole } from './client'
-import type { ApiEvaluation,ApiEvaluationSummary,ApiVerificationSource,ApiAlertFeed,ApiAlertRule,ApiAlertRuleInput,ApiAuditEvent,ApiDiagnosis,ApiEvidenceHit,ApiEvidenceSource,ApiGroqCatalog,ApiGroqEvaluation,ApiGroqEvaluationProfile,ApiHealthTimeline,ApiIncident,ApiModel,ApiRecovery,ApiRecoveryCommand } from './types'
+import type { ApiAutomatedEvaluation,ApiModelConnection,ApiEvaluation,ApiEvaluationSummary,ApiVerificationSource,ApiAlertFeed,ApiAlertRule,ApiAlertRuleInput,ApiAuditEvent,ApiDiagnosis,ApiEvidenceHit,ApiEvidenceSource,ApiGroqCatalog,ApiGroqEvaluation,ApiGroqEvaluationProfile,ApiHealthTimeline,ApiIncident,ApiModel,ApiRecovery,ApiRecoveryCommand } from './types'
 const v1='/api/v1'
 const actor=()=>({actor:recoveryActor(),role:recoveryRole()})
 const send=(method:string,body:Record<string,unknown>):RequestInit=>({method,headers:recoveryHeaders(),body:JSON.stringify({...actor(),...body})})
@@ -33,6 +33,7 @@ export const api={
   updateModel:(modelId:string,patch:{name?:string;provider?:string;environment?:string;description?:string|null;retention_days?:number})=>apiRequest<ApiModel>(`${v1}/models/${modelId}`,send('PATCH',{...patch})),
   setModelLifecycle:(modelId:string,status:ApiModel['status'])=>apiRequest<ApiModel>(`${v1}/models/${modelId}/lifecycle`,mutate({status})),
 
+  runAutomatedEvaluation:(modelId:string,body:{max_questions?:number;variants_per_fact?:number;latency_target_ms?:number;actor?:string})=>apiRequest<ApiAutomatedEvaluation>(`${v1}/models/${modelId}/automated-evaluations`,send('POST',{...body})),
   evidenceSources:(modelId:string)=>apiRequest<ApiEvidenceSource[]>(`${v1}/models/${modelId}/evidence-sources`),
   modelConnections:(modelId:string)=>apiRequest<ApiModelConnection[]>(`${v1}/models/${modelId}/connections`),
   createModelConnection:(modelId:string,body:{name:string;api_endpoint:string;auth_scheme?:string;api_key?:string;config:Record<string,unknown>})=>apiRequest<ApiModelConnection>(`${v1}/models/${modelId}/connections`,mutate({kind:'api',...body})),
