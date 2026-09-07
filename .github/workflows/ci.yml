@@ -126,6 +126,10 @@ jobs:
               exit 1
             fi
           done
+
+          # Exercise the same internal hostname ShopAssist uses for telemetry.
+          docker compose exec -T shop-assist node -e \
+            "fetch('http://api:8000/healthz').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"
       - name: Verify dashboard and recovery flow
         run: python scripts/smoke_test.py --base-url http://localhost:3000
       - name: Verify ShopAssist telemetry flow

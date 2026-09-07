@@ -75,7 +75,7 @@ Copy `.env.example` to `.env`. Never commit `.env`.
 | `DRIFTZERO_API_ADMIN_KEY` | unset | Full-control management credential |
 | `DRIFTZERO_API_RATE_LIMIT_PER_MINUTE` | `300` | Per-process limit keyed by credential or client |
 | `DRIFTZERO_API_MAX_REQUEST_BYTES` | `1048576` | Maximum body size, including chunked requests |
-| `DRIFTZERO_TRUSTED_HOSTS` | local/test hosts | Accepted HTTP Host values; supports `*.example.com` |
+| `DRIFTZERO_TRUSTED_HOSTS` | `localhost,127.0.0.1,testserver,api` | Accepted HTTP Host values, including the Compose API service name; supports `*.example.com` |
 | `DRIFTZERO_TELEMETRY_MAX_FUTURE_SKEW_SECONDS` | `300` | Maximum clock lead for observed telemetry |
 | `DRIFTZERO_DOCS_ENABLED` | `true` | Local docs switch; docs remain disabled in production |
 | `DRIFTZERO_ALERT_EVALUATION_INTERVAL_SECONDS` | `60` | Alert worker poll interval |
