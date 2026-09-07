@@ -59,6 +59,8 @@ class Settings:
     # A 5 MiB file expands to roughly 6.7 MiB when transported as base64 JSON.
     api_max_request_bytes: int = 8_388_608
     evidence_max_file_bytes: int = 5_242_880
+    evidence_url_timeout_seconds: float = 15.0
+    evidence_sync_interval_seconds: int = 60
     evidence_llm_provider: str = "disabled"
     evidence_llm_model: str | None = None
     evidence_llm_timeout_seconds: float = 30.0
@@ -244,9 +246,29 @@ class Settings:
                     )
                 ),
             ),
+            evidence_url_timeout_seconds=max(
+                1.0,
+                float(
+                    os.getenv(
+                        "DRIFTZERO_EVIDENCE_URL_TIMEOUT_SECONDS",
+                        str(defaults.evidence_url_timeout_seconds),
+                    )
+                ),
+            ),
+            evidence_sync_interval_seconds=max(
+                10,
+                int(
+                    os.getenv(
+                        "DRIFTZERO_EVIDENCE_SYNC_INTERVAL_SECONDS",
+                        str(defaults.evidence_sync_interval_seconds),
+                    )
+                ),
+            ),
             evidence_llm_provider=os.getenv(
                 "DRIFTZERO_EVIDENCE_LLM_PROVIDER", defaults.evidence_llm_provider
-            ).strip().lower(),
+            )
+            .strip()
+            .lower(),
             evidence_llm_model=os.getenv("DRIFTZERO_EVIDENCE_LLM_MODEL") or None,
             evidence_llm_timeout_seconds=max(
                 1.0,
@@ -331,9 +353,7 @@ class Settings:
                     )
                 ),
             ),
-            auth_cookie_name=os.getenv(
-                "DRIFTZERO_AUTH_COOKIE_NAME", defaults.auth_cookie_name
-            ),
+            auth_cookie_name=os.getenv("DRIFTZERO_AUTH_COOKIE_NAME", defaults.auth_cookie_name),
             dashboard_cache_ttl_seconds=max(
                 0,
                 int(
@@ -358,13 +378,9 @@ class Settings:
                     str(defaults.log_file_backup_count),
                 )
             ),
-            slow_query_ms=float(
-                os.getenv("DRIFTZERO_SLOW_QUERY_MS", str(defaults.slow_query_ms))
-            ),
+            slow_query_ms=float(os.getenv("DRIFTZERO_SLOW_QUERY_MS", str(defaults.slow_query_ms))),
             otel_enabled=_environment_bool("DRIFTZERO_OTEL_ENABLED", defaults.otel_enabled),
-            otel_service_name=os.getenv(
-                "DRIFTZERO_OTEL_SERVICE_NAME", defaults.otel_service_name
-            ),
+            otel_service_name=os.getenv("DRIFTZERO_OTEL_SERVICE_NAME", defaults.otel_service_name),
             frontend_dir=os.getenv("DRIFTZERO_FRONTEND_DIR") or defaults.frontend_dir,
             cors_origins=_environment_list("DRIFTZERO_CORS_ORIGINS", defaults.cors_origins),
             cors_origin_regex=os.getenv("DRIFTZERO_CORS_ORIGIN_REGEX") or None,

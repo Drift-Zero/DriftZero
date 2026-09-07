@@ -1,7 +1,7 @@
-import { Activity, Check, CheckCircle2, Circle, Clock3, Database, FileText, FileUp, Globe2, Loader2, Play, RefreshCw, Search, ShieldCheck, Sparkles, X, XCircle } from 'lucide-react'
+import { Activity, Check, CheckCircle2, Circle, Clock3, Database, FileCheck2, FileText, FileUp, Globe2, Link2, Loader2, Play, RefreshCw, Search, ShieldCheck, Sparkles, X, XCircle } from 'lucide-react'
 import { useEffect, useMemo, useState, type FormEvent } from 'react'
 import { api } from '../api/endpoints'
-import type { ApiAutomatedEvaluation, ApiEvidenceHit, ApiEvidenceSource, ApiModel, ApiModelConnection, ApiWebsiteRefresh } from '../api/types'
+import type { ApiAutomatedEvaluation, ApiClaimVerification, ApiEvidenceHit, ApiEvidenceSource, ApiModel, ApiModelConnection, ApiWebsiteRefresh } from '../api/types'
 
 const MAX_FILE_BYTES = 5 * 1024 * 1024
 const ACCEPTED = '.pdf,.json,.csv,.txt,.md'
@@ -37,7 +37,11 @@ export function EvidencePage() {
   const [modelId, setModelId] = useState('')
   const [connections, setConnections] = useState<ApiModelConnection[]>([])
   const [sources, setSources] = useState<ApiEvidenceSource[]>([])
+  const [importMode, setImportMode] = useState<'file' | 'url'>('file')
   const [file, setFile] = useState<File | null>(null)
+  const [sourceUrl, setSourceUrl] = useState('')
+  const [autoRefresh, setAutoRefresh] = useState(true)
+  const [refreshMinutes, setRefreshMinutes] = useState(15)
   const [useLlm, setUseLlm] = useState(false)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -55,6 +59,8 @@ export function EvidencePage() {
   const [websiteUseXai, setWebsiteUseXai] = useState(true)
   const [websiteAutoApprove, setWebsiteAutoApprove] = useState(false)
   const [websiteResult, setWebsiteResult] = useState<ApiWebsiteRefresh | null>(null)
+  const [answer, setAnswer] = useState('')
+  const [verification, setVerification] = useState<ApiClaimVerification | null>(null)
 
   useEffect(() => {
     let active = true
@@ -86,25 +92,49 @@ export function EvidencePage() {
   const hasCallableModel = selectedModel?.provider.toLowerCase() === 'groq' || connections.some(connection => connection.kind === 'api' && ['configured', 'connected'].includes(connection.status))
   const websiteConnections = useMemo(() => connections.filter(connection => connection.kind === 'website'), [connections])
 
-  async function upload(event: FormEvent) {
+  async function importSource(event: FormEvent) {
     event.preventDefault()
-    if (!file || !modelId) return
-    if (file.size > MAX_FILE_BYTES) { setError('Files must be 5 MB or smaller.'); return }
+    if (!modelId) return
+    if (importMode === 'file' && !file) return
+    if (file && file.size > MAX_FILE_BYTES) { setError('Files must be 5 MB or smaller.'); return }
+    if (importMode === 'url' && !sourceUrl.trim()) return
     setBusy(true); setError(null)
     try {
-      const imported = await api.importEvidence(modelId, {
-        filename: file.name,
-        media_type: file.type || undefined,
-        content_base64: await fileToBase64(file),
-        use_llm: useLlm,
-        actor: 'evidence-owner',
-      })
+      const imported = importMode === 'file' && file
+        ? await api.importEvidence(modelId, {
+          filename: file.name,
+          media_type: file.type || undefined,
+          content_base64: await fileToBase64(file),
+          use_llm: useLlm,
+          actor: 'evidence-owner',
+        })
+        : await api.importEvidenceUrl(modelId, {
+          source_url: sourceUrl.trim(),
+          use_llm: useLlm,
+          auto_refresh: autoRefresh,
+          refresh_interval_minutes: refreshMinutes,
+          actor: 'evidence-owner',
+        })
       setSources(current => [imported, ...current])
-      setFile(null); setUseLlm(false); setEvaluation(null)
+      setFile(null); setSourceUrl(''); setUseLlm(false); setEvaluation(null)
       const input = document.getElementById('evidence-file') as HTMLInputElement | null
       if (input) input.value = ''
     } catch (err) {
       setError(err instanceof Error ? err.message : 'The source could not be imported.')
+    } finally { setBusy(false) }
+  }
+
+  async function refresh(source: ApiEvidenceSource) {
+    setBusy(true); setError(null)
+    try {
+      const refreshed = await api.refreshEvidence(source.id)
+      if (refreshed.id === source.id) {
+        setSources(current => current.map(item => item.id === refreshed.id ? refreshed : item))
+      } else {
+        setSources(current => [refreshed, ...current.map(item => item.id === source.id ? { ...item, auto_refresh: false } : item)])
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'The URL could not be refreshed.')
     } finally { setBusy(false) }
   }
 
@@ -213,6 +243,15 @@ export function EvidencePage() {
   const failedCases = evaluation?.cases.filter(item => !item.passed) ?? []
   const scoreTone = evaluation?.health_state === 'healthy' ? 'healthy' : evaluation?.health_state === 'warning' ? 'warning' : 'critical'
 
+  async function verifyClaims(event: FormEvent) {
+    event.preventDefault()
+    if (!modelId || !answer.trim()) return
+    setBusy(true); setError(null)
+    try { setVerification(await api.verifyClaims(modelId, answer.trim())) }
+    catch (err) { setError(err instanceof Error ? err.message : 'Claim verification failed.') }
+    finally { setBusy(false) }
+  }
+
   return <div className="page evidence-page">
     <header className="page-header">
       <div><p className="eyebrow">Ground truth and automatic testing</p><h1>Reference Data</h1><p>Tell DriftZero what is correct, then let it test your model and explain every failure.</p></div>
@@ -228,12 +267,13 @@ export function EvidencePage() {
     </section>
 
     <section className="evidence-workspace">
-      <form className="panel evidence-upload" onSubmit={upload}>
-        <div className="panel-heading"><div><p className="panel-label">01 / Add ground truth</p><h2>What should the model know?</h2></div><FileUp size={18}/></div>
-        <label className="evidence-field"><span>Model to test</span><select value={modelId} onChange={event => { setSources([]); setHits([]); setConnections([]); setEvaluation(null); setModelId(event.target.value) }} disabled={busy || !models.length}>{models.map(model => <option key={model.id} value={model.id}>{model.name}</option>)}</select></label>
-        <label className="evidence-drop" htmlFor="evidence-file"><FileText size={24}/><strong>{file?.name ?? 'Choose your reference file'}</strong><span>JSON is best for automatic questions · maximum 5 MB</span><input id="evidence-file" type="file" accept={ACCEPTED} onChange={event => setFile(event.target.files?.[0] ?? null)}/></label>
-        <label className="evidence-ai"><input type="checkbox" checked={useLlm} onChange={event => setUseLlm(event.target.checked)} disabled={!file || !/\.(pdf|txt|md)$/i.test(file.name)}/><span><Sparkles size={14}/><strong>Organize unstructured text with AI</strong><small>Optional for PDF, TXT and Markdown. JSON is always read directly.</small></span></label>
-        <button className="button primary" type="submit" disabled={!file || !modelId || busy}>{busy ? <><Loader2 size={13} className="spin"/> Processing</> : 'Upload and inspect'}</button>
+      <form className="panel evidence-upload" onSubmit={importSource}>
+        <div className="panel-heading"><div><p className="panel-label">01 / Import</p><h2>Add a trusted source</h2></div><FileUp size={18}/></div>
+        <label className="evidence-field"><span>Monitored model</span><select value={modelId} onChange={event => { setSources([]); setHits([]); setModelId(event.target.value) }} disabled={busy || !models.length}>{models.map(model => <option key={model.id} value={model.id}>{model.name}</option>)}</select></label>
+        <div className="evidence-mode" role="tablist" aria-label="Evidence import method"><button type="button" className={importMode === 'file' ? 'active' : ''} onClick={() => { setImportMode('file'); setUseLlm(false) }}><FileText size={13}/> File upload</button><button type="button" className={importMode === 'url' ? 'active' : ''} onClick={() => { setImportMode('url'); setUseLlm(false) }}><Link2 size={13}/> Live URL</button></div>
+        {importMode === 'file' ? <label className="evidence-drop" htmlFor="evidence-file"><FileText size={24}/><strong>{file?.name ?? 'Choose a source file'}</strong><span>PDF, JSON, CSV, TXT or Markdown · maximum 5 MB</span><input id="evidence-file" type="file" accept={ACCEPTED} onChange={event => setFile(event.target.files?.[0] ?? null)}/></label> : <div className="evidence-url-fields"><label className="evidence-field"><span>Direct public data URL</span><input type="url" value={sourceUrl} onChange={event => setSourceUrl(event.target.value)} placeholder="https://example.com/catalog.json" required/></label><div className="evidence-refresh-options"><label><input type="checkbox" checked={autoRefresh} onChange={event => setAutoRefresh(event.target.checked)}/> Check for updates automatically</label><label><span>Every</span><input type="number" min="5" max="10080" value={refreshMinutes} onChange={event => setRefreshMinutes(Number(event.target.value))} disabled={!autoRefresh}/><span>minutes</span></label></div><p>Use a direct JSON, CSV, PDF, TXT or Markdown endpoint—not a normal webpage.</p></div>}
+        <label className="evidence-ai"><input type="checkbox" checked={useLlm} onChange={event => setUseLlm(event.target.checked)} disabled={importMode === 'file' ? (!file || !/\.(pdf|txt|md)$/i.test(file.name)) : !/\.(pdf|txt|md)(?:[?#]|$)/i.test(sourceUrl)}/><span><Sparkles size={14}/><strong>Structure unstructured text with AI</strong><small>Only exact, source-backed facts pass validation. Configure Gemini or Groq on the server.</small></span></label>
+        <button className="button primary" type="submit" disabled={(importMode === 'file' ? !file : !sourceUrl.trim()) || !modelId || busy}>{busy ? 'Processing…' : importMode === 'file' ? 'Extract source evidence' : 'Fetch source evidence'}</button>
       </form>
 
       <div className="panel evidence-process">
@@ -263,8 +303,9 @@ export function EvidencePage() {
     <section className="panel evidence-library">
       <div className="panel-heading"><div><p className="panel-label">02 / Confirm</p><h2>{selectedModel?.name ?? 'Model'} reference library</h2></div><span className="quiet-badge">{sources.length} source{sources.length === 1 ? '' : 's'}</span></div>
       {!sources.length ? <div className="evidence-empty"><Database size={24}/><strong>No reference data yet</strong><p>Upload a JSON file to begin an automatic health check.</p></div> : <div className="source-list">{sources.map(source => <article key={source.id} className="source-card">
-        <div className="source-summary"><span className={`source-status ${source.status}`}>{source.status === 'awaiting_review' ? 'Needs confirmation' : source.status}</span><div><strong>{source.name}</strong><p>{source.filename} · {source.chunk_count} facts found</p></div><code>{source.corpus_version}</code>{source.status === 'awaiting_review' && <div className="source-actions"><button type="button" className="button primary" disabled={busy} onClick={() => void review(source, 'approved')}><Check size={13}/> Use as truth</button><button type="button" className="button" disabled={busy} onClick={() => void review(source, 'rejected')}><X size={13}/> Reject</button></div>}{source.status === 'approved' && <button type="button" className="button" disabled={busy} onClick={() => void review(source, 'retired')}>Retire</button>}</div>
-        <details><summary>Review what DriftZero found</summary><div className="chunk-list">{source.chunks.slice(0, 20).map(chunk => <div key={chunk.id}><span>{locatorLabel(chunk.locator)}</span><p>{chunk.text}</p><small>Read directly from your file</small></div>)}{source.chunks.length > 20 && <p className="muted-copy">Showing the first 20 of {source.chunks.length} facts.</p>}</div></details>
+        <div className="source-summary"><span className={`source-status ${source.status}`}>{source.status === 'awaiting_review' ? 'Needs confirmation' : source.status}</span><div><strong>{source.name}</strong><p>{source.filename} · {source.chunk_count} facts found</p>{source.source_url && <a href={source.source_url} target="_blank" rel="noreferrer">{source.source_url}</a>}</div><code>{source.corpus_version}</code>{source.status === 'awaiting_review' && <div className="source-actions"><button type="button" className="button primary" disabled={busy} onClick={() => void review(source, 'approved')}><Check size={13}/> Use as truth</button><button type="button" className="button" disabled={busy} onClick={() => void review(source, 'rejected')}><X size={13}/> Reject</button></div>}{source.status === 'approved' && <div className="source-actions">{source.source_url && <button type="button" className="button" disabled={busy} onClick={() => void refresh(source)}><RefreshCw size={13}/> Refresh</button>}<button type="button" className="button" disabled={busy} onClick={() => void review(source, 'retired')}>Retire</button></div>}</div>
+        {source.source_url && <div className="source-sync-meta"><span>{source.auto_refresh ? `Auto-check every ${source.refresh_interval_minutes} minutes` : 'Manual refresh'}</span><span>{source.last_checked_at ? `Last checked ${new Date(source.last_checked_at).toLocaleString()}` : 'Not checked yet'}</span>{source.supersedes_source_id && <span>New version—approval required</span>}</div>}
+        <details><summary>Review what DriftZero found</summary><div className="chunk-list">{source.chunks.slice(0, 20).map(chunk => <div key={chunk.id}><span>{locatorLabel(chunk.locator)}</span><p>{chunk.text}</p><small>{chunk.validation_status === 'exact_match' ? 'AI-structured · exact quote validated' : 'Read directly from the source'}</small></div>)}{source.chunks.length > 20 && <p className="muted-copy">Showing the first 20 of {source.chunks.length} facts.</p>}</div></details>
       </article>)}</div>}
     </section>
 
@@ -299,6 +340,13 @@ export function EvidencePage() {
       <div className="panel-heading"><div><p className="panel-label">Optional / Explore</p><h2>Search your approved reference data</h2></div><Search size={18}/></div>
       <form onSubmit={searchEvidence}><input value={query} onChange={event => setQuery(event.target.value)} placeholder="Example: What is the AeroFit price?"/><button className="button" type="submit" disabled={!query.trim() || busy}>Search</button></form>
       {hits.length > 0 && <div className="search-hits">{hits.map(hit => <article key={hit.chunk_id}><div><span>{hit.filename} · {locatorLabel(hit.locator)}</span><strong>{Math.round(hit.relevance * 100)}% match</strong></div><p>{hit.evidence_quote}</p><code>{hit.corpus_version}</code></article>)}</div>}
+    </section>
+
+    <section className="panel evidence-verifier">
+      <div className="panel-heading"><div><p className="panel-label">04 / Explain the score</p><h2>Verify a model answer</h2></div><FileCheck2 size={18}/></div>
+      <p className="muted-copy">This preview uses approved evidence and deterministic rules. It does not create telemetry or call a judge model.</p>
+      <form onSubmit={verifyClaims}><textarea value={answer} onChange={event => { setAnswer(event.target.value); setVerification(null) }} placeholder="Paste an answer from any hosted or local model…"/><button className="button primary" type="submit" disabled={!answer.trim() || busy}>{busy ? 'Checking…' : 'Verify claims'}</button></form>
+      {verification && <div className="verification-result"><div className="verification-counts"><span><strong>{verification.supported_claims}</strong> supported</span><span><strong>{verification.contradicted_claims}</strong> contradicted</span><span><strong>{verification.unverified_claims}</strong> unverified</span><code>{verification.formula}</code></div>{verification.claims.map((claim, index) => <article key={`${claim.claim}-${index}`} className={`claim-result ${claim.verdict}`}><div><span>{claim.verdict}</span><strong>{Math.round(claim.confidence * 100)}% rule confidence</strong></div><p>{claim.claim}</p><small>{claim.reason}</small>{claim.evidence && <blockquote><b>{claim.evidence.filename} · {locatorLabel(claim.evidence.locator)}</b>{claim.evidence.evidence_quote}</blockquote>}</article>)}</div>}
     </section>
   </div>
 }

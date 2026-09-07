@@ -1,5 +1,5 @@
 import { apiRequest,recoveryActor,recoveryHeaders,recoveryRole } from './client'
-import type { ApiEvaluation,ApiEvaluationSummary,ApiVerificationSource,ApiAlertFeed,ApiAlertRule,ApiAlertRuleInput,ApiAuditEvent,ApiAutomatedEvaluation,ApiDiagnosis,ApiEvidenceHit,ApiEvidenceSource,ApiGroqCatalog,ApiGroqEvaluation,ApiGroqEvaluationProfile,ApiHealthTimeline,ApiIncident,ApiModel,ApiModelConnection,ApiRecovery,ApiRecoveryCommand,ApiWebsiteRefresh } from './types'
+import type { ApiEvaluation,ApiEvaluationSummary,ApiVerificationSource,ApiAlertFeed,ApiAlertRule,ApiAlertRuleInput,ApiAuditEvent,ApiAutomatedEvaluation,ApiClaimVerification,ApiDiagnosis,ApiEvidenceHit,ApiEvidenceSource,ApiGroqCatalog,ApiGroqEvaluation,ApiGroqEvaluationProfile,ApiHealthTimeline,ApiIncident,ApiModel,ApiModelConnection,ApiRecovery,ApiRecoveryCommand,ApiWebsiteRefresh } from './types'
 const v1='/api/v1'
 const actor=()=>({actor:recoveryActor(),role:recoveryRole()})
 const send=(method:string,body:Record<string,unknown>):RequestInit=>({method,headers:recoveryHeaders(),body:JSON.stringify({...actor(),...body})})
@@ -40,6 +40,8 @@ export const api={
   checkModelConnection:(connectionId:string)=>apiRequest<{connection:ApiModelConnection;healthy:boolean}>(`${v1}/connections/${connectionId}/check`,mutate({})),
   refreshWebsite:(connectionId:string)=>apiRequest<ApiWebsiteRefresh>(`${v1}/connections/${connectionId}/website-refresh`,mutate({})),
   importEvidence:(modelId:string,payload:{filename:string;name?:string;media_type?:string;content_base64:string;use_llm:boolean;actor:string})=>apiRequest<ApiEvidenceSource>(`${v1}/models/${modelId}/evidence-sources/import`,send('POST',{...payload})),
+  importEvidenceUrl:(modelId:string,payload:{source_url:string;name?:string;use_llm:boolean;auto_refresh:boolean;refresh_interval_minutes:number;actor:string})=>apiRequest<ApiEvidenceSource>(`${v1}/models/${modelId}/evidence-sources/import-url`,send('POST',{...payload})),
+  refreshEvidence:(sourceId:string)=>apiRequest<ApiEvidenceSource>(`${v1}/evidence-sources/${sourceId}/refresh`,mutate({})),
   reviewEvidence:(sourceId:string,status:'approved'|'rejected'|'retired',reason?:string)=>apiRequest<ApiEvidenceSource>(`${v1}/evidence-sources/${sourceId}/review`,mutate({status,...(reason?{reason}:{})})),
   searchEvidence:(modelId:string,query:string)=>apiRequest<ApiEvidenceHit[]>(`${v1}/models/${modelId}/evidence/search`,send('POST',{query,limit:5})),
   verificationSources:()=>apiRequest<ApiVerificationSource[]>(`${v1}/verification-sources`),
@@ -49,4 +51,5 @@ export const api={
   evaluation:(evaluationId:string)=>apiRequest<ApiEvaluation>(`${v1}/evaluations/${evaluationId}`),
   evaluationSummary:(modelId:string)=>apiRequest<ApiEvaluationSummary>(`${v1}/models/${modelId}/evaluation-summary`),
   runAutomatedEvaluation:(modelId:string,body:{max_questions:number;variants_per_fact:number;latency_best_ms:number;latency_worst_ms:number})=>apiRequest<ApiAutomatedEvaluation>(`${v1}/models/${modelId}/automated-evaluations`,mutate(body)),
+  verifyClaims:(modelId:string,answer:string)=>apiRequest<ApiClaimVerification>(`${v1}/models/${modelId}/claims/verify`,send('POST',{answer})),
 }

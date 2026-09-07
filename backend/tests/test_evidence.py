@@ -17,12 +17,20 @@ from app.evidence import (
     EvidenceConflict,
     EvidenceError,
     EvidenceService,
+    FetchedEvidence,
     RawSegment,
     StructuredFact,
     _validate_fact,
+    _validate_public_url,
     parse_evidence_file,
 )
-from app.schemas import EvidenceImportRequest, EvidenceReviewRequest, EvidenceSearchRequest
+from app.schemas import (
+    EvidenceImportRequest,
+    EvidenceRefreshRequest,
+    EvidenceReviewRequest,
+    EvidenceSearchRequest,
+    EvidenceUrlImportRequest,
+)
 
 
 def encoded(value: bytes) -> str:
@@ -32,9 +40,7 @@ def encoded(value: bytes) -> str:
 def test_json_records_keep_exact_json_paths() -> None:
     _, segments = parse_evidence_file(
         "catalog.json",
-        json.dumps(
-            {"products": [{"name": "AeroFit", "price": 3499, "colour": "Black"}]}
-        ).encode(),
+        json.dumps({"products": [{"name": "AeroFit", "price": 3499, "colour": "Black"}]}).encode(),
     )
 
     assert len(segments) == 1
@@ -92,9 +98,13 @@ def test_llm_fact_must_quote_source_and_copy_numbers() -> None:
     assert invented is None
 
 
-def test_source_must_be_approved_before_retrieval(
-    session: Session, model: MonitoredModel
-) -> None:
+@pytest.mark.parametrize("url", ["file:///etc/passwd", "http://127.0.0.1/data.json"])
+def test_url_import_blocks_non_public_targets(url: str) -> None:
+    with pytest.raises(EvidenceError):
+        _validate_public_url(url)
+
+
+def test_source_must_be_approved_before_retrieval(session: Session, model: MonitoredModel) -> None:
     service = EvidenceService(Settings(evidence_max_file_bytes=1024 * 1024))
     imported = service.import_source(
         session,
@@ -108,9 +118,7 @@ def test_source_must_be_approved_before_retrieval(
 
     assert imported.status == "awaiting_review"
     assert imported.chunks[0].locator == {"json_path": "$"}
-    assert service.search(
-        session, model.id, EvidenceSearchRequest(query="AeroFit price")
-    ) == []
+    assert service.search(session, model.id, EvidenceSearchRequest(query="AeroFit price")) == []
 
     approved = service.review_source(
         session,
@@ -193,3 +201,145 @@ def test_llm_facts_are_added_without_removing_raw_evidence(
         "deterministic",
         "exact_match",
     }
+
+
+class FakeEvidenceFetcher:
+    def __init__(self, responses: list[FetchedEvidence]) -> None:
+        self.responses = responses
+        self.calls: list[tuple[str, str | None, str | None]] = []
+
+    def fetch(
+        self,
+        source_url: str,
+        *,
+        etag: str | None = None,
+        last_modified: str | None = None,
+    ) -> FetchedEvidence:
+        self.calls.append((source_url, etag, last_modified))
+        return self.responses.pop(0)
+
+
+def test_url_import_records_provenance_and_requires_review(
+    session: Session, model: MonitoredModel
+) -> None:
+    fetcher = FakeEvidenceFetcher(
+        [
+            FetchedEvidence(
+                content=b'{"station":"Alpha","temperature":21}',
+                filename="weather.json",
+                media_type="application/json",
+                etag='"v1"',
+                last_modified="Mon, 07 Sep 2026 12:00:00 GMT",
+            )
+        ]
+    )
+    service = EvidenceService(Settings(), fetcher=fetcher)
+
+    imported = service.import_url(
+        session,
+        model.id,
+        EvidenceUrlImportRequest(
+            source_url="https://data.example.test/weather.geojson",
+            auto_refresh=True,
+            refresh_interval_minutes=15,
+            actor="owner",
+        ),
+    )
+
+    assert imported.status == "awaiting_review"
+    assert imported.filename == "weather.json"
+    assert imported.source_url == "https://data.example.test/weather.geojson"
+    assert imported.etag == '"v1"'
+    assert imported.auto_refresh is True
+    assert imported.refresh_interval_minutes == 15
+
+
+def test_url_refresh_creates_reviewable_version_and_retires_old_after_approval(
+    session: Session, model: MonitoredModel
+) -> None:
+    fetcher = FakeEvidenceFetcher(
+        [
+            FetchedEvidence(
+                content=b'{"policy":"14 days"}',
+                filename="policy.json",
+                media_type="application/json",
+                etag='"v1"',
+            ),
+            FetchedEvidence(
+                content=b'{"policy":"30 days"}',
+                filename="policy.json",
+                media_type="application/json",
+                etag='"v2"',
+            ),
+        ]
+    )
+    service = EvidenceService(Settings(), fetcher=fetcher)
+    first = service.import_url(
+        session,
+        model.id,
+        EvidenceUrlImportRequest(
+            source_url="https://data.example.test/policy.json",
+            auto_refresh=True,
+            actor="owner",
+        ),
+    )
+    service.review_source(
+        session,
+        first.id,
+        EvidenceReviewRequest(status="approved", actor="reviewer"),
+    )
+
+    replacement = service.refresh_source(
+        session,
+        first.id,
+        EvidenceRefreshRequest(actor="sync-worker"),
+    )
+
+    assert replacement.id != first.id
+    assert replacement.status == "awaiting_review"
+    assert replacement.supersedes_source_id == first.id
+    assert replacement.auto_refresh is True
+    assert fetcher.calls[-1][1] == '"v1"'
+
+    service.review_source(
+        session,
+        replacement.id,
+        EvidenceReviewRequest(status="approved", actor="reviewer"),
+    )
+    assert service.get_source(session, first.id).status == "retired"
+    assert service.get_source(session, replacement.id).status == "approved"
+
+
+def test_unchanged_url_refresh_reuses_source(session: Session, model: MonitoredModel) -> None:
+    fetcher = FakeEvidenceFetcher(
+        [
+            FetchedEvidence(
+                content=b'{"answer":42}',
+                filename="facts.json",
+                media_type="application/json",
+                etag='"v1"',
+            ),
+            FetchedEvidence(
+                content=None,
+                filename="facts.json",
+                media_type="application/json",
+                etag='"v1"',
+                not_modified=True,
+            ),
+        ]
+    )
+    service = EvidenceService(Settings(), fetcher=fetcher)
+    imported = service.import_url(
+        session,
+        model.id,
+        EvidenceUrlImportRequest(source_url="https://data.example.test/facts.json"),
+    )
+
+    unchanged = service.refresh_source(
+        session,
+        imported.id,
+        EvidenceRefreshRequest(actor="sync-worker"),
+    )
+
+    assert unchanged.id == imported.id
+    assert unchanged.last_checked_at is not None

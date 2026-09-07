@@ -420,6 +420,21 @@ class EvidenceImportRequest(BaseModel):
     actor: str = Field(default="system", min_length=1, max_length=120)
 
 
+class EvidenceUrlImportRequest(BaseModel):
+    """Import a public direct-file URL and optionally keep it synchronized."""
+
+    source_url: str = Field(min_length=1, max_length=2048)
+    name: str | None = Field(default=None, min_length=1, max_length=160)
+    use_llm: bool = False
+    auto_refresh: bool = False
+    refresh_interval_minutes: int = Field(default=60, ge=5, le=10_080)
+    actor: str = Field(default="system", min_length=1, max_length=120)
+
+
+class EvidenceRefreshRequest(BaseModel):
+    actor: str = Field(default="system", min_length=1, max_length=120)
+
+
 class EvidenceChunkResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -448,6 +463,14 @@ class EvidenceSourceResponse(BaseModel):
     extraction_method: str
     llm_provider: str | None
     llm_model: str | None
+    source_url: str | None = None
+    etag: str | None = None
+    last_modified: str | None = None
+    fetched_at: datetime | None = None
+    last_checked_at: datetime | None = None
+    refresh_interval_minutes: int | None = None
+    auto_refresh: bool = False
+    supersedes_source_id: str | None = None
     chunk_count: int
     approved_by: str | None
     approved_at: datetime | None
@@ -544,6 +567,70 @@ class EvidenceSearchHit(BaseModel):
     evidence_quote: str
     locator: dict[str, object]
     relevance: float = Field(ge=0, le=1)
+
+
+ClaimVerdict = Literal["supported", "contradicted", "unverified"]
+
+
+class InteractionObservation(BaseModel):
+    """One provider-independent model interaction supplied by an owner connector."""
+
+    request_id: str | None = Field(default=None, min_length=1, max_length=120)
+    occurred_at: datetime = Field(default_factory=utc_now)
+    question: str = Field(min_length=1, max_length=8000)
+    answer: str = Field(default="", max_length=32_000)
+    provider: str | None = Field(default=None, max_length=80)
+    status: TraceStatus = TraceStatus.OK
+    error_code: str | None = Field(default=None, max_length=80)
+    latency_ms: int | None = Field(default=None, ge=0)
+    input_tokens: int | None = Field(default=None, ge=0)
+    output_tokens: int | None = Field(default=None, ge=0)
+    cost_usd: float | None = Field(default=None, ge=0)
+    safety_flags: list[str] = Field(default_factory=list, max_length=20)
+    is_simulated: bool = False
+
+
+class InteractionBatchEvaluateRequest(BaseModel):
+    event_id: str | None = Field(
+        default=None,
+        min_length=8,
+        max_length=128,
+        pattern=r"^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+    )
+    interactions: list[InteractionObservation] = Field(min_length=1, max_length=100)
+    latency_target_ms: int = Field(default=2000, ge=1, le=300_000)
+    cost_target_usd_per_interaction: float | None = Field(default=None, gt=0)
+    source: SignalSource = SignalSource.OBSERVED
+    actor: str = Field(default="connector", min_length=1, max_length=120)
+
+
+class ClaimEvaluationResponse(BaseModel):
+    claim: str
+    verdict: ClaimVerdict
+    confidence: float = Field(ge=0, le=1)
+    reason: str
+    evidence: EvidenceSearchHit | None = None
+
+
+class ClaimVerificationRequest(BaseModel):
+    answer: str = Field(min_length=1, max_length=32_000)
+
+
+class ClaimVerificationResponse(BaseModel):
+    formula: str = "claim-verification-v1"
+    supported_claims: int
+    contradicted_claims: int
+    unverified_claims: int
+    claims: list[ClaimEvaluationResponse]
+
+
+class InteractionResultResponse(BaseModel):
+    request_id: str | None
+    groundedness_score: float | None
+    supported_claims: int
+    contradicted_claims: int
+    unverified_claims: int
+    claims: list[ClaimEvaluationResponse]
 
 
 class ModelResponse(BaseModel):
@@ -765,6 +852,19 @@ class HealthSnapshotResponse(BaseModel):
     policy_version: str
     source: SignalSource
     missing_dimensions: list[str] = Field(default_factory=list)
+
+
+class InteractionBatchEvaluateResponse(BaseModel):
+    model_id: str
+    event_id: str
+    formula: str = "claim-verification-v1"
+    supported_claims: int
+    contradicted_claims: int
+    unverified_claims: int
+    evidence_coverage: float = Field(ge=0, le=1)
+    groundedness_score: float | None
+    interactions: list[InteractionResultResponse]
+    health_snapshot: HealthSnapshotResponse
 
 
 class GroqModelCatalogResponse(BaseModel):

@@ -31,6 +31,8 @@ Recovery is a lifecycle rather than a button click. A plan can be recommended, a
 
 - **Model registry and versioning** — register monitored systems, track lifecycle state, and fingerprint model, prompt, tool, corpus, and evaluation-policy versions.
 - **Telemetry ingestion** — accept provider-neutral health dimensions and optional request-level traces through a versioned API.
+- **Owner connector evaluation** — capture interactions from any hosted or local model, verify claims against approved evidence with deterministic rules, and derive auditable health windows.
+- **Live evidence URLs** — fetch public direct data URLs, preserve provenance, detect changes, and require approval before a new version replaces trusted evidence.
 - **Privacy-aware evidence** — redact prompt and response text before storage while retaining hashes, safe trace fields, and configurable retention periods.
 - **Model Health Score** — combine available reliability dimensions into a transparent score with state, confidence, sample size, coverage, policy version, and missing-dimension reporting.
 - **Health history and forecasting** — store health snapshots and short-horizon forecasts, then record forecast outcomes when the horizon passes.
@@ -54,7 +56,7 @@ AI application ───────────────→ Hosted, local, o
   ↓
 Evaluator / telemetry collector / connector
   ↓
-POST /api/v1/models/{model_id}/telemetry
+POST /api/v1/models/{model_id}/interactions/evaluate
   ↓
 FastAPI service
   ├── trace redaction and signal inference
@@ -84,12 +86,13 @@ DriftZero is designed around the behavior of a monitored application, not a part
 POST /api/v1/models/{model_id}/telemetry
 ```
 
-Each submitted window contains normalized `0–100` health dimensions, its sample size and traffic coverage, a signal source, and optional trace evidence. This boundary allows the scoring, incident, diagnosis, alert, recovery, and verification pipeline to operate independently of the underlying provider. The repository includes a dependency-free synthetic connector example, but it does not yet ship finished connectors for every provider.
+The owner connector sends raw application observations—not invented scores—to the interaction endpoint. DriftZero verifies factual claims against approved evidence and derives groundedness, quality, reliability, latency, safety, sample size, and coverage. Applications with their own domain evaluator can continue sending normalized `0–100` dimensions directly to the telemetry endpoint.
 
 See [`docs/HEALTH_EVENT_SCHEMA.md`](docs/HEALTH_EVENT_SCHEMA.md) for the current contract.
 See [`docs/CONNECTIONS.md`](docs/CONNECTIONS.md) for GitHub, telemetry, website, and API
 onboarding, credential handling, and connection checks.
 See [`docs/GROQ_EVALUATION.md`](docs/GROQ_EVALUATION.md) for the server-side Groq import and deterministic evaluation flow.
+See [`docs/OWNER_CONNECTOR.md`](docs/OWNER_CONNECTOR.md) for live URL evidence and hosted or local model integration.
 
 ## Evaluation layer
 
@@ -217,7 +220,7 @@ Requirements: Python 3.12 or newer with the backend dependencies installed, and 
 python scripts/run_local.py
 ```
 
-That starts six processes and shuts them all down together on Ctrl+C:
+That starts seven processes and shuts them all down together on Ctrl+C:
 
 | Service | URL | Role |
 | --- | --- | --- |
@@ -225,6 +228,7 @@ That starts six processes and shuts them all down together on Ctrl+C:
 | Recovery worker | — | Applies approved recovery plans and records verification |
 | Alert worker | — | Evaluates alert rules |
 | Retention worker | — | Removes traces beyond each model's retention window |
+| Evidence sync worker | — | Rechecks opted-in URL sources and versions changed content |
 | Dashboard | <http://localhost:5173> | Operator view: health, incidents, recovery |
 | ShopAssist | <http://localhost:3000> | The monitored chatbot; presenter controls at `/demo` |
 
