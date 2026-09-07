@@ -103,19 +103,19 @@ The built-in semantic and temporal stability evaluator is a deterministic simula
 
 ## Model Health
 
-The Model Health Score is a policy-versioned summary of available signals, not an objective statement about a model. The current `health-v1` policy uses these dimensions, where higher always means healthier:
+The Model Health Score is a policy-versioned summary of available signals, not an objective statement about a model. The current `health-v2` policy uses these dimensions, where higher always means healthier:
 
 - quality
 - groundedness
 - semantic stability
-- temporal stability
 - safety
-- drift health
 - operational reliability
 - latency health
 - cost health
 
 The backend calculates a weighted score from the dimensions that are present and reports missing dimensions explicitly. It also derives confidence from traffic coverage, sample size, and available dimension coverage. By default, fewer than 20 samples, less than 30% traffic coverage, or insufficient dimension weight produces an `insufficient_data` state instead of a misleading score.
+
+The published weights are quality 25%, groundedness 20%, reliability 20%, semantic consistency 15%, safety 10%, latency 5%, and cost efficiency 5%. Temporal stability and drift remain available diagnostic signals but are not inputs to the `health-v2` aggregate.
 
 Health snapshots preserve the evidence window and scoring policy. The current forecast is an inspectable short-horizon slope projection with a variability-based interval; it is a baseline forecast, not a guarantee of a future incident.
 
@@ -396,6 +396,10 @@ Important current boundaries:
 - the single-container Render deployment files should be revalidated against the current Vite frontend build before use.
 
 Do not attach consequential production credentials or recovery permissions to the demo configuration.
+
+Website reference sources can also be refreshed into source-verifiable JSON on a schedule, with
+optional xAI/Grok structuring. See [`docs/WEBSITE_SYNC.md`](docs/WEBSITE_SYNC.md) for the trust
+boundary, configuration, API, and worker behavior.
 
 ## Roadmap
 

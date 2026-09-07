@@ -296,8 +296,8 @@ class TestDemoScenario:
         demo = _service().reset_demo(session)
 
         assert demo.incident is not None
-        assert demo.incident.baseline_score == 87.0
-        assert demo.incident.trough_score == 61.0
+        assert demo.incident.baseline_score == 87.2
+        assert demo.incident.trough_score == 62.5
         # Escalated when the model fell from warning into critical.
         assert demo.incident.severity is Severity.HIGH
         assert demo.diagnosis.incident_id == demo.incident.id

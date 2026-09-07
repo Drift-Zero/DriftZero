@@ -317,7 +317,7 @@ class ModelVersionCreate(BaseModel):
     configuration: dict[str, object] = Field(default_factory=dict)
     tools: list[str] = Field(default_factory=list, max_length=100)
     corpus_version: str | None = Field(default=None, max_length=80)
-    evaluation_policy_version: str = Field(default="health-v1", min_length=1, max_length=40)
+    evaluation_policy_version: str = Field(default="health-v2", min_length=1, max_length=40)
     actor: str = Field(default="system", min_length=1, max_length=120)
 
 
@@ -474,13 +474,34 @@ class EvidenceSearchRequest(BaseModel):
     limit: int = Field(default=5, ge=1, le=20)
 
 
+class WebsiteRefreshRequest(BaseModel):
+    actor: str = Field(default="website-operator", min_length=1, max_length=120)
+
+
+class WebsiteRefreshResponse(BaseModel):
+    connection_id: str
+    status: Literal["updated", "unchanged"]
+    source_id: str | None
+    fetched_at: datetime
+    content_hash: str
+    fact_count: int
+    message: str
+
+
 class AutomatedEvaluationRequest(BaseModel):
     """Controls for a source-generated black-box model health check."""
 
     max_questions: int = Field(default=20, ge=1, le=50)
     variants_per_fact: int = Field(default=4, ge=2, le=5)
-    latency_target_ms: int = Field(default=2000, ge=1, le=300_000)
+    latency_best_ms: int = Field(default=200, ge=0, le=300_000)
+    latency_worst_ms: int = Field(default=2000, ge=1, le=300_000)
     actor: str = Field(default="system", min_length=1, max_length=120)
+
+    @model_validator(mode="after")
+    def validate_latency_range(self) -> AutomatedEvaluationRequest:
+        if self.latency_worst_ms <= self.latency_best_ms:
+            raise ValueError("latency_worst_ms must be greater than latency_best_ms")
+        return self
 
 
 class AutomatedEvaluationCaseResponse(BaseModel):
@@ -768,10 +789,18 @@ class GroqEvaluationProfileInput(BaseModel):
     trusted_facts: list[str] = Field(default_factory=list, max_length=100)
     forbidden_terms: list[str] = Field(default_factory=list, max_length=100)
     expected_json: bool = False
-    latency_target_ms: int = Field(default=2000, ge=1, le=300_000)
-    cost_target_usd: float | None = Field(default=None, gt=0)
+    feedback_score: float | None = Field(default=None, ge=0, le=100)
+    latency_best_ms: int = Field(default=200, ge=0, le=300_000)
+    latency_worst_ms: int = Field(default=2000, ge=1, le=300_000)
+    cost_max_usd: float | None = Field(default=None, gt=0)
     input_cost_per_million: float = Field(default=0.0, ge=0)
     output_cost_per_million: float = Field(default=0.0, ge=0)
+
+    @model_validator(mode="after")
+    def validate_latency_range(self) -> GroqEvaluationProfileInput:
+        if self.latency_worst_ms <= self.latency_best_ms:
+            raise ValueError("latency_worst_ms must be greater than latency_best_ms")
+        return self
 
 
 class GroqEvaluationRequest(BaseModel):

@@ -24,6 +24,8 @@ from app.schemas import (
     AlertRuleUpdate,
     AlertState,
     AuditEventResponse,
+    AutomatedEvaluationRequest,
+    AutomatedEvaluationResponse,
     ClaimImportance,
     ConnectionCheckResponse,
     ConnectionCreate,

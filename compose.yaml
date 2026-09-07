@@ -28,6 +28,14 @@ x-backend-environment: &backend-environment
   DRIFTZERO_EVIDENCE_LLM_PROVIDER: ${DRIFTZERO_EVIDENCE_LLM_PROVIDER:-disabled}
   DRIFTZERO_EVIDENCE_LLM_MODEL: ${DRIFTZERO_EVIDENCE_LLM_MODEL:-}
   DRIFTZERO_EVIDENCE_LLM_TIMEOUT_SECONDS: ${DRIFTZERO_EVIDENCE_LLM_TIMEOUT_SECONDS:-30}
+  DRIFTZERO_WEBSITE_REFRESH_INTERVAL_SECONDS: ${DRIFTZERO_WEBSITE_REFRESH_INTERVAL_SECONDS:-30}
+  DRIFTZERO_WEBSITE_FETCH_TIMEOUT_SECONDS: ${DRIFTZERO_WEBSITE_FETCH_TIMEOUT_SECONDS:-15}
+  DRIFTZERO_WEBSITE_LLM_TIMEOUT_SECONDS: ${DRIFTZERO_WEBSITE_LLM_TIMEOUT_SECONDS:-45}
+  DRIFTZERO_WEBSITE_MAX_RESPONSE_BYTES: ${DRIFTZERO_WEBSITE_MAX_RESPONSE_BYTES:-1048576}
+  DRIFTZERO_WEBSITE_LLM_TEXT_CHARS: ${DRIFTZERO_WEBSITE_LLM_TEXT_CHARS:-40000}
+  XAI_API_KEY: ${XAI_API_KEY:-}
+  DRIFTZERO_XAI_MODEL: ${DRIFTZERO_XAI_MODEL:-grok-4.6}
+  DRIFTZERO_XAI_BASE_URL: ${DRIFTZERO_XAI_BASE_URL:-https://api.x.ai/v1}
   GEMINI_API_KEY: ${GEMINI_API_KEY:-}
   DRIFTZERO_RETENTION_INTERVAL_SECONDS: ${DRIFTZERO_RETENTION_INTERVAL_SECONDS:-3600}
   DRIFTZERO_LOG_LEVEL: ${DRIFTZERO_LOG_LEVEL:-INFO}
@@ -105,6 +113,21 @@ services:
     build:
       context: ./backend
     entrypoint: ["python", "-m", "app.retention_worker"]
+    environment:
+      <<: *backend-environment
+    volumes:
+      - driftzero-data:/data
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      test: ["NONE"]
+
+  website-worker:
+    <<: *service-defaults
+    build:
+      context: ./backend
+    entrypoint: ["python", "-m", "app.website_worker"]
     environment:
       <<: *backend-environment
     volumes:

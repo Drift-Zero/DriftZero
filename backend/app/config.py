@@ -62,6 +62,14 @@ class Settings:
     evidence_llm_provider: str = "disabled"
     evidence_llm_model: str | None = None
     evidence_llm_timeout_seconds: float = 30.0
+    website_refresh_interval_seconds: int = 30
+    website_fetch_timeout_seconds: float = 15.0
+    website_llm_timeout_seconds: float = 45.0
+    website_max_response_bytes: int = 1_048_576
+    website_llm_text_chars: int = 40_000
+    xai_api_key: str | None = None
+    xai_model: str = "grok-4.6"
+    xai_base_url: str = "https://api.x.ai/v1"
     trusted_hosts: tuple[str, ...] = ("localhost", "127.0.0.1", "testserver")
     telemetry_max_future_skew_seconds: int = 300
     docs_enabled: bool = True
@@ -249,6 +257,54 @@ class Settings:
                     )
                 ),
             ),
+            website_refresh_interval_seconds=max(
+                5,
+                int(
+                    os.getenv(
+                        "DRIFTZERO_WEBSITE_REFRESH_INTERVAL_SECONDS",
+                        str(defaults.website_refresh_interval_seconds),
+                    )
+                ),
+            ),
+            website_fetch_timeout_seconds=max(
+                1.0,
+                float(
+                    os.getenv(
+                        "DRIFTZERO_WEBSITE_FETCH_TIMEOUT_SECONDS",
+                        str(defaults.website_fetch_timeout_seconds),
+                    )
+                ),
+            ),
+            website_llm_timeout_seconds=max(
+                1.0,
+                float(
+                    os.getenv(
+                        "DRIFTZERO_WEBSITE_LLM_TIMEOUT_SECONDS",
+                        str(defaults.website_llm_timeout_seconds),
+                    )
+                ),
+            ),
+            website_max_response_bytes=max(
+                65_536,
+                int(
+                    os.getenv(
+                        "DRIFTZERO_WEBSITE_MAX_RESPONSE_BYTES",
+                        str(defaults.website_max_response_bytes),
+                    )
+                ),
+            ),
+            website_llm_text_chars=max(
+                1_000,
+                int(
+                    os.getenv(
+                        "DRIFTZERO_WEBSITE_LLM_TEXT_CHARS",
+                        str(defaults.website_llm_text_chars),
+                    )
+                ),
+            ),
+            xai_api_key=os.getenv("XAI_API_KEY") or None,
+            xai_model=os.getenv("DRIFTZERO_XAI_MODEL", defaults.xai_model),
+            xai_base_url=os.getenv("DRIFTZERO_XAI_BASE_URL", defaults.xai_base_url),
             trusted_hosts=_environment_list(
                 "DRIFTZERO_TRUSTED_HOSTS", defaults.trusted_hosts
             ),

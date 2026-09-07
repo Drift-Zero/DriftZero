@@ -20,6 +20,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import StrEnum
 
+from app.metric_formulas import QUALITY_WEIGHTS, weighted_score
 from app.schemas import ClaimImportance, ClaimVerdictValue
 
 # A claim's contribution is weighted by how much the answer depends on it.
@@ -49,13 +50,6 @@ CENTRAL_CONTRADICTION_CORRECTNESS_CAP = 50.0
 # Below this share of claims actually reachable in the corpus, correctness is
 # still reported but flagged: it rests on too little evidence to lean on.
 LOW_CONFIDENCE_COVERAGE = 60.0
-
-QUALITY_WEIGHTS: dict[str, float] = {
-    "correctness": 0.40,
-    "relevance": 0.20,
-    "completeness": 0.20,
-    "instruction_adherence": 0.20,
-}
 
 # Anchored rubric: 0 complete failure, 1 major problems, 2 partially
 # acceptable, 3 mostly correct, 4 fully correct.
@@ -182,7 +176,7 @@ class RubricScores:
     correctness: int | None = None
     relevance: int | None = None
     completeness: int | None = None
-    instruction_adherence: int | None = None
+    feedback: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -238,7 +232,7 @@ def score_quality(rubric: RubricScores, groundedness: GroundednessResult) -> Qua
         "correctness": correctness,
         "relevance": _normalize(rubric.relevance),
         "completeness": _normalize(rubric.completeness),
-        "instruction_adherence": _normalize(rubric.instruction_adherence),
+        "feedback": _normalize(rubric.feedback),
     }
     missing = sorted(name for name, value in components.items() if value is None)
 
@@ -253,10 +247,9 @@ def score_quality(rubric: RubricScores, groundedness: GroundednessResult) -> Qua
             missing_components=missing,
         )
 
-    weight_total = sum(QUALITY_WEIGHTS[name] for name in available)
-    weighted = sum(QUALITY_WEIGHTS[name] * value for name, value in available.items())
+    weighted = weighted_score(available, QUALITY_WEIGHTS)
     return QualityResult(
-        quality=round(weighted / weight_total, 1),
+        quality=round(weighted, 1) if weighted is not None else None,
         correctness=correctness,
         correctness_confidence=confidence,
         correctness_capped=correctness_capped,

@@ -6,22 +6,13 @@ from dataclasses import dataclass
 from datetime import datetime
 from statistics import pstdev
 
+from app.metric_formulas import HEALTH_WEIGHTS
 from app.schemas import DimensionScores, HealthForecast, HealthState
 
-POLICY_VERSION = "health-v1"
+POLICY_VERSION = "health-v2"
 
 # Higher always means healthier. Weights sum to 1.0 and are intentionally public.
-DIMENSION_WEIGHTS: dict[str, float] = {
-    "quality": 0.18,
-    "groundedness": 0.20,
-    "semantic_stability": 0.12,
-    "temporal_stability": 0.08,
-    "safety": 0.15,
-    "drift": 0.10,
-    "reliability": 0.08,
-    "latency": 0.04,
-    "cost": 0.05,
-}
+DIMENSION_WEIGHTS: dict[str, float] = dict(HEALTH_WEIGHTS)
 
 
 @dataclass(frozen=True, slots=True)
@@ -44,7 +35,11 @@ def calculate_health(
     """Return a weighted score only when the evidence clears coverage gates."""
 
     values = dimensions.model_dump()
-    available = {name: value for name, value in values.items() if value is not None}
+    available = {
+        name: value
+        for name, value in values.items()
+        if value is not None and name in DIMENSION_WEIGHTS
+    }
     missing = [name for name in DIMENSION_WEIGHTS if name not in available]
     available_weight = sum(DIMENSION_WEIGHTS[name] for name in available)
     dimension_coverage = available_weight / sum(DIMENSION_WEIGHTS.values())
@@ -143,4 +138,3 @@ def forecast_health(
 
 def _clamp_score(value: float) -> float:
     return max(0.0, min(100.0, value))
-

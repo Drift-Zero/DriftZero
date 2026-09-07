@@ -38,12 +38,12 @@ def test_shopassist_demo_runs_from_warning_to_verified_recovery() -> None:
         plan_id = demo["recovery"]["id"]
         assert demo["model"]["name"] == "ShopAssist"
         assert [snapshot["score"] for snapshot in demo["health"]["snapshots"]] == [
-            92.0,
-            87.0,
-            74.0,
-            61.0,
+            91.9,
+            87.2,
+            74.8,
+            62.5,
         ]
-        assert demo["health"]["forecast"]["predicted_score"] == 48.0
+        assert demo["health"]["forecast"]["predicted_score"] == 50.2
         assert demo["health"]["forecast"]["direction"] == "deteriorating"
         assert demo["diagnosis"]["probable_cause"] == "knowledge_freshness_failure"
         assert demo["diagnosis"]["confidence"] == 0.87
@@ -126,7 +126,7 @@ def test_shopassist_demo_runs_from_warning_to_verified_recovery() -> None:
 
         timeline = client.get(f"/api/v1/models/{model_id}/health")
         assert timeline.status_code == 200
-        assert timeline.json()["snapshots"][-1]["score"] == 84.2
+        assert timeline.json()["snapshots"][-1]["score"] == 84.7
         assert timeline.json()["snapshots"][-1]["source"] == "simulated"
 
         diagnosis = client.get(f"/api/v1/models/{model_id}/diagnoses/latest")

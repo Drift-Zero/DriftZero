@@ -451,18 +451,16 @@ Every principal screen must be verified in: loading, empty, healthy, warning, cr
 
 ## 12. Health score specification
 
-### 12.1 Dimensions and `health-v1` weights
+### 12.1 Dimensions and `health-v2` weights
 
 | Dimension | Weight | Operational meaning |
 | --- | ---: | --- |
-| Quality | 0.18 | Task correctness or usefulness against configured evaluators. |
+| Quality | 0.25 | 0.4 correctness + 0.3 relevance + 0.2 completeness + 0.1 feedback. |
 | Groundedness | 0.20 | Degree to which material claims are supported by approved evidence. |
-| Semantic stability | 0.12 | Agreement of material facts across meaning-preserving variants. |
-| Temporal stability | 0.08 | Agreement over comparable repeated runs. |
-| Safety | 0.15 | Compliance with configured safety policy. |
-| Drift | 0.10 | Health of input, data, and retrieval distributions; 100 is healthier. |
-| Reliability | 0.08 | Successful, non-timeout operational completion. |
-| Latency | 0.04 | Performance against configured latency objective; 100 is healthier. |
+| Reliability | 0.20 | Successful requests divided by total requests. |
+| Semantic stability | 0.15 | Mean pairwise similarity across meaning-preserving variants. |
+| Safety | 0.10 | One minus unsafe responses divided by total responses. |
+| Latency | 0.05 | Linear score between configured best and worst latency. |
 | Cost | 0.05 | Cost efficiency against configured budget/objective; 100 is healthier. |
 
 All dimensions are normalized to 0–100 and oriented so higher is healthier. Raw metric definitions, normalization curves, evaluator versions, and objectives must be stored in or referenced by the health policy.
@@ -478,7 +476,7 @@ health = sum(score[d] * weight[d] for d in A)
 
 Missing dimensions are not interpreted as zero. The score is withheld if the sample size is below 20, request coverage is below 0.30, or available dimension weight is below 0.50. Configurable future policies must be versioned.
 
-For `health-v1`, confidence is an evidence-adequacy indicator:
+For `health-v2`, confidence is an evidence-adequacy indicator:
 
 ```text
 confidence = clamp(coverage, 0, 1)

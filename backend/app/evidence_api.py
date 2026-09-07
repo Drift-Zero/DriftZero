@@ -16,7 +16,10 @@ from app.schemas import (
     EvidenceSearchHit,
     EvidenceSearchRequest,
     EvidenceSourceResponse,
+    WebsiteRefreshRequest,
+    WebsiteRefreshResponse,
 )
+from app.website_sync import WebsiteSyncError, WebsiteSyncService
 
 router = APIRouter()
 
@@ -40,6 +43,13 @@ def get_evidence_service(request: Request) -> EvidenceService:
 
 SessionDependency = Annotated[Session, Depends(get_session)]
 EvidenceServiceDependency = Annotated[EvidenceService, Depends(get_evidence_service)]
+
+
+def get_website_sync_service(request: Request) -> WebsiteSyncService:
+    return request.app.state.website_sync_service
+
+
+WebsiteSyncServiceDependency = Annotated[WebsiteSyncService, Depends(get_website_sync_service)]
 
 
 def _translate_error(exc: Exception) -> HTTPException:
@@ -126,3 +136,26 @@ def search_evidence(
     service: EvidenceServiceDependency,
 ) -> list[EvidenceSearchHit]:
     return service.search(session, model_id, payload)
+
+
+@router.post(
+    "/connections/{connection_id}/website-refresh",
+    response_model=WebsiteRefreshResponse,
+    tags=["evidence"],
+)
+def refresh_website_source(
+    connection_id: str,
+    payload: WebsiteRefreshRequest,
+    session: SessionDependency,
+    service: WebsiteSyncServiceDependency,
+) -> WebsiteRefreshResponse:
+    try:
+        return WebsiteRefreshResponse.model_validate(
+            service.refresh(session, connection_id, actor=payload.actor),
+            from_attributes=True,
+        )
+    except WebsiteSyncError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=str(exc),
+        ) from exc

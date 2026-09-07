@@ -1,5 +1,5 @@
 import { apiRequest,recoveryActor,recoveryHeaders,recoveryRole } from './client'
-import type { ApiEvaluation,ApiEvaluationSummary,ApiVerificationSource,ApiAlertFeed,ApiAlertRule,ApiAlertRuleInput,ApiAuditEvent,ApiDiagnosis,ApiEvidenceHit,ApiEvidenceSource,ApiGroqCatalog,ApiGroqEvaluation,ApiGroqEvaluationProfile,ApiHealthTimeline,ApiIncident,ApiModel,ApiRecovery,ApiRecoveryCommand } from './types'
+import type { ApiEvaluation,ApiEvaluationSummary,ApiVerificationSource,ApiAlertFeed,ApiAlertRule,ApiAlertRuleInput,ApiAuditEvent,ApiAutomatedEvaluation,ApiDiagnosis,ApiEvidenceHit,ApiEvidenceSource,ApiGroqCatalog,ApiGroqEvaluation,ApiGroqEvaluationProfile,ApiHealthTimeline,ApiIncident,ApiModel,ApiModelConnection,ApiRecovery,ApiRecoveryCommand,ApiWebsiteRefresh } from './types'
 const v1='/api/v1'
 const actor=()=>({actor:recoveryActor(),role:recoveryRole()})
 const send=(method:string,body:Record<string,unknown>):RequestInit=>({method,headers:recoveryHeaders(),body:JSON.stringify({...actor(),...body})})
@@ -36,7 +36,9 @@ export const api={
   evidenceSources:(modelId:string)=>apiRequest<ApiEvidenceSource[]>(`${v1}/models/${modelId}/evidence-sources`),
   modelConnections:(modelId:string)=>apiRequest<ApiModelConnection[]>(`${v1}/models/${modelId}/connections`),
   createModelConnection:(modelId:string,body:{name:string;api_endpoint:string;auth_scheme?:string;api_key?:string;config:Record<string,unknown>})=>apiRequest<ApiModelConnection>(`${v1}/models/${modelId}/connections`,mutate({kind:'api',...body})),
+  createWebsiteConnection:(modelId:string,body:{name:string;url:string;config:Record<string,unknown>})=>apiRequest<ApiModelConnection>(`${v1}/models/${modelId}/connections`,mutate({kind:'website',...body})),
   checkModelConnection:(connectionId:string)=>apiRequest<{connection:ApiModelConnection;healthy:boolean}>(`${v1}/connections/${connectionId}/check`,mutate({})),
+  refreshWebsite:(connectionId:string)=>apiRequest<ApiWebsiteRefresh>(`${v1}/connections/${connectionId}/website-refresh`,mutate({})),
   importEvidence:(modelId:string,payload:{filename:string;name?:string;media_type?:string;content_base64:string;use_llm:boolean;actor:string})=>apiRequest<ApiEvidenceSource>(`${v1}/models/${modelId}/evidence-sources/import`,send('POST',{...payload})),
   reviewEvidence:(sourceId:string,status:'approved'|'rejected'|'retired',reason?:string)=>apiRequest<ApiEvidenceSource>(`${v1}/evidence-sources/${sourceId}/review`,mutate({status,...(reason?{reason}:{})})),
   searchEvidence:(modelId:string,query:string)=>apiRequest<ApiEvidenceHit[]>(`${v1}/models/${modelId}/evidence/search`,send('POST',{query,limit:5})),
@@ -46,4 +48,5 @@ export const api={
   evaluateResponse:(modelId:string,question:string,answer:string)=>apiRequest<ApiEvaluation>(`${v1}/models/${modelId}/evaluate`,send('POST',{question,answer})),
   evaluation:(evaluationId:string)=>apiRequest<ApiEvaluation>(`${v1}/evaluations/${evaluationId}`),
   evaluationSummary:(modelId:string)=>apiRequest<ApiEvaluationSummary>(`${v1}/models/${modelId}/evaluation-summary`),
+  runAutomatedEvaluation:(modelId:string,body:{max_questions:number;variants_per_fact:number;latency_best_ms:number;latency_worst_ms:number})=>apiRequest<ApiAutomatedEvaluation>(`${v1}/models/${modelId}/automated-evaluations`,mutate(body)),
 }

@@ -1,7 +1,7 @@
-import { Activity, Check, CheckCircle2, Circle, Database, FileText, FileUp, Loader2, Play, Search, ShieldCheck, Sparkles, X, XCircle } from 'lucide-react'
+import { Activity, Check, CheckCircle2, Circle, Clock3, Database, FileText, FileUp, Globe2, Loader2, Play, RefreshCw, Search, ShieldCheck, Sparkles, X, XCircle } from 'lucide-react'
 import { useEffect, useMemo, useState, type FormEvent } from 'react'
 import { api } from '../api/endpoints'
-import type { ApiAutomatedEvaluation, ApiEvidenceHit, ApiEvidenceSource, ApiModel, ApiModelConnection } from '../api/types'
+import type { ApiAutomatedEvaluation, ApiEvidenceHit, ApiEvidenceSource, ApiModel, ApiModelConnection, ApiWebsiteRefresh } from '../api/types'
 
 const MAX_FILE_BYTES = 5 * 1024 * 1024
 const ACCEPTED = '.pdf,.json,.csv,.txt,.md'
@@ -49,6 +49,12 @@ export function EvidencePage() {
   const [requestField, setRequestField] = useState('message')
   const [responsePath, setResponsePath] = useState('answer')
   const [apiKey, setApiKey] = useState('')
+  const [websiteUrl, setWebsiteUrl] = useState('')
+  const [websiteName, setWebsiteName] = useState('')
+  const [websiteInterval, setWebsiteInterval] = useState(10)
+  const [websiteUseXai, setWebsiteUseXai] = useState(true)
+  const [websiteAutoApprove, setWebsiteAutoApprove] = useState(false)
+  const [websiteResult, setWebsiteResult] = useState<ApiWebsiteRefresh | null>(null)
 
   useEffect(() => {
     let active = true
@@ -78,6 +84,7 @@ export function EvidencePage() {
   const selectedModel = useMemo(() => models.find(model => model.id === modelId), [models, modelId])
   const approvedJson = useMemo(() => sources.filter(source => source.status === 'approved' && source.filename.toLowerCase().endsWith('.json')), [sources])
   const hasCallableModel = selectedModel?.provider.toLowerCase() === 'groq' || connections.some(connection => connection.kind === 'api' && ['configured', 'connected'].includes(connection.status))
+  const websiteConnections = useMemo(() => connections.filter(connection => connection.kind === 'website'), [connections])
 
   async function upload(event: FormEvent) {
     event.preventDefault()
@@ -120,7 +127,8 @@ export function EvidencePage() {
       setEvaluation(await api.runAutomatedEvaluation(modelId, {
         max_questions: questionCount,
         variants_per_fact: 5,
-        latency_target_ms: 2000,
+        latency_best_ms: 200,
+        latency_worst_ms: 2000,
       }))
     } catch (err) {
       setError(err instanceof Error ? err.message : 'The automatic health check could not run.')
@@ -149,6 +157,47 @@ export function EvidencePage() {
       if (!checked.healthy) setError(checked.connection.last_error ?? 'The endpoint was saved but did not pass its connection check.')
     } catch (err) {
       setError(err instanceof Error ? err.message : 'The model endpoint could not be connected.')
+    } finally { setBusy(false) }
+  }
+
+  async function connectWebsite(event: FormEvent) {
+    event.preventDefault()
+    if (!modelId || !websiteUrl.trim()) return
+    setBusy(true); setError(null); setWebsiteResult(null)
+    try {
+      const connection = await api.createWebsiteConnection(modelId, {
+        name: websiteName.trim() || new URL(websiteUrl).hostname,
+        url: websiteUrl.trim(),
+        config: {
+          refresh_interval_minutes: websiteInterval,
+          use_xai: websiteUseXai,
+          auto_approve: websiteAutoApprove,
+        },
+      })
+      setConnections(current => [...current, connection])
+      const result = await api.refreshWebsite(connection.id)
+      setWebsiteResult(result)
+      const [sourceRecords, connectionRecords] = await Promise.all([
+        api.evidenceSources(modelId),
+        api.modelConnections(modelId),
+      ])
+      setSources(sourceRecords); setConnections(connectionRecords); setWebsiteUrl(''); setWebsiteName('')
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'The website monitor could not be created.')
+    } finally { setBusy(false) }
+  }
+
+  async function refreshWebsite(connection: ApiModelConnection) {
+    setBusy(true); setError(null); setWebsiteResult(null)
+    try {
+      setWebsiteResult(await api.refreshWebsite(connection.id))
+      const [sourceRecords, connectionRecords] = await Promise.all([
+        api.evidenceSources(modelId),
+        api.modelConnections(modelId),
+      ])
+      setSources(sourceRecords); setConnections(connectionRecords)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'The website could not be refreshed.')
     } finally { setBusy(false) }
   }
 
@@ -191,6 +240,24 @@ export function EvidencePage() {
         <div className="panel-heading"><div><p className="panel-label">What happens next</p><h2>No manual questions required</h2></div><ShieldCheck size={18}/></div>
         <ol><li><span>1</span><div><strong>Find testable facts</strong><p>Price, policy, availability and other values become expected answers.</p></div></li><li><span>2</span><div><strong>Ask several ways</strong><p>DriftZero creates paraphrases and sends them to the connected model.</p></div></li><li><span>3</span><div><strong>Calculate locally</strong><p>Answers are compared with your file; no evaluator invents the score.</p></div></li></ol>
       </div>
+    </section>
+
+    <section className="panel website-monitor">
+      <div className="panel-heading"><div><p className="panel-label">Live source / Website to JSON</p><h2>Keep reference data current</h2><p>DriftZero fetches the page, asks Grok for strict JSON, validates every extracted value against an exact quote, and checks again on schedule.</p></div><Globe2 size={18}/></div>
+      <form className="website-monitor-form" onSubmit={connectWebsite}>
+        <label><span>Website URL</span><input type="url" value={websiteUrl} onChange={event => setWebsiteUrl(event.target.value)} placeholder="https://example.com/policies" required/></label>
+        <label><span>Source name <em>optional</em></span><input value={websiteName} onChange={event => setWebsiteName(event.target.value)} placeholder="Current returns policy"/></label>
+        <label><span>Refresh every</span><select value={websiteInterval} onChange={event => setWebsiteInterval(Number(event.target.value))}><option value={10}>10 minutes</option><option value={30}>30 minutes</option><option value={60}>1 hour</option><option value={360}>6 hours</option><option value={1440}>24 hours</option></select></label>
+        <label className="website-option"><input type="checkbox" checked={websiteUseXai} onChange={event => setWebsiteUseXai(event.target.checked)}/><span><strong>Structure with Grok</strong><small>Uses the server-side XAI_API_KEY. The key never reaches the browser.</small></span></label>
+        <label className="website-option"><input type="checkbox" checked={websiteAutoApprove} onChange={event => setWebsiteAutoApprove(event.target.checked)}/><span><strong>Automatically approve changes</strong><small>Leave off when a person should review each website revision before it affects scoring.</small></span></label>
+        <button className="button primary" type="submit" disabled={busy || !modelId || !websiteUrl.trim()}>{busy ? <><Loader2 size={13} className="spin"/> Fetching website…</> : <><Globe2 size={14}/> Add and fetch website</>}</button>
+      </form>
+      {websiteResult && <div className="website-sync-result"><CheckCircle2 size={16}/><div><strong>{websiteResult.message}</strong><p>{websiteResult.fact_count} verified facts · content {websiteResult.content_hash.slice(0, 10)}</p></div></div>}
+      {websiteConnections.length > 0 && <div className="website-connections">{websiteConnections.map(connection => <article key={connection.id}>
+        <div><span className={`source-status ${connection.status === 'error' ? 'rejected' : 'approved'}`}>{connection.status}</span><strong>{connection.name}</strong><p>{connection.url}</p></div>
+        <div><span><Clock3 size={13}/> Every {String(connection.config.refresh_interval_minutes ?? 10)} min</span><small>{connection.last_error ?? (connection.discovered_metadata.last_synced_at ? `Last checked ${new Date(String(connection.discovered_metadata.last_synced_at)).toLocaleString()}` : 'Waiting for first refresh')}</small></div>
+        <button type="button" className="button" disabled={busy} onClick={() => void refreshWebsite(connection)}><RefreshCw size={13}/> Refresh now</button>
+      </article>)}</div>}
     </section>
 
     <section className="panel evidence-library">

@@ -189,6 +189,15 @@ def main() -> int:
     base_url = f"http://{args.host}:{args.api_port}"
     environment = backend_environment(args)
 
+    migration = subprocess.run(
+        [python, "-m", "app.migrations"],
+        env=environment,
+        cwd=str(BACKEND),
+        check=False,
+    )
+    if migration.returncode:
+        sys.exit("Database migration failed; the local stack was not started.")
+
     print("DriftZero local stack")
     api = spawn(
         "api",
@@ -207,6 +216,7 @@ def main() -> int:
     spawn("recovery worker", [python, "-m", "app.recovery_worker"], environment, BACKEND)
     spawn("alert worker", [python, "-m", "app.alert_worker"], environment, BACKEND)
     spawn("retention worker", [python, "-m", "app.retention_worker"], environment, BACKEND)
+    spawn("website worker", [python, "-m", "app.website_worker"], environment, BACKEND)
 
     urls: list[tuple[str, str]] = [("API", f"{base_url}  (OpenAPI docs at {base_url}/docs)")]
     if not args.no_dashboard and npm is not None:
@@ -236,8 +246,10 @@ def main() -> int:
         urls.append(
             (
                 "shop-assist",
-                f"http://localhost:{args.shop_assist_port}  "
-                "(presenter controls at /demo)",
+                (
+                    f"http://localhost:{args.shop_assist_port}  "
+                    "(presenter controls at /demo)"
+                ),
             )
         )
 
