@@ -97,7 +97,8 @@ def test_request_size_rate_limit_and_security_headers() -> None:
 
     assert too_large.status_code == 413
     assert first.status_code == 200
-    assert second.status_code == 200
+    # Rejected requests also consume quota so repeated oversized attacks are throttled.
+    assert second.status_code == 429
     assert limited.status_code == 429
     assert first.headers["x-content-type-options"] == "nosniff"
     assert first.headers["x-frame-options"] == "DENY"
