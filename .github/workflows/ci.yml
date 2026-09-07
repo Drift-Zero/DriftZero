@@ -38,15 +38,63 @@ jobs:
       - name: Test
         run: pytest
 
-      - name: Check dashboard JavaScript
-        run: node --check ../frontend/app.js
-
       - name: Check integration scripts
         run: ruff check ../deploy/start.py ../scripts ../examples
 
+  frontend:
+    name: Dashboard lint and build
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Build
+        run: npm run build
+
+  shop-assist:
+    name: ShopAssist lint, test, and build
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: shop-assist
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: shop-assist/package-lock.json
+
+      - name: Install
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Test
+        run: npm test
+
+      - name: Build
+        run: npm run build
+
   containers:
     runs-on: ubuntu-latest
-    needs: backend
+    needs: [backend, frontend, shop-assist]
     steps:
       - uses: actions/checkout@v4
       - name: Validate Compose
@@ -61,11 +109,12 @@ jobs:
 
           for attempt in {1..30}; do
             if curl --fail --silent http://localhost:8000/healthz >/dev/null \
-              && curl --fail --silent http://localhost:3000/healthz >/dev/null; then
+              && curl --fail --silent http://localhost:3000/healthz >/dev/null \
+              && curl --fail --silent http://localhost:3100 >/dev/null; then
               break
             fi
             if [ "$attempt" -eq 30 ]; then
-              echo "API and dashboard did not become healthy in time" >&2
+              echo "API, dashboard, and ShopAssist did not become healthy in time" >&2
               exit 1
             fi
             sleep 2
@@ -79,15 +128,35 @@ jobs:
           done
       - name: Verify dashboard and recovery flow
         run: python scripts/smoke_test.py --base-url http://localhost:3000
+      - name: Verify ShopAssist telemetry flow
+        run: python scripts/smoke_shop_assist.py
+      - name: Verify service logs
+        run: |
+          docker compose logs --no-color api | tee /tmp/api.log
+          test -s /tmp/api.log
+          docker compose logs --no-color recovery-worker | tee /tmp/recovery-worker.log
+          grep --quiet 'recovery_commands.completed' /tmp/recovery-worker.log
+          docker compose logs --no-color alert-worker | tee /tmp/alert-worker.log
+          grep --quiet 'alert_evaluation.completed' /tmp/alert-worker.log
+          docker compose logs --no-color retention-worker | tee /tmp/retention-worker.log
+          grep --quiet 'retention.completed' /tmp/retention-worker.log
+          docker compose logs --no-color shop-assist | tee /tmp/shop-assist.log
+          grep --quiet 'shopassist.telemetry.sent' /tmp/shop-assist.log
       - name: Verify single-container deployment
         run: |
           docker run --detach --name driftzero-deploy-test \
             --env PORT=10000 \
             --env DRIFTZERO_ENVIRONMENT=development \
             --env DRIFTZERO_RECOVERY_ALLOW_LOCAL_IDENTITY=true \
-            --publish 3100:10000 \
+            --env DRIFTZERO_ALERT_EVALUATION_INTERVAL_SECONDS=1 \
+            --env DRIFTZERO_RETENTION_INTERVAL_SECONDS=1 \
+            --publish 3200:10000 \
             driftzero-deploy:test
-          python scripts/smoke_test.py --base-url http://localhost:3100
+          python scripts/smoke_test.py --base-url http://localhost:3200
+          docker logs driftzero-deploy-test 2>&1 | tee /tmp/deploy.log
+          grep --quiet 'alert_evaluation.completed' /tmp/deploy.log
+          grep --quiet 'recovery_commands.completed' /tmp/deploy.log
+          grep --quiet 'retention.completed' /tmp/deploy.log
       - name: Print logs after failure
         if: failure()
         run: docker compose logs --no-color
