@@ -12,6 +12,10 @@ x-backend-environment: &backend-environment
   DRIFTZERO_RECOVERY_COMMAND_LEASE_SECONDS: ${DRIFTZERO_RECOVERY_COMMAND_LEASE_SECONDS:-60}
   DRIFTZERO_RECOVERY_COMMAND_MAX_ATTEMPTS: ${DRIFTZERO_RECOVERY_COMMAND_MAX_ATTEMPTS:-3}
   DRIFTZERO_RECOVERY_ALLOW_LOCAL_IDENTITY: ${DRIFTZERO_RECOVERY_ALLOW_LOCAL_IDENTITY:-true}
+  DRIFTZERO_RECOVERY_OPERATOR_API_KEY: ${DRIFTZERO_RECOVERY_OPERATOR_API_KEY:-}
+  DRIFTZERO_RECOVERY_ADMIN_API_KEY: ${DRIFTZERO_RECOVERY_ADMIN_API_KEY:-}
+  DRIFTZERO_RECOVERY_CONTROL_URL: ${DRIFTZERO_RECOVERY_CONTROL_URL:-}
+  DRIFTZERO_RECOVERY_CONTROL_TOKEN: ${DRIFTZERO_RECOVERY_CONTROL_TOKEN:-}
   DRIFTZERO_RECOVERY_VERIFICATION_REQUESTS: ${DRIFTZERO_RECOVERY_VERIFICATION_REQUESTS:-50}
   DRIFTZERO_RECOVERY_VERIFICATION_COVERAGE: ${DRIFTZERO_RECOVERY_VERIFICATION_COVERAGE:-0.90}
   DRIFTZERO_CONNECTION_SECRET_KEY: ${DRIFTZERO_CONNECTION_SECRET_KEY:-}
@@ -117,6 +121,31 @@ services:
       timeout: 3s
       start_period: 5s
       retries: 5
+
+  shop-assist:
+    <<: *service-defaults
+    build:
+      context: ./shop-assist
+    environment:
+      GROQ_API_KEY: ${GROQ_API_KEY:-}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      DRIFTZERO_API_URL: http://api:8000
+      SHOPASSIST_PUBLIC_URL: ${SHOPASSIST_PUBLIC_URL:-http://localhost:3100}
+    ports:
+      - "${SHOP_ASSIST_PORT:-3100}:3000"
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://127.0.0.1:3000').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"
+      interval: 10s
+      timeout: 3s
+      start_period: 15s
+      retries: 6
 
 volumes:
   driftzero-data:

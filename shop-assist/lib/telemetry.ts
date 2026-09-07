@@ -61,9 +61,21 @@ export async function recordInteraction(interaction: ObservedInteraction): Promi
   const apiUrl = (process.env.DRIFTZERO_API_URL ?? 'http://127.0.0.1:8000').replace(/\/$/, '');
   try {
     const response = await fetch(`${apiUrl}/api/v1/shopassist/telemetry`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(payload), signal: AbortSignal.timeout(5_000) });
-    if (!response.ok) { bufferedEvaluations.unshift(...batch); return 'error'; }
+    if (!response.ok) {
+      bufferedEvaluations.unshift(...batch);
+      console.error(JSON.stringify({ event: 'shopassist.telemetry.failed', status: response.status }));
+      return 'error';
+    }
+    console.info(JSON.stringify({ event: 'shopassist.telemetry.sent', sample_size: batch.length }));
     return 'sent';
-  } catch { bufferedEvaluations.unshift(...batch); return 'error'; }
+  } catch (error) {
+    bufferedEvaluations.unshift(...batch);
+    console.error(JSON.stringify({
+      event: 'shopassist.telemetry.failed',
+      error_type: error instanceof Error ? error.name : 'UnknownError',
+    }));
+    return 'error';
+  }
 }
 
 export function resetTelemetryBufferForTests() { bufferedEvaluations.length = 0; }
