@@ -24,6 +24,14 @@ services:
           property: connectionString
       - key: DRIFTZERO_API_PREFIX
         value: /api/v1
+      - key: DRIFTZERO_API_REQUIRE_AUTH
+        value: "false"
+      - key: DRIFTZERO_API_RATE_LIMIT_PER_MINUTE
+        value: "300"
+      - key: DRIFTZERO_API_MAX_REQUEST_BYTES
+        value: "1048576"
+      - key: DRIFTZERO_TRUSTED_HOSTS
+        value: "*.onrender.com,localhost,127.0.0.1"
       - key: DRIFTZERO_CORS_ORIGIN_REGEX
         value: https://.*\.vercel\.app
       - key: DRIFTZERO_LOG_LEVEL

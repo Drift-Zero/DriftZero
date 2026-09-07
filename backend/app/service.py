@@ -604,8 +604,11 @@ class DriftZeroService:
         observed_at = payload.observed_at
         if observed_at.tzinfo is None:
             observed_at = observed_at.replace(tzinfo=UTC)
-        if observed_at > datetime.now(UTC) + timedelta(
-            seconds=self.settings.telemetry_max_future_skew_seconds
+        if (
+            payload.source is SignalSource.OBSERVED
+            and observed_at
+            > datetime.now(UTC)
+            + timedelta(seconds=self.settings.telemetry_max_future_skew_seconds)
         ):
             raise TelemetryIngestionError(
                 "Telemetry observed_at is too far in the future. Check the producer clock."

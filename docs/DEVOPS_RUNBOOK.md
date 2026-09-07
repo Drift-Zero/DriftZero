@@ -60,6 +60,15 @@ Copy `.env.example` to `.env`. Never commit `.env`.
 | `DRIFTZERO_DATABASE_URL` | `sqlite:////data/driftzero.db` | Shared local database |
 | `DRIFTZERO_API_PREFIX` | `/api/v1` | Versioned API prefix |
 | `DRIFTZERO_ENVIRONMENT` | `development` | Log and health-check environment label |
+| `DRIFTZERO_API_REQUIRE_AUTH` | `false` | Require management Bearer keys outside production too |
+| `DRIFTZERO_API_VIEWER_KEY` | unset | Read-only management credential |
+| `DRIFTZERO_API_OPERATOR_KEY` | unset | Read/write credential without delete permission |
+| `DRIFTZERO_API_ADMIN_KEY` | unset | Full-control management credential |
+| `DRIFTZERO_API_RATE_LIMIT_PER_MINUTE` | `300` | Per-process limit keyed by credential or client |
+| `DRIFTZERO_API_MAX_REQUEST_BYTES` | `1048576` | Maximum body size, including chunked requests |
+| `DRIFTZERO_TRUSTED_HOSTS` | local/test hosts | Accepted HTTP Host values; supports `*.example.com` |
+| `DRIFTZERO_TELEMETRY_MAX_FUTURE_SKEW_SECONDS` | `300` | Maximum clock lead for observed telemetry |
+| `DRIFTZERO_DOCS_ENABLED` | `true` | Local docs switch; docs remain disabled in production |
 | `DRIFTZERO_ALERT_EVALUATION_INTERVAL_SECONDS` | `60` | Alert worker poll interval |
 | `DRIFTZERO_RECOVERY_WORKER_INTERVAL_SECONDS` | `2` | Recovery queue poll interval |
 | `DRIFTZERO_RECOVERY_COMMAND_LEASE_SECONDS` | `60` | Lease before an abandoned recovery can be reclaimed |
@@ -77,6 +86,13 @@ Copy `.env.example` to `.env`. Never commit `.env`.
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | unset | Optional collector endpoint |
 
 The platform-provided `PORT` is handled by the container entrypoint. Do not place real provider keys in frontend files or variables; browser assets are public.
+
+Production and `prod` environments require management authentication automatically. A
+deployment with no configured management key returns `503` on protected routes. Store keys in
+the platform secret manager, rotate them independently, and terminate TLS before the API. Keep
+`DRIFTZERO_TRUSTED_HOSTS` limited to actual service and custom-domain hosts. The process-local
+limiter is defense in depth for one instance; configure a shared gateway/WAF rate limit before
+running multiple replicas.
 
 ## 4. Service responsibilities
 

@@ -328,6 +328,7 @@ Recovery approval works against that deployment because it sets
 Copy the relevant example file before changing local configuration. Never commit real credentials.
 
 - **Root Docker stack:** `DRIFTZERO_DASHBOARD_PORT`, `DRIFTZERO_API_PORT`, `DRIFTZERO_DATABASE_URL`, `DRIFTZERO_API_PREFIX`, `DRIFTZERO_ENVIRONMENT`
+- **API security:** `DRIFTZERO_API_REQUIRE_AUTH`, `DRIFTZERO_API_VIEWER_KEY`, `DRIFTZERO_API_OPERATOR_KEY`, `DRIFTZERO_API_ADMIN_KEY`, `DRIFTZERO_API_RATE_LIMIT_PER_MINUTE`, `DRIFTZERO_API_MAX_REQUEST_BYTES`, `DRIFTZERO_TRUSTED_HOSTS`, `DRIFTZERO_DOCS_ENABLED`
 - **Scoring and workers:** `DRIFTZERO_MINIMUM_SAMPLE_SIZE`, `DRIFTZERO_MINIMUM_COVERAGE`, `DRIFTZERO_FORECAST_HORIZON_MINUTES`, `DRIFTZERO_ALERT_EVALUATION_INTERVAL_SECONDS`, `DRIFTZERO_RECOVERY_WORKER_INTERVAL_SECONDS`, `DRIFTZERO_RETENTION_INTERVAL_SECONDS`
 - **Recovery:** `DRIFTZERO_RECOVERY_ALLOW_LOCAL_IDENTITY`, `DRIFTZERO_RECOVERY_OPERATOR_API_KEY`, `DRIFTZERO_RECOVERY_ADMIN_API_KEY`, `DRIFTZERO_RECOVERY_CONTROL_URL`, `DRIFTZERO_RECOVERY_CONTROL_TOKEN`
 - **Connections:** `DRIFTZERO_CONNECTION_SECRET_KEY`, `DRIFTZERO_CONNECTION_CHECK_TIMEOUT_SECONDS`
@@ -340,6 +341,14 @@ exposed through `NEXT_PUBLIC_` variables or committed environment files. Note th
 `VITE_` variable is inlined into the dashboard's public bundle at build time, so
 `VITE_RECOVERY_API_KEY` is readable by anyone who loads the page: prefer running the API
 with `DRIFTZERO_RECOVERY_ALLOW_LOCAL_IDENTITY=true`, which needs no key.
+
+Production API behavior is fail-closed: every management route requires a configured
+viewer, operator, or administrator Bearer key, interactive API docs are disabled, telemetry
+must have a registered ingestion connection, and untrusted host headers are rejected. Viewer
+keys are read-only, operator keys may mutate but not delete, and administrator keys may delete
+or reset demo state. Never put these management keys in a browser bundle; place a real user-auth
+gateway or backend-for-frontend in front of DriftZero for a multi-user deployment. The
+`hackathon-demo` environment remains explicitly keyless so the public demonstration works.
 
 ## API overview
 
