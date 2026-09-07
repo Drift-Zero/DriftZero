@@ -43,6 +43,7 @@ Recovery is a lifecycle rather than a button click. A plan can be recommended, a
 - **Audit history** — record model, telemetry, alert, diagnosis, recovery, verification, and governance events.
 - **Dashboard** — explore fleet health, models, model details, incidents, events, recovery state, and deterministic demo controls in a React interface.
 - **Dashboard settings** — set the operator identity used for audited actions, repoint the dashboard at another API and test it before committing, switch between demo and live data, enable background refresh, manage alert rules and per-model retention and lifecycle, tune density, timestamp, and precision formatting, and export, import, or reset the whole configuration.
+- **Groq evaluation workbench** — discover and import a Groq model with a server-owned key, capture real responses, then calculate transparent evidence, safety, stability, reliability, latency, cost, and health metrics locally without an evaluator-model call.
 
 ## Architecture
 
@@ -88,6 +89,7 @@ Each submitted window contains normalized `0–100` health dimensions, its sampl
 See [`docs/HEALTH_EVENT_SCHEMA.md`](docs/HEALTH_EVENT_SCHEMA.md) for the current contract.
 See [`docs/CONNECTIONS.md`](docs/CONNECTIONS.md) for GitHub, telemetry, website, and API
 onboarding, credential handling, and connection checks.
+See [`docs/GROQ_EVALUATION.md`](docs/GROQ_EVALUATION.md) for the server-side Groq import and deterministic evaluation flow.
 
 ## Evaluation layer
 

@@ -42,3 +42,7 @@ services:
         value: "true"
       - key: DRIFTZERO_OTEL_ENABLED
         value: "false"
+      - key: DRIFTZERO_GROQ_API_KEY
+        sync: false
+      - key: DRIFTZERO_GROQ_TIMEOUT_SECONDS
+        value: "15"
