@@ -383,6 +383,7 @@ class HealthSnapshot(IdMixin, Base):
     __tablename__ = "health_snapshots"
     __table_args__ = (
         sa.Index("ix_health_snapshots_model_observed", "model_id", "observed_at"),
+        sa.UniqueConstraint("model_id", "event_id", name="model_event_id"),
         sa.CheckConstraint("score IS NULL OR (score >= 0 AND score <= 100)", name="score_range"),
         sa.CheckConstraint("confidence >= 0 AND confidence <= 1", name="confidence_range"),
         sa.CheckConstraint("coverage >= 0 AND coverage <= 1", name="coverage_range"),
@@ -392,6 +393,8 @@ class HealthSnapshot(IdMixin, Base):
     model_id: Mapped[str] = mapped_column(
         sa.String(36), sa.ForeignKey(_MODEL_FK, ondelete="CASCADE"), index=True
     )
+    event_id: Mapped[str | None] = mapped_column(sa.String(128))
+    schema_version: Mapped[str] = mapped_column(sa.String(16), default="1.0")
     observed_at: Mapped[datetime] = mapped_column(index=True)
     window_start: Mapped[datetime | None] = mapped_column()
     window_end: Mapped[datetime | None] = mapped_column()
