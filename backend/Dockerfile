@@ -8,6 +8,8 @@ WORKDIR /app
 
 COPY pyproject.toml README.md ./
 COPY app ./app
+COPY alembic.ini ./
+COPY alembic ./alembic
 COPY entrypoint.sh /usr/local/bin/driftzero-entrypoint
 
 RUN python -m pip install --no-cache-dir .

@@ -15,6 +15,7 @@ from sqlalchemy.schema import CreateTable
 from alembic import command
 from app.db import models  # noqa: F401  (registers every table)
 from app.db.base import Base
+from app.migrations import upgrade_database
 
 BACKEND_ROOT = Path(__file__).resolve().parents[1]
 
@@ -52,6 +53,46 @@ def test_migration_creates_every_table(migrated_url: str) -> None:
     engine.dispose()
 
     assert set(Base.metadata.tables) <= tables
+
+
+def test_startup_migration_creates_a_fresh_database(tmp_path: Path) -> None:
+    url = f"sqlite:///{tmp_path / 'startup-fresh.db'}"
+
+    upgrade_database(url)
+
+    engine = sa.create_engine(url)
+    inspector = sa.inspect(engine)
+    tables = set(inspector.get_table_names())
+    with engine.connect() as connection:
+        current = connection.scalar(sa.text("SELECT version_num FROM alembic_version"))
+    engine.dispose()
+
+    assert set(Base.metadata.tables) <= tables
+    assert current == "0010"
+
+
+def test_startup_migration_upgrades_unversioned_revision_six(tmp_path: Path) -> None:
+    url = f"sqlite:///{tmp_path / 'startup-legacy.db'}"
+    config = _alembic_config(url)
+    command.upgrade(config, "0006")
+    engine = sa.create_engine(url)
+    with engine.begin() as connection:
+        connection.execute(sa.text("DROP TABLE alembic_version"))
+    engine.dispose()
+
+    upgrade_database(url)
+
+    engine = sa.create_engine(url)
+    inspector = sa.inspect(engine)
+    with engine.connect() as connection:
+        current = connection.scalar(sa.text("SELECT version_num FROM alembic_version"))
+    tables = set(inspector.get_table_names())
+    snapshot_columns = {column["name"] for column in inspector.get_columns("health_snapshots")}
+    engine.dispose()
+
+    assert current == "0010"
+    assert {"model_connections", "users", "tenant_memberships", "user_sessions"} <= tables
+    assert {"event_id", "schema_version"} <= snapshot_columns
 
 
 def test_downgrade_removes_every_table(migrated_url: str) -> None:

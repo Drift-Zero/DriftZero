@@ -8,6 +8,8 @@ WORKDIR /app
 
 COPY backend/pyproject.toml backend/README.md ./
 COPY backend/app ./app
+COPY backend/alembic.ini ./
+COPY backend/alembic ./alembic
 RUN python -m pip install --no-cache-dir ".[postgres]"
 
 COPY deploy/start.py ./deploy/start.py

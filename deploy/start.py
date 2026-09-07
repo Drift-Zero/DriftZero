@@ -11,6 +11,8 @@ import time
 import urllib.error
 import urllib.request
 
+from app.migrations import upgrade_database
+
 processes: list[subprocess.Popen[bytes]] = []
 
 
@@ -29,6 +31,7 @@ def stop(_signum: int | None = None, _frame: object | None = None) -> None:
 
 def main() -> int:
     port = os.getenv("PORT", "10000")
+    upgrade_database()
     api = subprocess.Popen(
         [
             "uvicorn",
