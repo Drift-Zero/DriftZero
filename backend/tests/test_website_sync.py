@@ -7,7 +7,7 @@ from fastapi.testclient import TestClient
 
 from app.config import Settings
 from app.main import create_app
-from app.website_sync import FetchedPage, XaiWebsiteStructurer
+from app.website_sync import FetchedPage, WebsiteSyncError, XaiWebsiteStructurer
 
 
 class _JsonResponse:
@@ -138,3 +138,73 @@ def test_connection_due_uses_configured_interval() -> None:
     )
 
     assert not connection_is_due(connection, now)
+
+
+def test_failed_refresh_records_visible_status_and_check_time(monkeypatch) -> None:
+    app = create_app(Settings(database_url="sqlite://", environment="test"))
+
+    def fail_fetch(*_args, **_kwargs) -> None:
+        raise WebsiteSyncError("The website could not be fetched.")
+
+    monkeypatch.setattr("app.website_sync.fetch_website", fail_fetch)
+    with TestClient(app) as client:
+        model = client.post(
+            "/api/v1/models",
+            json={"name": "Website model", "provider": "custom"},
+        ).json()
+        connection = client.post(
+            f"/api/v1/models/{model['id']}/connections",
+            json={
+                "kind": "website",
+                "name": "Unavailable policy page",
+                "url": "https://example.com/policy",
+                "config": {"refresh_interval_minutes": 10, "use_xai": False},
+            },
+        ).json()
+
+        response = client.post(
+            f"/api/v1/connections/{connection['id']}/website-refresh",
+            json={"actor": "test"},
+        )
+        saved = client.get(f"/api/v1/models/{model['id']}/connections").json()[0]
+
+    assert response.status_code == 422
+    assert response.json()["detail"] == "The website could not be fetched."
+    assert saved["status"] == "error"
+    assert saved["last_error"] == "The website could not be fetched."
+    assert saved["last_checked_at"] is not None
+
+
+def test_unexpected_refresh_failure_is_recorded_safely(monkeypatch) -> None:
+    app = create_app(Settings(database_url="sqlite://", environment="test"))
+
+    def fail_fetch(*_args, **_kwargs) -> None:
+        raise RuntimeError("sensitive provider detail")
+
+    monkeypatch.setattr("app.website_sync.fetch_website", fail_fetch)
+    with TestClient(app) as client:
+        model = client.post(
+            "/api/v1/models",
+            json={"name": "Website model", "provider": "custom"},
+        ).json()
+        connection = client.post(
+            f"/api/v1/models/{model['id']}/connections",
+            json={
+                "kind": "website",
+                "name": "Broken policy page",
+                "url": "https://example.com/policy",
+                "config": {"refresh_interval_minutes": 10, "use_xai": False},
+            },
+        ).json()
+
+        response = client.post(
+            f"/api/v1/connections/{connection['id']}/website-refresh",
+            json={"actor": "test"},
+        )
+        saved = client.get(f"/api/v1/models/{model['id']}/connections").json()[0]
+
+    assert response.status_code == 422
+    assert response.json()["detail"] == "Website refresh failed unexpectedly."
+    assert saved["status"] == "error"
+    assert saved["last_error"] == "Website refresh failed unexpectedly."
+    assert saved["last_checked_at"] is not None

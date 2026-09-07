@@ -34,6 +34,22 @@ services:
         value: "15"
       - key: DRIFTZERO_EVIDENCE_SYNC_INTERVAL_SECONDS
         value: "60"
+      - key: DRIFTZERO_WEBSITE_REFRESH_INTERVAL_SECONDS
+        value: "30"
+      - key: DRIFTZERO_WEBSITE_FETCH_TIMEOUT_SECONDS
+        value: "15"
+      - key: DRIFTZERO_WEBSITE_LLM_TIMEOUT_SECONDS
+        value: "45"
+      - key: DRIFTZERO_WEBSITE_MAX_RESPONSE_BYTES
+        value: "1048576"
+      - key: DRIFTZERO_WEBSITE_LLM_TEXT_CHARS
+        value: "40000"
+      - key: XAI_API_KEY
+        sync: false
+      - key: DRIFTZERO_XAI_MODEL
+        value: grok-4.6
+      - key: DRIFTZERO_XAI_BASE_URL
+        value: https://api.x.ai/v1
       - key: DRIFTZERO_TRUSTED_HOSTS
         value: "*.onrender.com,localhost,127.0.0.1"
       - key: DRIFTZERO_CORS_ORIGIN_REGEX

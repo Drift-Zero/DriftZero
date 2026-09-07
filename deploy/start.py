@@ -68,6 +68,7 @@ def main() -> int:
             subprocess.Popen([sys.executable, "-m", "app.recovery_worker"]),
             subprocess.Popen([sys.executable, "-m", "app.retention_worker"]),
             subprocess.Popen([sys.executable, "-m", "app.evidence_sync_worker"]),
+            subprocess.Popen([sys.executable, "-m", "app.website_worker"]),
         ]
     )
     signal.signal(signal.SIGTERM, stop)

@@ -368,11 +368,41 @@ class WebsiteSyncService:
                 ),
             )
         except WebsiteSyncError as exc:
-            connection.status = "error"
-            connection.last_error = str(exc)
-            connection.last_checked_at = fetched_at
-            session.commit()
+            self._record_failure(session, connection, fetched_at, str(exc))
             raise
+        except Exception as exc:
+            # A parser, persistence, or provider integration failure must not
+            # leave the operator staring at "Waiting for first refresh". Roll
+            # back any failed transaction, reload the connection, and persist
+            # a safe status before presenting one consistent public error.
+            session.rollback()
+            connection = session.scalar(
+                select(ModelConnection).where(
+                    ModelConnection.id == connection_id,
+                    ModelConnection.tenant_id
+                    == str(session.info.get("tenant_id", DEFAULT_TENANT_ID)),
+                )
+            )
+            if connection is not None:
+                self._record_failure(
+                    session,
+                    connection,
+                    fetched_at,
+                    "Website refresh failed unexpectedly.",
+                )
+            raise WebsiteSyncError("Website refresh failed unexpectedly.") from exc
+
+    @staticmethod
+    def _record_failure(
+        session: Session,
+        connection: ModelConnection,
+        fetched_at: datetime,
+        message: str,
+    ) -> None:
+        connection.status = "error"
+        connection.last_error = message
+        connection.last_checked_at = fetched_at
+        session.commit()
 
     @staticmethod
     def _update_connection(
