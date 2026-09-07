@@ -21,7 +21,7 @@ from app.observability import (
     configure_logging,
     configure_opentelemetry,
 )
-from app.security import SecurityMiddleware
+from app.security import RequestBodyLimitMiddleware, SecurityMiddleware
 from app.service import (
     AuthorizationDenied,
     ConnectionConfigurationError,
@@ -97,6 +97,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             ],
         )
     application.add_middleware(RequestLoggingMiddleware)
+    application.add_middleware(
+        RequestBodyLimitMiddleware,
+        max_bytes=runtime_settings.api_max_request_bytes,
+    )
     application.add_middleware(SecurityMiddleware, settings=runtime_settings)
     if runtime_settings.trusted_hosts:
         application.add_middleware(
