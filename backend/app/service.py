@@ -58,6 +58,13 @@ from app.db import (
 from app.diagnosis import diagnose_change
 from app.drift import score_drift
 from app.evaluation import EvaluatorAdapter, SimulatedEvaluator
+from app.groq_evaluation import (
+    DeterministicProfile,
+    GroqClient,
+    GroqCompletion,
+    GroqEvaluationError,
+    evaluate_completions,
+)
 from app.hallucination import score_groundedness
 from app.observability import get_request_id
 from app.recovery import RecoveryAdapter, RecoveryPolicy, build_playbook, build_recovery_adapter
@@ -91,6 +98,11 @@ from app.schemas import (
     EvaluatorKind,
     EvidenceItem,
     ExecutionState,
+    GroqCompletionResponse,
+    GroqEvaluationRequest,
+    GroqEvaluationResponse,
+    GroqModelCatalogResponse,
+    GroqModelImportRequest,
     HealthForecastRecordResponse,
     HealthSnapshotResponse,
     HealthState,
@@ -165,12 +177,17 @@ class ConnectionConfigurationError(ServiceError):
     pass
 
 
+class ExternalProviderError(ServiceError):
+    pass
+
+
 class DriftZeroService:
     def __init__(
         self,
         settings: Settings,
         recovery_adapter: RecoveryAdapter | None = None,
         evaluator: EvaluatorAdapter | None = None,
+        groq_client: GroqClient | None = None,
     ) -> None:
         self.settings = settings
         self.recovery_adapter = recovery_adapter or build_recovery_adapter(settings)
@@ -179,6 +196,11 @@ class DriftZeroService:
         self.alert_evaluator = AlertEvaluator()
         self.credential_vault = CredentialVault(settings.connection_secret_key)
         self.connection_inspector = ConnectionInspector(settings)
+        self.groq_client = groq_client or (
+            GroqClient(settings.groq_api_key, timeout_seconds=settings.groq_timeout_seconds)
+            if settings.groq_api_key
+            else None
+        )
         self.dashboard_cache = TenantTTLCache(settings.dashboard_cache_ttl_seconds)
 
     def create_model(self, session: Session, payload: ModelCreate) -> ModelResponse:
@@ -225,6 +247,183 @@ class DriftZeroService:
             .order_by(MonitoredModel.name)
         ).all()
         return [self._model_response(record) for record in records]
+
+    def groq_models(self) -> GroqModelCatalogResponse:
+        client = self._require_groq_client()
+        try:
+            return GroqModelCatalogResponse(models=client.list_models())
+        except GroqEvaluationError as exc:
+            raise ExternalProviderError(str(exc)) from exc
+
+    def import_groq_model(
+        self, session: Session, payload: GroqModelImportRequest
+    ) -> ModelResponse:
+        if payload.model_identifier not in self.groq_models().models:
+            raise ExternalProviderError(
+                "The selected model is not available to the configured Groq account."
+            )
+        return self.create_model(
+            session,
+            ModelCreate(
+                name=payload.name,
+                provider="groq",
+                environment=payload.environment,
+                description=payload.description,
+                actor=payload.actor,
+                initial_version=ModelVersionCreate(
+                    label=f"{payload.model_identifier} import",
+                    model_identifier=payload.model_identifier,
+                    prompt_version=payload.prompt_version,
+                    configuration={
+                        "provider": "groq",
+                        "evaluation": "deterministic-v1",
+                    },
+                    evaluation_policy_version="deterministic-v1",
+                    actor=payload.actor,
+                ),
+            ),
+        )
+
+    def evaluate_groq_model(
+        self,
+        session: Session,
+        model_id: str,
+        payload: GroqEvaluationRequest,
+    ) -> GroqEvaluationResponse:
+        model = self._require_model(session, model_id)
+        if model.provider.lower() != "groq":
+            raise InvalidTransition("This endpoint only runs models imported from Groq.")
+        version = self._active_model_version(session, model_id)
+        if version is None:
+            raise InvalidTransition("The model has no active version to evaluate.")
+        client = self._require_groq_client()
+
+        completions: list[GroqCompletion] = []
+        traces: list[TraceCreate] = []
+        errors: list[str] = []
+        for index in range(payload.repeat):
+            try:
+                item = client.complete(
+                    model=version.model_identifier,
+                    prompt=payload.prompt,
+                    temperature=payload.temperature,
+                )
+                completions.append(item)
+                cost = (
+                    item.input_tokens * payload.profile.input_cost_per_million / 1_000_000
+                    + item.output_tokens
+                    * payload.profile.output_cost_per_million
+                    / 1_000_000
+                )
+                traces.append(
+                    TraceCreate(
+                        request_id=f"groq-{secrets.token_hex(12)}-{index}",
+                        question=payload.prompt,
+                        answer=item.text,
+                        provider="groq",
+                        latency_ms=item.latency_ms,
+                        input_tokens=item.input_tokens,
+                        output_tokens=item.output_tokens,
+                        cost_usd=cost,
+                    )
+                )
+            except GroqEvaluationError as exc:
+                errors.append(str(exc))
+                completions.append(
+                    GroqCompletion(
+                        text="",
+                        model=version.model_identifier,
+                        latency_ms=0,
+                        input_tokens=0,
+                        output_tokens=0,
+                    )
+                )
+                traces.append(
+                    TraceCreate(
+                        request_id=f"groq-{secrets.token_hex(12)}-{index}",
+                        question=payload.prompt,
+                        provider="groq",
+                        status="error",
+                        error_code="provider_error",
+                    )
+                )
+        successful = [item for item in completions if item.text.strip()]
+        if not successful:
+            raise ExternalProviderError(errors[0] if errors else "Groq returned no responses.")
+
+        profile = DeterministicProfile(
+            expected_terms=tuple(payload.profile.expected_terms),
+            trusted_facts=tuple(payload.profile.trusted_facts),
+            forbidden_terms=tuple(payload.profile.forbidden_terms),
+            expected_json=payload.profile.expected_json,
+            latency_target_ms=payload.profile.latency_target_ms,
+            cost_target_usd=payload.profile.cost_target_usd,
+            input_cost_per_million=payload.profile.input_cost_per_million,
+            output_cost_per_million=payload.profile.output_cost_per_million,
+        )
+        result = evaluate_completions(
+            prompt=payload.prompt,
+            completions=completions,
+            profile=profile,
+        )
+        dimensions = DimensionScores(**result.dimensions)
+        for trace in traces:
+            trace.quality_score = dimensions.quality
+            trace.groundedness_score = dimensions.groundedness
+            trace.safety_flags = list(result.evidence["forbidden_terms_found"])
+        available = sum(value is not None for value in result.dimensions.values())
+        telemetry = TelemetryCreate(
+            event_id=f"groq-eval-{secrets.token_hex(12)}",
+            dimensions=dimensions,
+            sample_size=payload.repeat,
+            coverage=available / len(result.dimensions),
+            source=SignalSource.OBSERVED,
+            traces=traces,
+        )
+        snapshot = self._record_telemetry(session, model_id, telemetry)
+        self._audit(
+            session,
+            model_id,
+            "evaluation.groq_completed",
+            payload.actor,
+            {
+                "snapshot_id": snapshot.id,
+                "model_identifier": version.model_identifier,
+                "formula": result.formula,
+                "attempted": payload.repeat,
+                "successful": len(successful),
+                "dimensions": result.dimensions,
+                "evidence": result.evidence,
+            },
+        )
+        session.commit()
+        self.dashboard_cache.invalidate(self._tenant_id(session), namespace="health_timeline")
+        return GroqEvaluationResponse(
+            model_id=model_id,
+            model_identifier=version.model_identifier,
+            responses=[
+                GroqCompletionResponse(
+                    text=item.text,
+                    latency_ms=item.latency_ms,
+                    input_tokens=item.input_tokens,
+                    output_tokens=item.output_tokens,
+                )
+                for item in successful
+            ],
+            dimensions=dimensions,
+            health_score=result.health_score,
+            confidence=result.confidence,
+            evidence=result.evidence,
+            formula=result.formula,
+            snapshot=self._snapshot_response(snapshot),
+        )
+
+    def _require_groq_client(self) -> GroqClient:
+        if self.groq_client is None:
+            raise ExternalProviderError(
+                "Groq is not configured. Set DRIFTZERO_GROQ_API_KEY on the backend."
+            )
+        return self.groq_client
 
     def create_connection(
         self, session: Session, model_id: str, payload: ConnectionCreate

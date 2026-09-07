@@ -556,6 +556,61 @@ class HealthSnapshotResponse(BaseModel):
     missing_dimensions: list[str] = Field(default_factory=list)
 
 
+class GroqModelCatalogResponse(BaseModel):
+    """Models visible to the server-owned Groq credential."""
+
+    models: list[str]
+
+
+class GroqModelImportRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=120)
+    model_identifier: str = Field(min_length=1, max_length=160)
+    environment: str = Field(default="development", min_length=1, max_length=40)
+    description: str | None = Field(default=None, max_length=2000)
+    prompt_version: str = Field(default="prompt-v1", min_length=1, max_length=80)
+    actor: str = Field(default="system", min_length=1, max_length=120)
+
+
+class GroqEvaluationProfileInput(BaseModel):
+    """Declared evidence and limits used by deterministic calculations."""
+
+    expected_terms: list[str] = Field(default_factory=list, max_length=100)
+    trusted_facts: list[str] = Field(default_factory=list, max_length=100)
+    forbidden_terms: list[str] = Field(default_factory=list, max_length=100)
+    expected_json: bool = False
+    latency_target_ms: int = Field(default=2000, ge=1, le=300_000)
+    cost_target_usd: float | None = Field(default=None, gt=0)
+    input_cost_per_million: float = Field(default=0.0, ge=0)
+    output_cost_per_million: float = Field(default=0.0, ge=0)
+
+
+class GroqEvaluationRequest(BaseModel):
+    prompt: str = Field(min_length=1, max_length=32_000)
+    repeat: int = Field(default=1, ge=1, le=20)
+    temperature: float = Field(default=0.0, ge=0, le=2)
+    profile: GroqEvaluationProfileInput = Field(default_factory=GroqEvaluationProfileInput)
+    actor: str = Field(default="system", min_length=1, max_length=120)
+
+
+class GroqCompletionResponse(BaseModel):
+    text: str
+    latency_ms: int
+    input_tokens: int
+    output_tokens: int
+
+
+class GroqEvaluationResponse(BaseModel):
+    model_id: str
+    model_identifier: str
+    responses: list[GroqCompletionResponse]
+    dimensions: DimensionScores
+    health_score: float | None
+    confidence: float
+    evidence: dict[str, object]
+    formula: str
+    snapshot: HealthSnapshotResponse
+
+
 class HealthForecast(BaseModel):
     horizon_minutes: int
     predicted_score: float

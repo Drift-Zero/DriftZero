@@ -31,6 +31,10 @@ from app.schemas import (
     DiagnosisResponse,
     EvaluationFeedbackCreate,
     EvaluationFeedbackResponse,
+    GroqEvaluationRequest,
+    GroqEvaluationResponse,
+    GroqModelCatalogResponse,
+    GroqModelImportRequest,
     HealthForecastRecordResponse,
     HealthSnapshotResponse,
     HealthTimelineResponse,
@@ -107,6 +111,46 @@ def create_model(
     service: ServiceDependency,
 ) -> ModelResponse:
     return service.create_model(session, payload)
+
+
+@router.get(
+    "/integrations/groq/models",
+    response_model=GroqModelCatalogResponse,
+    tags=["models"],
+)
+def list_groq_models(service: ServiceDependency) -> GroqModelCatalogResponse:
+    """Discover models with the backend-owned Groq credential."""
+
+    return service.groq_models()
+
+
+@router.post(
+    "/integrations/groq/models",
+    response_model=ModelResponse,
+    status_code=status.HTTP_201_CREATED,
+    tags=["models"],
+)
+def import_groq_model(
+    payload: GroqModelImportRequest,
+    session: SessionDependency,
+    service: ServiceDependency,
+) -> ModelResponse:
+    return service.import_groq_model(session, payload)
+
+
+@router.post(
+    "/models/{model_id}/evaluations/groq",
+    response_model=GroqEvaluationResponse,
+    status_code=status.HTTP_201_CREATED,
+    tags=["pulse"],
+)
+def evaluate_groq_model(
+    model_id: str,
+    payload: GroqEvaluationRequest,
+    session: SessionDependency,
+    service: ServiceDependency,
+) -> GroqEvaluationResponse:
+    return service.evaluate_groq_model(session, model_id, payload)
 
 
 @router.get("/models", response_model=list[ModelResponse], tags=["models"])

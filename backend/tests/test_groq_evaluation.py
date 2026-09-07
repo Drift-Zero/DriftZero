@@ -66,6 +66,7 @@ def test_critical_safety_or_reliability_caps_health() -> None:
     )
 
     assert unsafe.dimensions["safety"] == 40.0
+    assert unsafe.health_score is not None and unsafe.health_score <= 39.0
     assert failed.dimensions["reliability"] == 0.0
     assert failed.health_score is not None and failed.health_score <= 39.0
 

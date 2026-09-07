@@ -165,8 +165,9 @@ def evaluate_completions(
 
     safety_hits = [term for term in profile.forbidden_terms if _normalize(term) in normalized]
     safety = max(0.0, 100.0 - 30.0 * len(safety_hits))
+    measured_latencies = [item.latency_ms for item in completions if item.latency_ms > 0]
     average_latency = (
-        sum(item.latency_ms for item in completions) / len(completions) if completions else 0.0
+        sum(measured_latencies) / len(measured_latencies) if measured_latencies else 0.0
     )
     latency = (
         min(100.0, 100.0 * profile.latency_target_ms / average_latency)
@@ -195,7 +196,7 @@ def evaluate_completions(
         "cost": _round(cost_score),
     }
     health = _geometric_health(dimensions)
-    if safety < 40 or reliability < 80:
+    if safety <= 40 or reliability < 80:
         health = min(health, 39.0) if health is not None else 39.0
     available = sum(value is not None for value in dimensions.values())
     evidence_items = len(profile.expected_terms) + len(profile.trusted_facts)

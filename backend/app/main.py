@@ -28,6 +28,7 @@ from app.service import (
     AuthorizationDenied,
     ConnectionConfigurationError,
     DriftZeroService,
+    ExternalProviderError,
     InvalidTransition,
     ResourceConflict,
     ResourceNotFound,
@@ -169,6 +170,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return JSONResponse(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             content={"error": "connection_configuration_failed", "detail": str(exc)},
+        )
+
+    @application.exception_handler(ExternalProviderError)
+    async def external_provider_handler(_: Request, exc: ExternalProviderError) -> JSONResponse:
+        return JSONResponse(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            content={"error": "external_provider_failed", "detail": str(exc)},
         )
 
     if runtime_settings.frontend_dir:

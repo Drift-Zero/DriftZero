@@ -49,6 +49,8 @@ class Settings:
     recovery_admin_api_key: str | None = None
     connection_secret_key: str | None = None
     connection_check_timeout_seconds: float = 8.0
+    groq_api_key: str | None = None
+    groq_timeout_seconds: float = 15.0
     api_require_auth: bool = False
     api_viewer_key: str | None = None
     api_operator_key: str | None = None
@@ -183,6 +185,16 @@ class Settings:
                     os.getenv(
                         "DRIFTZERO_CONNECTION_CHECK_TIMEOUT_SECONDS",
                         str(defaults.connection_check_timeout_seconds),
+                    )
+                ),
+            ),
+            groq_api_key=os.getenv("DRIFTZERO_GROQ_API_KEY") or None,
+            groq_timeout_seconds=max(
+                0.5,
+                float(
+                    os.getenv(
+                        "DRIFTZERO_GROQ_TIMEOUT_SECONDS",
+                        str(defaults.groq_timeout_seconds),
                     )
                 ),
             ),
