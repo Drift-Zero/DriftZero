@@ -22,6 +22,7 @@ from app.observability import (
 )
 from app.service import (
     AuthorizationDenied,
+    ConnectionConfigurationError,
     DriftZeroService,
     InvalidTransition,
     ResourceConflict,
@@ -125,6 +126,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return JSONResponse(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             content={"error": "telemetry_ingestion_failed", "detail": str(exc)},
+        )
+
+    @application.exception_handler(ConnectionConfigurationError)
+    async def connection_configuration_handler(
+        _: Request, exc: ConnectionConfigurationError
+    ) -> JSONResponse:
+        return JSONResponse(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            content={"error": "connection_configuration_failed", "detail": str(exc)},
         )
 
     if runtime_settings.frontend_dir:

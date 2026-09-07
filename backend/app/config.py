@@ -47,6 +47,8 @@ class Settings:
     recovery_allow_insecure_http: bool = False
     recovery_operator_api_key: str | None = None
     recovery_admin_api_key: str | None = None
+    connection_secret_key: str | None = None
+    connection_check_timeout_seconds: float = 8.0
     recovery_allow_local_identity: bool = False
     log_level: str = "INFO"
     log_file: str | None = None
@@ -161,6 +163,16 @@ class Settings:
             ),
             recovery_operator_api_key=os.getenv("DRIFTZERO_RECOVERY_OPERATOR_API_KEY") or None,
             recovery_admin_api_key=os.getenv("DRIFTZERO_RECOVERY_ADMIN_API_KEY") or None,
+            connection_secret_key=os.getenv("DRIFTZERO_CONNECTION_SECRET_KEY") or None,
+            connection_check_timeout_seconds=max(
+                0.5,
+                float(
+                    os.getenv(
+                        "DRIFTZERO_CONNECTION_CHECK_TIMEOUT_SECONDS",
+                        str(defaults.connection_check_timeout_seconds),
+                    )
+                ),
+            ),
             recovery_allow_local_identity=_environment_bool(
                 "DRIFTZERO_RECOVERY_ALLOW_LOCAL_IDENTITY",
                 defaults.recovery_allow_local_identity,

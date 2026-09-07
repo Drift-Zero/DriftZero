@@ -6,7 +6,7 @@ from datetime import UTC, datetime
 from enum import StrEnum
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, SecretStr, model_validator
 
 Score = Annotated[float, Field(ge=0, le=100)]
 
@@ -214,6 +214,8 @@ class ConnectionKind(StrEnum):
 
 class ConnectionStatus(StrEnum):
     CONFIGURED = "configured"
+    CONNECTED = "connected"
+    ERROR = "error"
     NEEDS_SETUP = "needs_setup"
     PAUSED = "paused"
 
@@ -259,7 +261,7 @@ class ModelCreate(BaseModel):
 
 
 class ConnectionCreate(BaseModel):
-    """A connection descriptor; secrets are accepted but never persisted."""
+    """A connection descriptor; credentials are encrypted and never returned."""
 
     kind: ConnectionKind
     name: str = Field(min_length=1, max_length=120)
@@ -268,7 +270,7 @@ class ConnectionCreate(BaseModel):
     branch: str | None = Field(default=None, max_length=160)
     api_endpoint: str | None = Field(default=None, max_length=2000)
     auth_scheme: str | None = Field(default=None, max_length=40)
-    api_key: str | None = Field(default=None, min_length=1, max_length=4096)
+    api_key: SecretStr | None = None
     config: dict[str, object] = Field(default_factory=dict)
     actor: str = Field(default="system", min_length=1, max_length=120)
 
@@ -281,7 +283,7 @@ class ConnectionCreate(BaseModel):
         if self.kind is ConnectionKind.WEBSITE and not self.url:
             raise ValueError("Website connections require url.")
         if self.kind is ConnectionKind.TELEMETRY and not self.url and not self.config:
-            raise ValueError("Telemetry connections require an ingest URL or config.")
+            self.url = "/api/v1/models/{model_id}/telemetry"
         return self
 
 
@@ -300,9 +302,37 @@ class ConnectionResponse(BaseModel):
     credential_configured: bool
     status: ConnectionStatus
     config: dict[str, object]
+    discovered_metadata: dict[str, object]
+    last_status_code: int | None
+    last_latency_ms: int | None
+    last_error: str | None
     last_checked_at: datetime | None
     created_at: datetime
     updated_at: datetime
+
+
+class ConnectionCreatedResponse(ConnectionResponse):
+    """Creation response; a telemetry key appears exactly once."""
+
+    ingestion_key: str | None = None
+
+
+class ConnectionCheckResponse(BaseModel):
+    connection: ConnectionResponse
+    healthy: bool
+
+
+class ConnectionUpdate(BaseModel):
+    status: Literal["configured", "paused"] | None = None
+    api_key: SecretStr | None = None
+    config: dict[str, object] | None = None
+    actor: str = Field(default="system", min_length=1, max_length=120)
+
+    @model_validator(mode="after")
+    def require_change(self) -> ConnectionUpdate:
+        if not any(field in self.model_fields_set for field in ("status", "api_key", "config")):
+            raise ValueError("At least one connection field must be supplied.")
+        return self
 
 
 class ModelResponse(BaseModel):
@@ -369,6 +399,8 @@ class RegistrationStatusResponse(BaseModel):
     ready_for_telemetry: bool
     monitoring_state: Literal["paused", "awaiting_telemetry", "receiving_telemetry"]
     active_version_id: str | None
+    connection_kinds: list[ConnectionKind] = Field(default_factory=list)
+    connected_connections: int = 0
     checks: list[RegistrationCheck]
 
 

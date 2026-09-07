@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Iterator
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Query, Request, Response, status
+from fastapi import APIRouter, Depends, Header, Query, Request, Response, status
 from sqlalchemy.orm import Session
 
 from app.database import Database
@@ -22,6 +22,11 @@ from app.schemas import (
     AlertRuleUpdate,
     AlertState,
     AuditEventResponse,
+    ConnectionCheckResponse,
+    ConnectionCreate,
+    ConnectionCreatedResponse,
+    ConnectionResponse,
+    ConnectionUpdate,
     DemoResetResponse,
     DiagnosisResponse,
     EvaluationFeedbackCreate,
@@ -30,8 +35,6 @@ from app.schemas import (
     HealthSnapshotResponse,
     HealthTimelineResponse,
     IncidentResponse,
-    ConnectionCreate,
-    ConnectionResponse,
     ModelCreate,
     ModelLifecycleUpdate,
     ModelResponse,
@@ -207,7 +210,7 @@ def registration_status(
 
 @router.post(
     "/models/{model_id}/connections",
-    response_model=ConnectionResponse,
+    response_model=ConnectionCreatedResponse,
     status_code=status.HTTP_201_CREATED,
     tags=["models"],
 )
@@ -216,7 +219,7 @@ def create_connection(
     payload: ConnectionCreate,
     session: SessionDependency,
     service: ServiceDependency,
-) -> ConnectionResponse:
+) -> ConnectionCreatedResponse:
     return service.create_connection(session, model_id, payload)
 
 
@@ -233,6 +236,56 @@ def list_connections(
     return service.list_connections(session, model_id)
 
 
+@router.get(
+    "/connections/{connection_id}", response_model=ConnectionResponse, tags=["models"]
+)
+def get_connection(
+    connection_id: str,
+    session: SessionDependency,
+    service: ServiceDependency,
+) -> ConnectionResponse:
+    return service.get_connection(session, connection_id)
+
+
+@router.patch(
+    "/connections/{connection_id}", response_model=ConnectionResponse, tags=["models"]
+)
+def update_connection(
+    connection_id: str,
+    payload: ConnectionUpdate,
+    session: SessionDependency,
+    service: ServiceDependency,
+) -> ConnectionResponse:
+    return service.update_connection(session, connection_id, payload)
+
+
+@router.post(
+    "/connections/{connection_id}/check",
+    response_model=ConnectionCheckResponse,
+    tags=["models"],
+)
+def check_connection(
+    connection_id: str,
+    payload: ActorRequest,
+    session: SessionDependency,
+    service: ServiceDependency,
+) -> ConnectionCheckResponse:
+    return service.check_connection(session, connection_id, actor=payload.actor)
+
+
+@router.delete(
+    "/connections/{connection_id}", status_code=status.HTTP_204_NO_CONTENT, tags=["models"]
+)
+def delete_connection(
+    connection_id: str,
+    session: SessionDependency,
+    service: ServiceDependency,
+    actor: str = Query(default="system", min_length=1, max_length=120),
+) -> Response:
+    service.delete_connection(session, connection_id, actor=actor)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
 @router.post(
     "/models/{model_id}/telemetry",
     response_model=HealthSnapshotResponse,
@@ -244,8 +297,11 @@ def record_telemetry(
     payload: TelemetryCreate,
     session: SessionDependency,
     service: ServiceDependency,
+    ingestion_key: str | None = Header(default=None, alias="X-DriftZero-Ingest-Key"),
 ) -> HealthSnapshotResponse:
-    return service.record_telemetry(session, model_id, payload)
+    return service.record_telemetry(
+        session, model_id, payload, ingestion_key=ingestion_key
+    )
 
 
 @router.post(

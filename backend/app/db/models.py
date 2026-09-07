@@ -147,6 +147,7 @@ class ModelConnection(IdMixin, TenantMixin, Base):
     __tablename__ = "model_connections"
     __table_args__ = (
         sa.UniqueConstraint("model_id", "kind", "name", name="model_connection_identity"),
+        sa.UniqueConstraint("ingest_key_hash", name="ingest_key"),
     )
 
     model_id: Mapped[str] = mapped_column(
@@ -159,9 +160,15 @@ class ModelConnection(IdMixin, TenantMixin, Base):
     branch: Mapped[str | None] = mapped_column(sa.String(160))
     api_endpoint: Mapped[str | None] = mapped_column(sa.String(2000))
     auth_scheme: Mapped[str | None] = mapped_column(sa.String(40))
+    credential_ciphertext: Mapped[str | None] = mapped_column(sa.Text())
     credential_configured: Mapped[bool] = mapped_column(default=False)
+    ingest_key_hash: Mapped[str | None] = mapped_column(sa.String(64))
     status: Mapped[str] = mapped_column(sa.String(20), default="needs_setup")
     config: Mapped[dict[str, Any]] = mapped_column(default=dict)
+    discovered_metadata: Mapped[dict[str, Any]] = mapped_column(default=dict)
+    last_status_code: Mapped[int | None] = mapped_column()
+    last_latency_ms: Mapped[int | None] = mapped_column()
+    last_error: Mapped[str | None] = mapped_column(sa.Text())
     last_checked_at: Mapped[datetime | None] = mapped_column()
     created_at: Mapped[datetime] = mapped_column(default=utc_now)
     updated_at: Mapped[datetime] = mapped_column(default=utc_now, onupdate=utc_now)

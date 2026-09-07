@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import secrets
 from datetime import UTC, datetime, timedelta
 from inspect import signature
 from math import ceil
@@ -14,6 +15,7 @@ from sqlalchemy.orm import Session
 
 from app.alerting import AlertEvaluation, AlertEvaluator
 from app.config import Settings
+from app.connections import ConnectionCheckError, ConnectionInspector, CredentialVault
 from app.database import (
     AuditEvent,
     Diagnosis,
@@ -74,6 +76,11 @@ from app.schemas import (
     AlertRuleUpdate,
     AlertState,
     AuditEventResponse,
+    ConnectionCheckResponse,
+    ConnectionCreate,
+    ConnectionCreatedResponse,
+    ConnectionResponse,
+    ConnectionUpdate,
     DemoResetResponse,
     DiagnosisResponse,
     DiagnosisStatus,
@@ -89,8 +96,6 @@ from app.schemas import (
     HealthTimelineResponse,
     IncidentResponse,
     IncidentState,
-    ConnectionCreate,
-    ConnectionResponse,
     ModelCreate,
     ModelLifecycleUpdate,
     ModelResponse,
@@ -155,6 +160,10 @@ class TelemetryIngestionError(ServiceError):
     pass
 
 
+class ConnectionConfigurationError(ServiceError):
+    pass
+
+
 class DriftZeroService:
     def __init__(
         self,
@@ -167,6 +176,8 @@ class DriftZeroService:
         self.recovery_policy = RecoveryPolicy()
         self.evaluator = evaluator or SimulatedEvaluator()
         self.alert_evaluator = AlertEvaluator()
+        self.credential_vault = CredentialVault(settings.connection_secret_key)
+        self.connection_inspector = ConnectionInspector(settings)
 
     def create_model(self, session: Session, payload: ModelCreate) -> ModelResponse:
         existing = session.scalar(
@@ -213,7 +224,7 @@ class DriftZeroService:
 
     def create_connection(
         self, session: Session, model_id: str, payload: ConnectionCreate
-    ) -> ConnectionResponse:
+    ) -> ConnectionCreatedResponse:
         model = self._require_model(session, model_id)
         existing = session.scalar(
             select(ModelConnection).where(
@@ -226,12 +237,22 @@ class DriftZeroService:
             raise ResourceConflict("A connection with this name and type already exists.")
         values = payload.model_dump(exclude={"actor", "api_key"})
         values["kind"] = payload.kind.value
-        values["credential_configured"] = bool(payload.api_key)
-        values["status"] = (
-            "configured"
-            if payload.api_key or payload.kind.value == "telemetry"
-            else "needs_setup"
-        )
+        if payload.kind.value == "telemetry":
+            values["url"] = f"/api/v1/models/{model.id}/telemetry"
+        credential = payload.api_key.get_secret_value() if payload.api_key else None
+        try:
+            values["credential_ciphertext"] = (
+                self.credential_vault.encrypt(credential) if credential else None
+            )
+        except ConnectionCheckError as exc:
+            raise ConnectionConfigurationError(str(exc)) from exc
+        values["credential_configured"] = bool(credential)
+        ingestion_key = None
+        if payload.kind.value == "telemetry":
+            ingestion_key = f"dz_ing_{secrets.token_urlsafe(32)}"
+            values["ingest_key_hash"] = hashlib.sha256(ingestion_key.encode()).hexdigest()
+        needs_credential = payload.kind.value == "api" and bool(payload.auth_scheme)
+        values["status"] = "needs_setup" if needs_credential and not credential else "configured"
         record = ModelConnection(model_id=model.id, tenant_id=model.tenant_id, **values)
         session.add(record)
         self._audit(
@@ -246,7 +267,8 @@ class DriftZeroService:
             },
         )
         session.commit()
-        return ConnectionResponse.model_validate(record)
+        response = ConnectionResponse.model_validate(record)
+        return ConnectionCreatedResponse(**response.model_dump(), ingestion_key=ingestion_key)
 
     def list_connections(self, session: Session, model_id: str) -> list[ConnectionResponse]:
         self._require_model(session, model_id)
@@ -256,6 +278,92 @@ class DriftZeroService:
             .order_by(ModelConnection.created_at)
         ).all()
         return [ConnectionResponse.model_validate(record) for record in records]
+
+    def get_connection(self, session: Session, connection_id: str) -> ConnectionResponse:
+        return ConnectionResponse.model_validate(self._require_connection(session, connection_id))
+
+    def update_connection(
+        self, session: Session, connection_id: str, payload: ConnectionUpdate
+    ) -> ConnectionResponse:
+        record = self._require_connection(session, connection_id)
+        if payload.api_key is not None:
+            credential = payload.api_key.get_secret_value()
+            try:
+                record.credential_ciphertext = self.credential_vault.encrypt(credential)
+            except ConnectionCheckError as exc:
+                raise ConnectionConfigurationError(str(exc)) from exc
+            record.credential_configured = True
+        if payload.config is not None:
+            record.config = payload.config
+        if payload.status is not None:
+            record.status = payload.status
+        record.last_error = None
+        self._audit(
+            session,
+            record.model_id,
+            "model.connection_updated",
+            payload.actor,
+            {"connection_id": record.id, "credential_rotated": payload.api_key is not None},
+        )
+        session.commit()
+        return ConnectionResponse.model_validate(record)
+
+    def check_connection(
+        self, session: Session, connection_id: str, *, actor: str
+    ) -> ConnectionCheckResponse:
+        record = self._require_connection(session, connection_id)
+        if record.status == "paused":
+            raise InvalidTransition("Paused connections cannot be checked.")
+        credential = self.credential_vault.decrypt(record.credential_ciphertext)
+        checked_at = datetime.now(UTC)
+        try:
+            result = self.connection_inspector.check(record, credential)
+        except ConnectionCheckError as exc:
+            record.status = "error"
+            record.last_checked_at = checked_at
+            record.last_error = str(exc)
+            self._audit(
+                session,
+                record.model_id,
+                "model.connection_check_failed",
+                actor,
+                {"connection_id": record.id, "kind": record.kind, "error": str(exc)},
+            )
+            session.commit()
+            return ConnectionCheckResponse(
+                connection=ConnectionResponse.model_validate(record), healthy=False
+            )
+
+        record.status = "connected"
+        record.last_checked_at = checked_at
+        record.last_status_code = result.status_code
+        record.last_latency_ms = result.latency_ms
+        record.last_error = None
+        record.discovered_metadata = result.metadata
+        self._audit(
+            session,
+            record.model_id,
+            "model.connection_checked",
+            actor,
+            {
+                "connection_id": record.id,
+                "kind": record.kind,
+                "status_code": result.status_code,
+                "latency_ms": result.latency_ms,
+            },
+        )
+        session.commit()
+        return ConnectionCheckResponse(
+            connection=ConnectionResponse.model_validate(record), healthy=True
+        )
+
+    def delete_connection(self, session: Session, connection_id: str, *, actor: str) -> None:
+        record = self._require_connection(session, connection_id)
+        model_id = record.model_id
+        details = {"connection_id": record.id, "kind": record.kind, "name": record.name}
+        session.delete(record)
+        self._audit(session, model_id, "model.connection_deleted", actor, details)
+        session.commit()
 
     def get_model(self, session: Session, model_id: str) -> ModelResponse:
         return self._model_response(self._require_model(session, model_id))
@@ -415,6 +523,13 @@ class DriftZeroService:
             .order_by(HealthSnapshot.observed_at.desc())
             .limit(1)
         )
+        connections = session.scalars(
+            select(ModelConnection).where(ModelConnection.model_id == model_id)
+        ).all()
+        connection_kinds = sorted({connection.kind for connection in connections})
+        connected_connections = sum(
+            connection.status == "connected" for connection in connections
+        )
         active = ModelStatus(model.status) is ModelStatus.ACTIVE
         checks = [
             RegistrationCheck(
@@ -450,6 +565,15 @@ class DriftZeroService:
                     else "Registration is ready, but no telemetry has arrived yet."
                 ),
             ),
+            RegistrationCheck(
+                code="connection_configured",
+                passed=bool(connections),
+                detail=(
+                    f"{len(connections)} source connection(s) registered."
+                    if connections
+                    else "Add GitHub, telemetry, website, or API evidence sources."
+                ),
+            ),
         ]
         ready = active and active_version is not None and bool(model.provider.strip())
         if not active:
@@ -463,6 +587,8 @@ class DriftZeroService:
             ready_for_telemetry=ready,
             monitoring_state=monitoring_state,
             active_version_id=active_version.id if active_version else None,
+            connection_kinds=connection_kinds,
+            connected_connections=connected_connections,
             checks=checks,
         )
 
@@ -471,8 +597,25 @@ class DriftZeroService:
         session: Session,
         model_id: str,
         payload: TelemetryCreate,
+        *,
+        ingestion_key: str | None = None,
     ) -> HealthSnapshotResponse:
         self._require_model(session, model_id)
+        telemetry_connections = session.scalars(
+            select(ModelConnection).where(
+                ModelConnection.model_id == model_id,
+                ModelConnection.kind == "telemetry",
+                ModelConnection.status != "paused",
+            )
+        ).all()
+        if telemetry_connections:
+            supplied_hash = hashlib.sha256((ingestion_key or "").encode()).hexdigest()
+            if not any(
+                connection.ingest_key_hash
+                and secrets.compare_digest(connection.ingest_key_hash, supplied_hash)
+                for connection in telemetry_connections
+            ):
+                raise AuthorizationDenied("A valid telemetry ingestion key is required.")
         record = self._record_telemetry(session, model_id, payload)
         self._audit(
             session,
@@ -3420,6 +3563,18 @@ class DriftZeroService:
         )
         if not record:
             raise ResourceNotFound("Monitored model not found.")
+        return record
+
+    @staticmethod
+    def _require_connection(session: Session, connection_id: str) -> ModelConnection:
+        record = session.scalar(
+            select(ModelConnection).where(
+                ModelConnection.id == connection_id,
+                ModelConnection.tenant_id == DEFAULT_TENANT_ID,
+            )
+        )
+        if record is None:
+            raise ResourceNotFound("Model connection not found.")
         return record
 
     @staticmethod

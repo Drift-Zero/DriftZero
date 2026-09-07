@@ -85,6 +85,8 @@ POST /api/v1/models/{model_id}/telemetry
 Each submitted window contains normalized `0–100` health dimensions, its sample size and traffic coverage, a signal source, and optional trace evidence. This boundary allows the scoring, incident, diagnosis, alert, recovery, and verification pipeline to operate independently of the underlying provider. The repository includes a dependency-free synthetic connector example, but it does not yet ship finished connectors for every provider.
 
 See [`docs/HEALTH_EVENT_SCHEMA.md`](docs/HEALTH_EVENT_SCHEMA.md) for the current contract.
+See [`docs/CONNECTIONS.md`](docs/CONNECTIONS.md) for GitHub, telemetry, website, and API
+onboarding, credential handling, and connection checks.
 
 ## Evaluation layer
 
@@ -328,6 +330,7 @@ Copy the relevant example file before changing local configuration. Never commit
 - **Root Docker stack:** `DRIFTZERO_DASHBOARD_PORT`, `DRIFTZERO_API_PORT`, `DRIFTZERO_DATABASE_URL`, `DRIFTZERO_API_PREFIX`, `DRIFTZERO_ENVIRONMENT`
 - **Scoring and workers:** `DRIFTZERO_MINIMUM_SAMPLE_SIZE`, `DRIFTZERO_MINIMUM_COVERAGE`, `DRIFTZERO_FORECAST_HORIZON_MINUTES`, `DRIFTZERO_ALERT_EVALUATION_INTERVAL_SECONDS`, `DRIFTZERO_RECOVERY_WORKER_INTERVAL_SECONDS`, `DRIFTZERO_RETENTION_INTERVAL_SECONDS`
 - **Recovery:** `DRIFTZERO_RECOVERY_ALLOW_LOCAL_IDENTITY`, `DRIFTZERO_RECOVERY_OPERATOR_API_KEY`, `DRIFTZERO_RECOVERY_ADMIN_API_KEY`, `DRIFTZERO_RECOVERY_CONTROL_URL`, `DRIFTZERO_RECOVERY_CONTROL_TOKEN`
+- **Connections:** `DRIFTZERO_CONNECTION_SECRET_KEY`, `DRIFTZERO_CONNECTION_CHECK_TIMEOUT_SECONDS`
 - **Observability:** `DRIFTZERO_LOG_LEVEL`, `DRIFTZERO_OTEL_ENABLED`, `OTEL_EXPORTER_OTLP_ENDPOINT`
 - **Dashboard:** `VITE_API_BASE_URL`, `VITE_DEMO_MODE`, `VITE_RECOVERY_API_KEY`, `VITE_RECOVERY_ACTOR`, `VITE_RECOVERY_ROLE`
 - **ShopAssist:** `DRIFTZERO_API_URL`, `GROQ_API_KEY`
