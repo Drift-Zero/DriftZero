@@ -952,6 +952,34 @@ class EvaluationFeedbackResponse(BaseModel):
     created_at: datetime
 
 
+class UserRegisterRequest(BaseModel):
+    email: str = Field(min_length=3, max_length=320)
+    password: SecretStr = Field(min_length=12, max_length=128)
+    display_name: str = Field(min_length=1, max_length=120)
+    tenant_name: str = Field(min_length=1, max_length=120)
+
+
+class UserLoginRequest(BaseModel):
+    email: str = Field(min_length=3, max_length=320)
+    password: SecretStr = Field(min_length=1, max_length=128)
+    tenant_id: str | None = Field(default=None, min_length=36, max_length=36)
+
+
+class AuthUserResponse(BaseModel):
+    user_id: str
+    email: str
+    display_name: str
+    tenant_id: str
+    tenant_name: str
+    role: ActorRole
+
+
+class AuthSessionResponse(BaseModel):
+    user: AuthUserResponse
+    csrf_token: str
+    expires_at: datetime
+
+
 class ActorRequest(BaseModel):
     actor: str = Field(min_length=1, max_length=120)
     role: ActorRole = ActorRole.OPERATOR
