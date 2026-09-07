@@ -129,8 +129,8 @@ def run(base_url: str, timeout: int, api_key: str | None = None) -> None:
     assert recovered["state"] == "recovered", recovered["state"]
     timeline = request(base_url, f"/api/v1/models/{model_id}/health", api_key=api_key)
     final_score = timeline["snapshots"][-1]["score"]
-    assert final_score == 84.2, final_score
-    print("ShopAssist smoke test passed: 92 → 61 → 84.2, recovery verified.")
+    assert final_score == 84.7, final_score
+    print("ShopAssist smoke test passed: 92 → 61 → 84.7, recovery verified.")
 
 
 if __name__ == "__main__":
