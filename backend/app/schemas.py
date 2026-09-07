@@ -406,6 +406,86 @@ class ConnectionUpdate(BaseModel):
         return self
 
 
+EvidenceSourceState = Literal["awaiting_review", "approved", "rejected", "retired"]
+
+
+class EvidenceImportRequest(BaseModel):
+    """Base64 transport keeps file ingestion dependency-free at the HTTP boundary."""
+
+    filename: str = Field(min_length=1, max_length=255)
+    name: str | None = Field(default=None, min_length=1, max_length=160)
+    media_type: str | None = Field(default=None, max_length=100)
+    content_base64: str = Field(min_length=1)
+    use_llm: bool = False
+    actor: str = Field(default="system", min_length=1, max_length=120)
+
+
+class EvidenceChunkResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    source_id: str
+    ordinal: int
+    text: str
+    evidence_quote: str
+    locator: dict[str, object]
+    content_hash: str
+    validation_status: Literal["deterministic", "exact_match"]
+    created_at: datetime
+
+
+class EvidenceSourceResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    model_id: str
+    name: str
+    filename: str
+    media_type: str
+    content_hash: str
+    corpus_version: str
+    status: EvidenceSourceState
+    extraction_method: str
+    llm_provider: str | None
+    llm_model: str | None
+    chunk_count: int
+    approved_by: str | None
+    approved_at: datetime | None
+    rejection_reason: str | None
+    created_at: datetime
+    updated_at: datetime
+    chunks: list[EvidenceChunkResponse] = Field(default_factory=list)
+
+
+class EvidenceReviewRequest(BaseModel):
+    status: Literal["approved", "rejected", "retired"]
+    actor: str = Field(min_length=1, max_length=120)
+    reason: str | None = Field(default=None, max_length=1000)
+
+    @model_validator(mode="after")
+    def require_rejection_reason(self) -> EvidenceReviewRequest:
+        if self.status == "rejected" and not (self.reason or "").strip():
+            raise ValueError("Rejected evidence requires a reason.")
+        return self
+
+
+class EvidenceSearchRequest(BaseModel):
+    query: str = Field(min_length=1, max_length=2000)
+    limit: int = Field(default=5, ge=1, le=20)
+
+
+class EvidenceSearchHit(BaseModel):
+    chunk_id: str
+    source_id: str
+    source_name: str
+    filename: str
+    corpus_version: str
+    text: str
+    evidence_quote: str
+    locator: dict[str, object]
+    relevance: float = Field(ge=0, le=1)
+
+
 class ModelResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 

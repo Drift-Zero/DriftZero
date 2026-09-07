@@ -254,6 +254,12 @@ Copy `.env.example` values into the deployment environment. Environment variable
 the `DRIFTZERO_` prefix. SQLite is the zero-setup default; set `DRIFTZERO_DATABASE_URL` to another
 SQLAlchemy-compatible database URL for a persistent deployment.
 
+To enable the Groq model workbench, set `DRIFTZERO_GROQ_API_KEY` on the backend.
+The key is used only for model discovery and inference and is never returned to
+the dashboard. DriftZero evaluates the resulting responses with deterministic
+local calculations. See `docs/GROQ_EVALUATION.md` in the repository root for
+the request flow and interpretation limits.
+
 ## Operational logging
 
 The API writes one JSON object per line to stdout. Every HTTP response includes

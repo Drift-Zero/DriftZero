@@ -157,10 +157,20 @@ jobs:
             --publish 3200:10000 \
             driftzero-deploy:test
           python scripts/smoke_test.py --base-url http://localhost:3200
-          docker logs driftzero-deploy-test 2>&1 | tee /tmp/deploy.log
-          grep --quiet 'alert_evaluation.completed' /tmp/deploy.log
-          grep --quiet 'recovery_commands.completed' /tmp/deploy.log
-          grep --quiet 'retention.completed' /tmp/deploy.log
+          for attempt in {1..20}; do
+            docker logs driftzero-deploy-test > /tmp/deploy.log 2>&1
+            if grep --quiet 'alert_evaluation.completed' /tmp/deploy.log \
+              && grep --quiet 'recovery_commands.completed' /tmp/deploy.log \
+              && grep --quiet 'retention.completed' /tmp/deploy.log; then
+              break
+            fi
+            if [ "$attempt" -eq 20 ]; then
+              cat /tmp/deploy.log
+              echo "Single-container workers did not report readiness in time" >&2
+              exit 1
+            fi
+            sleep 1
+          done
       - name: Print logs after failure
         if: failure()
         run: |

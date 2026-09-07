@@ -43,6 +43,7 @@ Recovery is a lifecycle rather than a button click. A plan can be recommended, a
 - **Audit history** — record model, telemetry, alert, diagnosis, recovery, verification, and governance events.
 - **Dashboard** — explore fleet health, models, model details, incidents, events, recovery state, and deterministic demo controls in a React interface.
 - **Dashboard settings** — set the operator identity used for audited actions, repoint the dashboard at another API and test it before committing, switch between demo and live data, enable background refresh, manage alert rules and per-model retention and lifecycle, tune density, timestamp, and precision formatting, and export, import, or reset the whole configuration.
+- **Groq evaluation workbench** — discover and import a Groq model with a server-owned key, capture real responses, then calculate transparent evidence, safety, stability, reliability, latency, cost, and health metrics locally without an evaluator-model call.
 
 ## Architecture
 
@@ -88,6 +89,7 @@ Each submitted window contains normalized `0–100` health dimensions, its sampl
 See [`docs/HEALTH_EVENT_SCHEMA.md`](docs/HEALTH_EVENT_SCHEMA.md) for the current contract.
 See [`docs/CONNECTIONS.md`](docs/CONNECTIONS.md) for GitHub, telemetry, website, and API
 onboarding, credential handling, and connection checks.
+See [`docs/GROQ_EVALUATION.md`](docs/GROQ_EVALUATION.md) for the server-side Groq import and deterministic evaluation flow.
 
 ## Evaluation layer
 
@@ -336,9 +338,10 @@ Copy the relevant example file before changing local configuration. Never commit
 - **Scoring and workers:** `DRIFTZERO_MINIMUM_SAMPLE_SIZE`, `DRIFTZERO_MINIMUM_COVERAGE`, `DRIFTZERO_FORECAST_HORIZON_MINUTES`, `DRIFTZERO_ALERT_EVALUATION_INTERVAL_SECONDS`, `DRIFTZERO_RECOVERY_WORKER_INTERVAL_SECONDS`, `DRIFTZERO_RETENTION_INTERVAL_SECONDS`
 - **Recovery:** `DRIFTZERO_RECOVERY_ALLOW_LOCAL_IDENTITY`, `DRIFTZERO_RECOVERY_OPERATOR_API_KEY`, `DRIFTZERO_RECOVERY_ADMIN_API_KEY`, `DRIFTZERO_RECOVERY_CONTROL_URL`, `DRIFTZERO_RECOVERY_CONTROL_TOKEN`
 - **Connections:** `DRIFTZERO_CONNECTION_SECRET_KEY`, `DRIFTZERO_CONNECTION_CHECK_TIMEOUT_SECONDS`
+- **Evidence ingestion:** `DRIFTZERO_EVIDENCE_MAX_FILE_BYTES`, `DRIFTZERO_EVIDENCE_LLM_PROVIDER`, `DRIFTZERO_EVIDENCE_LLM_MODEL`, `DRIFTZERO_EVIDENCE_LLM_TIMEOUT_SECONDS`, plus server-only `GEMINI_API_KEY` or `DRIFTZERO_GROQ_API_KEY`
 - **Observability:** `DRIFTZERO_LOG_LEVEL`, `DRIFTZERO_OTEL_ENABLED`, `OTEL_EXPORTER_OTLP_ENDPOINT`
 - **Dashboard:** `VITE_API_BASE_URL`, `VITE_DEMO_MODE`, `VITE_RECOVERY_API_KEY`, `VITE_RECOVERY_ACTOR`, `VITE_RECOVERY_ROLE`
-- **ShopAssist:** `DRIFTZERO_API_URL`, `SHOPASSIST_PUBLIC_URL`, `GROQ_API_KEY`; `GEMINI_API_KEY` is reserved for the documented future failover adapter
+- **ShopAssist:** `DRIFTZERO_API_URL`, `SHOPASSIST_PUBLIC_URL`, `GROQ_API_KEY`; `GEMINI_API_KEY` may also be used server-side by the evidence-ingestion service
 
 `GROQ_API_KEY` and DriftZero recovery credentials are server-side secrets. They must not be
 exposed through `NEXT_PUBLIC_` variables or committed environment files. Note that every
