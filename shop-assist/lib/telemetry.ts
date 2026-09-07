@@ -1,7 +1,7 @@
 import { answerQuestion } from './assistant.ts';
-import type { ScenarioId } from './demo-state.ts';
+import { normalizeScenarios, type ScenarioId } from './demo-state.ts';
 
-export type ObservedInteraction = { question: string; answer: string; scenario: ScenarioId; citations: string[]; intent: string; latencyMs: number; inputTokens: number; outputTokens: number; status: 'ok' | 'error' };
+export type ObservedInteraction = { question: string; answer: string; scenario?: ScenarioId; scenarios?: ScenarioId[]; citations: string[]; intent: string; latencyMs: number; inputTokens: number; outputTokens: number; status: 'ok' | 'error' };
 export type TelemetryDelivery = 'ready' | 'buffered' | 'sent' | 'error';
 type Evaluation = ObservedInteraction & { quality: number; groundedness: number; semanticStability: number; temporalStability: number; safety: number; drift: number; reliability: number; latency: number; cost: number; unsupportedClaims: number };
 
@@ -49,7 +49,10 @@ export function buildTelemetryWindow(items: Evaluation[]) {
     observed_at: observedAt,
     dimensions: { quality: average(items, 'quality'), groundedness: average(items, 'groundedness'), semantic_stability: average(items, 'semanticStability'), temporal_stability: average(items, 'temporalStability'), safety: average(items, 'safety'), drift: average(items, 'drift'), reliability: average(items, 'reliability'), latency: average(items, 'latency'), cost: average(items, 'cost') },
     sample_size: items.length, coverage: 1, source: 'observed',
-    traces: items.map((item, index) => ({ occurred_at: observedAt, request_id: `shopassist-${item.scenario}-observed-${Date.now()}-${index}`, question: item.question, answer: item.answer, provider: 'shopassist', status: item.status, latency_ms: item.latencyMs, input_tokens: item.inputTokens, output_tokens: item.outputTokens, cost_usd: 0, retrieved_document_ids: item.citations, citation_count: item.citations.length, unsupported_claim_count: item.unsupportedClaims, groundedness_score: item.groundedness, quality_score: item.quality, safety_flags: item.safety < 100 ? ['sensitive_data'] : [], is_simulated: item.scenario !== 'healthy' && item.scenario !== 'recovered', metadata: { scenario: item.scenario, intent: item.intent, evaluator: 'shopassist-observed-v1' } })),
+    traces: items.map((item, index) => {
+      const scenarios = normalizeScenarios(item.scenarios ?? item.scenario ?? 'healthy');
+      return { occurred_at: observedAt, request_id: `shopassist-${scenarios.join('-')}-observed-${Date.now()}-${index}`, question: item.question, answer: item.answer, provider: 'shopassist', status: item.status, latency_ms: item.latencyMs, input_tokens: item.inputTokens, output_tokens: item.outputTokens, cost_usd: 0, retrieved_document_ids: item.citations, citation_count: item.citations.length, unsupported_claim_count: item.unsupportedClaims, groundedness_score: item.groundedness, quality_score: item.quality, safety_flags: item.safety < 100 ? ['sensitive_data'] : [], is_simulated: scenarios.some((scenario) => scenario !== 'healthy' && scenario !== 'recovered'), metadata: { scenarios, scenario: scenarios[0], intent: item.intent, evaluator: 'shopassist-observed-v1' } };
+    }),
   };
 }
 
