@@ -166,6 +166,8 @@ class SecurityMiddleware(BaseHTTPMiddleware):
                 ):
                     return self._forbidden("A valid CSRF token is required.")
             return self._authorize_role(request, session_principal)
+        if path == f"{self.settings.api_prefix}/auth/me":
+            return None
         if not self._auth_required():
             return None
         # Keep the stable production denial contract for an endpoint that can
