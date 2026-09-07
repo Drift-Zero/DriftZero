@@ -18,6 +18,15 @@ def recovery_principal(request: Request) -> ActorRequest:
     explicitly enabled outside production.
     """
 
+    authenticated = getattr(request.state, "principal", None)
+    if authenticated is not None:
+        if authenticated.role not in {ActorRole.OPERATOR, ActorRole.ADMIN}:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Operator or administrator credentials are required.",
+            )
+        return ActorRequest(actor=authenticated.actor, role=authenticated.role)
+
     settings: Settings = request.app.state.settings
     authorization = request.headers.get("authorization", "")
     provided = authorization[7:] if authorization.lower().startswith("bearer ") else ""
