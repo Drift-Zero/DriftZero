@@ -1,0 +1,67 @@
+{
+  "source": {
+    "name": "ShopAssist inventory and orders",
+    "version": "2026-09-08",
+    "updated": "8 September 2026"
+  },
+  "products": [
+    {
+      "name": "AeroBuds",
+      "category": "electronics",
+      "price_usd": 119,
+      "units_in_stock": 50,
+      "description": "Wireless earbuds with Bluetooth and an eight-hour battery."
+    },
+    {
+      "name": "Nova ANC Headphones",
+      "category": "electronics",
+      "price_usd": 149,
+      "units_in_stock": 18,
+      "description": "Wireless over-ear headphones with adaptive noise cancellation."
+    },
+    {
+      "name": "Pulse Smartwatch",
+      "category": "electronics",
+      "price_usd": 229,
+      "units_in_stock": 7,
+      "description": "Fitness and sleep tracking with a seven-day battery."
+    },
+    {
+      "name": "Arc Mini Speaker",
+      "category": "electronics",
+      "price_usd": 79,
+      "units_in_stock": 0,
+      "description": "Portable waterproof speaker with room-filling sound."
+    },
+    {
+      "name": "Roam Daypack",
+      "category": "apparel",
+      "price_usd": 72,
+      "units_in_stock": 15,
+      "description": "Weather-resistant 18 L backpack with a laptop sleeve."
+    }
+  ],
+  "orders": [
+    {
+      "order_id": "DZ-1042",
+      "product": "Nova ANC Headphones",
+      "status": "delivered",
+      "placed_on": "18 August 2026",
+      "expected_delivery": "22 August 2026"
+    },
+    {
+      "order_id": "DZ-2088",
+      "product": "Roam Daypack",
+      "status": "shipped",
+      "placed_on": "2 September 2026",
+      "expected_delivery": "8 September 2026"
+    },
+    {
+      "order_id": "DZ-3190",
+      "product": "Halo Desk Lamp",
+      "status": "processing",
+      "placed_on": "5 September 2026",
+      "expected_delivery": "10 September 2026"
+    }
+  ]
+}
