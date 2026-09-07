@@ -34,6 +34,9 @@ export const api={
   setModelLifecycle:(modelId:string,status:ApiModel['status'])=>apiRequest<ApiModel>(`${v1}/models/${modelId}/lifecycle`,mutate({status})),
 
   evidenceSources:(modelId:string)=>apiRequest<ApiEvidenceSource[]>(`${v1}/models/${modelId}/evidence-sources`),
+  modelConnections:(modelId:string)=>apiRequest<ApiModelConnection[]>(`${v1}/models/${modelId}/connections`),
+  createModelConnection:(modelId:string,body:{name:string;api_endpoint:string;auth_scheme?:string;api_key?:string;config:Record<string,unknown>})=>apiRequest<ApiModelConnection>(`${v1}/models/${modelId}/connections`,mutate({kind:'api',...body})),
+  checkModelConnection:(connectionId:string)=>apiRequest<{connection:ApiModelConnection;healthy:boolean}>(`${v1}/connections/${connectionId}/check`,mutate({})),
   importEvidence:(modelId:string,payload:{filename:string;name?:string;media_type?:string;content_base64:string;use_llm:boolean;actor:string})=>apiRequest<ApiEvidenceSource>(`${v1}/models/${modelId}/evidence-sources/import`,send('POST',{...payload})),
   reviewEvidence:(sourceId:string,status:'approved'|'rejected'|'retired',reason?:string)=>apiRequest<ApiEvidenceSource>(`${v1}/evidence-sources/${sourceId}/review`,mutate({status,...(reason?{reason}:{})})),
   searchEvidence:(modelId:string,query:string)=>apiRequest<ApiEvidenceHit[]>(`${v1}/models/${modelId}/evidence/search`,send('POST',{query,limit:5})),

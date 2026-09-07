@@ -124,7 +124,6 @@ __all__ = [
     "Diagnosis",
     "DiagnosisEvidence",
     "DiagnosisStatus",
-    "EvidenceChunk",
     "EvidenceSource",
     "EvaluationFeedback",
     "EvaluatorKind",

@@ -474,6 +474,45 @@ class EvidenceSearchRequest(BaseModel):
     limit: int = Field(default=5, ge=1, le=20)
 
 
+class AutomatedEvaluationRequest(BaseModel):
+    """Controls for a source-generated black-box model health check."""
+
+    max_questions: int = Field(default=20, ge=1, le=50)
+    variants_per_fact: int = Field(default=4, ge=2, le=5)
+    latency_target_ms: int = Field(default=2000, ge=1, le=300_000)
+    actor: str = Field(default="system", min_length=1, max_length=120)
+
+
+class AutomatedEvaluationCaseResponse(BaseModel):
+    question: str
+    expected: str
+    actual: str
+    passed: bool
+    failure_reason: str | None
+    field: str
+    source_id: str
+    source_name: str
+    locator: dict[str, object]
+    latency_ms: int
+
+
+class AutomatedEvaluationResponse(BaseModel):
+    model_id: str
+    connection: str
+    generated_questions: int
+    passed_questions: int
+    failed_questions: int
+    pass_rate: Score
+    dimensions: DimensionScores
+    health_score: Score | None
+    health_state: HealthState
+    confidence: float = Field(ge=0, le=1)
+    message: str
+    formula: str
+    cases: list[AutomatedEvaluationCaseResponse]
+    snapshot: HealthSnapshotResponse
+
+
 class EvidenceSearchHit(BaseModel):
     chunk_id: str
     source_id: str

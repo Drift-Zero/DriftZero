@@ -11,9 +11,16 @@ from math import ceil
 from typing import Any
 
 from sqlalchemy import delete, func, select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 
 from app.alerting import AlertEvaluation, AlertEvaluator
+from app.automated_evaluation import (
+    AutomatedEvaluationError,
+    ModelInvoker,
+    dimensions_from_results,
+    generate_cases,
+    run_cases,
+)
 from app.cache import TenantTTLCache
 from app.config import Settings
 from app.connections import ConnectionCheckError, ConnectionInspector, CredentialVault
@@ -31,6 +38,7 @@ from app.db import (
     DiagnosisEvidence,
     EvaluationFeedback,
     EvaluatorVersion,
+    EvidenceSource,
     HealthForecastRecord,
     Incident,
     KnowledgeDocument,
@@ -84,6 +92,9 @@ from app.schemas import (
     AlertRuleUpdate,
     AlertState,
     AuditEventResponse,
+    AutomatedEvaluationCaseResponse,
+    AutomatedEvaluationRequest,
+    AutomatedEvaluationResponse,
     ConnectionCheckResponse,
     ConnectionCreate,
     ConnectionCreatedResponse,
@@ -255,9 +266,7 @@ class DriftZeroService:
         except GroqEvaluationError as exc:
             raise ExternalProviderError(str(exc)) from exc
 
-    def import_groq_model(
-        self, session: Session, payload: GroqModelImportRequest
-    ) -> ModelResponse:
+    def import_groq_model(self, session: Session, payload: GroqModelImportRequest) -> ModelResponse:
         if payload.model_identifier not in self.groq_models().models:
             raise ExternalProviderError(
                 "The selected model is not available to the configured Groq account."
@@ -311,9 +320,7 @@ class DriftZeroService:
                 completions.append(item)
                 cost = (
                     item.input_tokens * payload.profile.input_cost_per_million / 1_000_000
-                    + item.output_tokens
-                    * payload.profile.output_cost_per_million
-                    / 1_000_000
+                    + item.output_tokens * payload.profile.output_cost_per_million / 1_000_000
                 )
                 traces.append(
                     TraceCreate(
@@ -424,6 +431,142 @@ class DriftZeroService:
                 "Groq is not configured. Set DRIFTZERO_GROQ_API_KEY on the backend."
             )
         return self.groq_client
+
+    def run_automated_evaluation(
+        self,
+        session: Session,
+        model_id: str,
+        payload: AutomatedEvaluationRequest,
+    ) -> AutomatedEvaluationResponse:
+        """Ask a registered model questions generated from approved JSON truth."""
+
+        model = self._require_model(session, model_id)
+        sources = list(
+            session.scalars(
+                select(EvidenceSource)
+                .options(selectinload(EvidenceSource.chunks))
+                .where(
+                    EvidenceSource.model_id == model_id,
+                    EvidenceSource.tenant_id == self._tenant_id(session),
+                    EvidenceSource.status == "approved",
+                )
+                .order_by(EvidenceSource.created_at)
+            ).all()
+        )
+        cases = generate_cases(
+            sources,
+            max_questions=payload.max_questions,
+            variants=payload.variants_per_fact,
+        )
+        if not cases:
+            raise InvalidTransition(
+                "No approved JSON facts are available. Upload and approve a JSON source first."
+            )
+        version = self._active_model_version(session, model_id)
+        connections = list(
+            session.scalars(
+                select(ModelConnection)
+                .where(ModelConnection.model_id == model_id)
+                .order_by(ModelConnection.created_at)
+            ).all()
+        )
+        try:
+            invoke, connection_label = ModelInvoker(
+                self.settings,
+                self.credential_vault,
+                self.groq_client,
+            ).build(model, version, connections)
+            results = run_cases(cases, invoke)
+        except AutomatedEvaluationError as exc:
+            raise ExternalProviderError(str(exc)) from exc
+
+        dimensions = dimensions_from_results(results, latency_target_ms=payload.latency_target_ms)
+        traces = [
+            TraceCreate(
+                request_id=f"auto-eval-{secrets.token_hex(12)}-{index}",
+                question=item.case.question,
+                answer=item.actual,
+                provider=model.provider,
+                latency_ms=item.latency_ms,
+                quality_score=100.0 if item.passed else 0.0,
+                groundedness_score=100.0 if item.passed else 0.0,
+                retrieved_document_ids=[item.case.source_id],
+                unsupported_claim_count=0 if item.passed else 1,
+            )
+            for index, item in enumerate(results)
+        ]
+        telemetry = TelemetryCreate(
+            event_id=f"auto-eval-{secrets.token_hex(12)}",
+            dimensions=dimensions,
+            sample_size=len(results),
+            coverage=1.0,
+            source=SignalSource.OBSERVED,
+            traces=traces,
+        )
+        snapshot = self._record_telemetry(session, model_id, telemetry)
+        passed = sum(item.passed for item in results)
+        pass_rate = round(100.0 * passed / len(results), 1)
+        if snapshot.score is None:
+            message = (
+                f"{len(results)} questions ran successfully. At least "
+                f"{self.settings.minimum_sample_size} are required for a Health Score."
+            )
+        elif snapshot.state is HealthState.HEALTHY:
+            message = "The model is answering the approved reference data reliably."
+        else:
+            message = (
+                f"{len(results) - passed} questions failed. Review the mismatches before "
+                "relying on this model's factual answers."
+            )
+        self._audit(
+            session,
+            model_id,
+            "evaluation.automated_completed",
+            payload.actor,
+            {
+                "snapshot_id": snapshot.id,
+                "questions": len(results),
+                "passed": passed,
+                "pass_rate": pass_rate,
+                "connection": connection_label,
+                "source_ids": sorted({item.case.source_id for item in results}),
+            },
+        )
+        session.commit()
+        self.dashboard_cache.invalidate(self._tenant_id(session), namespace="health_timeline")
+        return AutomatedEvaluationResponse(
+            model_id=model_id,
+            connection=connection_label,
+            generated_questions=len(results),
+            passed_questions=passed,
+            failed_questions=len(results) - passed,
+            pass_rate=pass_rate,
+            dimensions=dimensions,
+            health_score=snapshot.score,
+            health_state=HealthState(snapshot.state),
+            confidence=snapshot.confidence,
+            message=message,
+            formula=(
+                "Health = weighted mean of locally calculated quality, groundedness, "
+                "semantic stability, reliability, and latency."
+            ),
+            cases=[
+                AutomatedEvaluationCaseResponse(
+                    question=item.case.question,
+                    expected=item.case.expected,
+                    actual=item.actual,
+                    passed=item.passed,
+                    failure_reason=item.failure_reason,
+                    field=item.case.field,
+                    source_id=item.case.source_id,
+                    source_name=item.case.source_name,
+                    locator=item.case.locator,
+                    latency_ms=item.latency_ms,
+                )
+                for item in results
+            ],
+            snapshot=self._snapshot_response(snapshot),
+        )
 
     def create_connection(
         self, session: Session, model_id: str, payload: ConnectionCreate
@@ -730,9 +873,7 @@ class DriftZeroService:
             select(ModelConnection).where(ModelConnection.model_id == model_id)
         ).all()
         connection_kinds = sorted({connection.kind for connection in connections})
-        connected_connections = sum(
-            connection.status == "connected" for connection in connections
-        )
+        connected_connections = sum(connection.status == "connected" for connection in connections)
         active = ModelStatus(model.status) is ModelStatus.ACTIVE
         checks = [
             RegistrationCheck(
@@ -807,11 +948,8 @@ class DriftZeroService:
         observed_at = payload.observed_at
         if observed_at.tzinfo is None:
             observed_at = observed_at.replace(tzinfo=UTC)
-        if (
-            payload.source is SignalSource.OBSERVED
-            and observed_at
-            > datetime.now(UTC)
-            + timedelta(seconds=self.settings.telemetry_max_future_skew_seconds)
+        if payload.source is SignalSource.OBSERVED and observed_at > datetime.now(UTC) + timedelta(
+            seconds=self.settings.telemetry_max_future_skew_seconds
         ):
             raise TelemetryIngestionError(
                 "Telemetry observed_at is too far in the future. Check the producer clock."
@@ -861,9 +999,7 @@ class DriftZeroService:
             },
         )
         session.commit()
-        self.dashboard_cache.invalidate(
-            self._tenant_id(session), namespace="health_timeline"
-        )
+        self.dashboard_cache.invalidate(self._tenant_id(session), namespace="health_timeline")
         return self._snapshot_response(record)
 
     def record_shopassist_telemetry(
@@ -913,9 +1049,7 @@ class DriftZeroService:
         )
         records.reverse()
         points = [
-            (record.observed_at, record.score)
-            for record in records
-            if record.score is not None
+            (record.observed_at, record.score) for record in records if record.score is not None
         ]
         response = HealthTimelineResponse(
             model=self._model_response(model),
@@ -1057,9 +1191,7 @@ class DriftZeroService:
     def get_recovery(self, session: Session, plan_id: str) -> RecoveryPlanResponse:
         return self._recovery_response(self._require_plan(session, plan_id))
 
-    def get_recovery_command(
-        self, session: Session, command_id: str
-    ) -> RecoveryCommandResponse:
+    def get_recovery_command(self, session: Session, command_id: str) -> RecoveryCommandResponse:
         command = session.scalar(
             select(RecoveryCommand)
             .join(RecoveryPlan, RecoveryPlan.id == RecoveryCommand.plan_id)
@@ -1073,9 +1205,7 @@ class DriftZeroService:
             raise ResourceNotFound("Recovery command not found.")
         return RecoveryCommandResponse.model_validate(command)
 
-    def recovery_commands(
-        self, session: Session, plan_id: str
-    ) -> list[RecoveryCommandResponse]:
+    def recovery_commands(self, session: Session, plan_id: str) -> list[RecoveryCommandResponse]:
         self._require_plan(session, plan_id)
         records = session.scalars(
             select(RecoveryCommand)
@@ -1257,13 +1387,9 @@ class DriftZeroService:
             for execution in sorted(action.executions, key=lambda item: item.attempt)
         ]
 
-    def recovery_verification(
-        self, session: Session, plan_id: str
-    ) -> VerificationRunResponse:
+    def recovery_verification(self, session: Session, plan_id: str) -> VerificationRunResponse:
         plan = self._require_plan(session, plan_id)
-        verification = max(
-            plan.verification_runs, key=lambda run: run.started_at, default=None
-        )
+        verification = max(plan.verification_runs, key=lambda run: run.started_at, default=None)
         if verification is None:
             raise ResourceNotFound("No verification run exists for this recovery plan.")
         return VerificationRunResponse.model_validate(verification)
@@ -1494,9 +1620,7 @@ class DriftZeroService:
                 evaluated_requests=result.evaluated_requests,
             )
             recovered = bool(verification.passed)
-            plan.state = (
-                RecoveryState.RECOVERED.value if recovered else RecoveryState.FAILED.value
-            )
+            plan.state = RecoveryState.RECOVERED.value if recovered else RecoveryState.FAILED.value
             plan.version += 1
             plan.verified_at = datetime.now(UTC)
             if not recovered:
@@ -1582,14 +1706,9 @@ class DriftZeroService:
         if plan.state not in {RecoveryState.RECOVERED.value, RecoveryState.FAILED.value}:
             raise InvalidTransition(f"Cannot roll back a plan in '{plan.state}' state.")
 
-        executions = [
-            execution
-            for action in plan.action_items
-            for execution in action.executions
-        ]
+        executions = [execution for action in plan.action_items for execution in action.executions]
         if not any(
-            ExecutionState(execution.state) is ExecutionState.SUCCEEDED
-            for execution in executions
+            ExecutionState(execution.state) is ExecutionState.SUCCEEDED for execution in executions
         ):
             raise InvalidTransition("No applied recovery actions are available to roll back.")
 
@@ -1636,9 +1755,7 @@ class DriftZeroService:
             evaluated_requests=snapshot.sample_size,
         )
         recovered = bool(verification.passed)
-        plan.state = (
-            RecoveryState.RECOVERED.value if recovered else RecoveryState.FAILED.value
-        )
+        plan.state = RecoveryState.RECOVERED.value if recovered else RecoveryState.FAILED.value
         plan.verified_at = datetime.now(UTC)
         plan.version += 1
         if recovered:
@@ -1649,9 +1766,7 @@ class DriftZeroService:
                 diagnosis.status = DiagnosisStatus.RESOLVED.value
         else:
             executions = [
-                execution
-                for action in plan.action_items
-                for execution in action.executions
+                execution for action in plan.action_items for execution in action.executions
             ]
             self._rollback_actions(session, plan, executions, "verification-engine")
             plan.rolled_back_at = datetime.now(UTC)
@@ -1687,11 +1802,7 @@ class DriftZeroService:
             RecoveryState.ROLLED_BACK.value,
         }:
             return self._recovery_response(plan)
-        executions = [
-            execution
-            for action in plan.action_items
-            for execution in action.executions
-        ]
+        executions = [execution for action in plan.action_items for execution in action.executions]
         self._rollback_actions(session, plan, executions, "recovery-worker")
         uncertain = [
             execution.id
@@ -1813,13 +1924,9 @@ class DriftZeroService:
                     actor_type=ActorType.HUMAN.value,
                     reason=f"Executing playbook step {record.order}: {record.code}",
                     state=(
-                        ExecutionState.SKIPPED.value
-                        if aborted
-                        else ExecutionState.RUNNING.value
+                        ExecutionState.SKIPPED.value if aborted else ExecutionState.RUNNING.value
                     ),
-                    timeout_seconds=max(
-                        1, ceil(self.settings.recovery_control_timeout_seconds)
-                    ),
+                    timeout_seconds=max(1, ceil(self.settings.recovery_control_timeout_seconds)),
                 )
                 session.add(execution)
 
@@ -2552,9 +2659,7 @@ class DriftZeroService:
     # Model versions and the signature stability evaluations
     # ---------------------------------------------------------------- #
 
-    def _ensure_evaluator_version(
-        self, session: Session, kind: EvaluatorKind
-    ) -> EvaluatorVersion:
+    def _ensure_evaluator_version(self, session: Session, kind: EvaluatorKind) -> EvaluatorVersion:
         """Pin the evaluator that produced a judgement, so it can be replayed."""
 
         record = session.scalar(
@@ -2706,8 +2811,10 @@ class DriftZeroService:
             test.verdict = StabilityVerdict.INCONCLUSIVE.value
             test.evaluator_confidence = 0.3
             note = "no_baseline"
-        elif baseline_version is not None and version is not None and not version.comparable_with(
-            baseline_version
+        elif (
+            baseline_version is not None
+            and version is not None
+            and not version.comparable_with(baseline_version)
         ):
             # Attribute the change rather than calling it drift.
             test.inputs_changed = True
@@ -2857,9 +2964,7 @@ class DriftZeroService:
             name="ShopAssist",
             provider="demo-adapter",
             environment="simulation",
-            description=(
-                "Retail support assistant answering returns and refund policy questions."
-            ),
+            description=("Retail support assistant answering returns and refund policy questions."),
         )
         session.add(model)
         session.flush()
@@ -2947,9 +3052,7 @@ class DriftZeroService:
                     sample_size=100,
                     coverage=0.95,
                     source=SignalSource.SIMULATED,
-                    traces=self._demo_traces(
-                        observed_at, index, retired_document.external_ref
-                    ),
+                    traces=self._demo_traces(observed_at, index, retired_document.external_ref),
                 ),
             )
         self._audit(
@@ -3039,9 +3142,7 @@ class DriftZeroService:
                 newest.indexed_at = now
                 source.corpus_version = self._corpus_version_for(newest, previous_version)
                 source.status = KnowledgeStatus.FRESH.value
-                version_id = self._register_corpus_version(
-                    session, model_id, source.corpus_version
-                )
+                version_id = self._register_corpus_version(session, model_id, source.corpus_version)
             else:
                 # A source containing only superseded policy must not be made
                 # healthy by a refresh. Remove it from serving instead.
@@ -3576,9 +3677,7 @@ class DriftZeroService:
             return
         idempotency_key = f"verify:{plan.id}:{snapshot.id}"
         existing = session.scalar(
-            select(RecoveryCommand.id).where(
-                RecoveryCommand.idempotency_key == idempotency_key
-            )
+            select(RecoveryCommand.id).where(RecoveryCommand.idempotency_key == idempotency_key)
         )
         if existing is not None:
             return
@@ -4009,10 +4108,7 @@ class DriftZeroService:
     @staticmethod
     def _dimensions_from_record(record: HealthSnapshot) -> DimensionScores:
         return DimensionScores(
-            **{
-                name: getattr(record, name)
-                for name in DimensionScores.model_fields
-            }
+            **{name: getattr(record, name) for name in DimensionScores.model_fields}
         )
 
     @staticmethod
@@ -4062,9 +4158,7 @@ class DriftZeroService:
             for action in record.action_items
             for execution in sorted(action.executions, key=lambda item: item.attempt)
         ]
-        verification = max(
-            record.verification_runs, key=lambda run: run.started_at, default=None
-        )
+        verification = max(record.verification_runs, key=lambda run: run.started_at, default=None)
         return RecoveryPlanResponse(
             id=record.id,
             model_id=record.model_id,

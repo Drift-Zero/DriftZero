@@ -153,9 +153,7 @@ class UserSession(IdMixin, Base):
     """Revocable opaque browser session; raw tokens are never persisted."""
 
     __tablename__ = "user_sessions"
-    __table_args__ = (
-        sa.UniqueConstraint("token_hash", name="uq_user_sessions_token_hash"),
-    )
+    __table_args__ = (sa.UniqueConstraint("token_hash", name="uq_user_sessions_token_hash"),)
 
     token_hash: Mapped[str] = mapped_column(sa.String(64), index=True)
     csrf_token_hash: Mapped[str] = mapped_column(sa.String(64))
@@ -259,9 +257,7 @@ class ModelVersion(IdMixin, Base):
     """
 
     __tablename__ = "model_versions"
-    __table_args__ = (
-        sa.UniqueConstraint("model_id", "fingerprint", name="model_fingerprint"),
-    )
+    __table_args__ = (sa.UniqueConstraint("model_id", "fingerprint", name="model_fingerprint"),)
 
     model_id: Mapped[str] = mapped_column(
         sa.String(36), sa.ForeignKey(_MODEL_FK, ondelete="CASCADE"), index=True
@@ -320,9 +316,7 @@ class KnowledgeSource(IdMixin, Base):
     name: Mapped[str] = mapped_column(sa.String(120))
     kind: Mapped[str] = mapped_column(sa.String(40), default="corpus")
     corpus_version: Mapped[str] = mapped_column(sa.String(80))
-    status: Mapped[KnowledgeStatus] = mapped_column(
-        KNOWLEDGE_STATUS, default=KnowledgeStatus.FRESH
-    )
+    status: Mapped[KnowledgeStatus] = mapped_column(KNOWLEDGE_STATUS, default=KnowledgeStatus.FRESH)
     document_count: Mapped[int] = mapped_column(default=0)
     last_refreshed_at: Mapped[datetime | None] = mapped_column()
     created_at: Mapped[datetime] = mapped_column(default=utc_now)
@@ -343,9 +337,7 @@ class KnowledgeDocument(IdMixin, Base):
     """
 
     __tablename__ = "knowledge_documents"
-    __table_args__ = (
-        sa.UniqueConstraint("source_id", "external_ref", name="source_external_ref"),
-    )
+    __table_args__ = (sa.UniqueConstraint("source_id", "external_ref", name="source_external_ref"),)
 
     source_id: Mapped[str] = mapped_column(
         sa.String(36), sa.ForeignKey("knowledge_sources.id", ondelete="CASCADE"), index=True
@@ -685,9 +677,7 @@ class Diagnosis(IdMixin, Base):
     rank: Mapped[int] = mapped_column(default=1)
     confidence: Mapped[float] = mapped_column()
     confidence_label: Mapped[str] = mapped_column(sa.String(20), default="estimated")
-    status: Mapped[DiagnosisStatus] = mapped_column(
-        DIAGNOSIS_STATUS, default=DiagnosisStatus.OPEN
-    )
+    status: Mapped[DiagnosisStatus] = mapped_column(DIAGNOSIS_STATUS, default=DiagnosisStatus.OPEN)
     window_start: Mapped[datetime | None] = mapped_column()
     window_end: Mapped[datetime | None] = mapped_column()
     evidence: Mapped[list[dict[str, Any]]] = mapped_column(default=list)
@@ -770,9 +760,7 @@ class RecoveryPlan(IdMixin, Base):
     """
 
     __tablename__ = "recovery_plans"
-    __table_args__ = (
-        sa.UniqueConstraint("idempotency_key", name="recovery_plan_idempotency_key"),
-    )
+    __table_args__ = (sa.UniqueConstraint("idempotency_key", name="recovery_plan_idempotency_key"),)
 
     model_id: Mapped[str] = mapped_column(
         sa.String(36), sa.ForeignKey(_MODEL_FK, ondelete="CASCADE"), index=True
@@ -1033,9 +1021,7 @@ class EvaluatorVersion(IdMixin, Base):
     __tablename__ = "evaluator_versions"
     # One evaluator build can serve several judgement kinds, and each is a
     # distinct pinned configuration, so kind is part of the identity.
-    __table_args__ = (
-        sa.UniqueConstraint("name", "version", "kind", name="name_version_kind"),
-    )
+    __table_args__ = (sa.UniqueConstraint("name", "version", "kind", name="name_version_kind"),)
 
     name: Mapped[str] = mapped_column(sa.String(120))
     version: Mapped[str] = mapped_column(sa.String(40))
@@ -1112,9 +1098,7 @@ class StabilityVariant(IdMixin, Base):
     """One paraphrase (semantic) or one re-run (temporal) within a test."""
 
     __tablename__ = "stability_variants"
-    __table_args__ = (
-        sa.UniqueConstraint("test_id", "variant_index", name="test_variant_index"),
-    )
+    __table_args__ = (sa.UniqueConstraint("test_id", "variant_index", name="test_variant_index"),)
 
     test_id: Mapped[str] = mapped_column(
         sa.String(36), sa.ForeignKey("stability_tests.id", ondelete="CASCADE"), index=True
@@ -1165,9 +1149,7 @@ class EvaluationFeedback(IdMixin, Base):
     """Human agreement or disagreement with an automated judgement."""
 
     __tablename__ = "evaluation_feedback"
-    __table_args__ = (
-        sa.Index("ix_evaluation_feedback_target", "target_type", "target_id"),
-    )
+    __table_args__ = (sa.Index("ix_evaluation_feedback_target", "target_type", "target_id"),)
 
     target_type: Mapped[str] = mapped_column(sa.String(40))
     target_id: Mapped[str] = mapped_column(sa.String(36))
@@ -1213,9 +1195,7 @@ class AlertRule(IdMixin, Base):
         sa.UniqueConstraint("model_id", "name", name="model_name"),
         sa.CheckConstraint("window_minutes > 0", name="window_positive"),
         sa.CheckConstraint("cooldown_minutes >= 0", name="cooldown_non_negative"),
-        sa.CheckConstraint(
-            "minimum_consecutive_windows > 0", name="consecutive_windows_positive"
-        ),
+        sa.CheckConstraint("minimum_consecutive_windows > 0", name="consecutive_windows_positive"),
     )
 
     model_id: Mapped[str] = mapped_column(

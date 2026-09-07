@@ -66,9 +66,7 @@ def _fact_terms(structured: dict[str, Any]) -> list[set[str]]:
             continue
         terms = fact.get("terms")
         if isinstance(terms, list) and terms:
-            groups.append(
-                {s for term in terms for s in stems(str(term))}
-            )
+            groups.append({s for term in terms for s in stems(str(term))})
     return groups
 
 

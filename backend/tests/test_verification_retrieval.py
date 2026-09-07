@@ -172,9 +172,7 @@ def test_structured_fact_matches_outrank_mere_word_overlap(
         name="Chatty page",
         text="Returns for electronics are a common question about returns and electronics.",
     )
-    build_source(
-        session, name="Returns policy", text=CURRENT_POLICY, facts=RETURN_FACT
-    )
+    build_source(session, name="Returns policy", text=CURRENT_POLICY, facts=RETURN_FACT)
 
     found = retrieve_evidence(
         session, tenant_id=tenant_id, claim_text="electronics returns within 30 days"
