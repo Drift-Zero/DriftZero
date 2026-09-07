@@ -30,6 +30,8 @@ from app.schemas import (
     HealthSnapshotResponse,
     HealthTimelineResponse,
     IncidentResponse,
+    ConnectionCreate,
+    ConnectionResponse,
     ModelCreate,
     ModelLifecycleUpdate,
     ModelResponse,
@@ -201,6 +203,34 @@ def registration_status(
     service: ServiceDependency,
 ) -> RegistrationStatusResponse:
     return service.registration_status(session, model_id)
+
+
+@router.post(
+    "/models/{model_id}/connections",
+    response_model=ConnectionResponse,
+    status_code=status.HTTP_201_CREATED,
+    tags=["models"],
+)
+def create_connection(
+    model_id: str,
+    payload: ConnectionCreate,
+    session: SessionDependency,
+    service: ServiceDependency,
+) -> ConnectionResponse:
+    return service.create_connection(session, model_id, payload)
+
+
+@router.get(
+    "/models/{model_id}/connections",
+    response_model=list[ConnectionResponse],
+    tags=["models"],
+)
+def list_connections(
+    model_id: str,
+    session: SessionDependency,
+    service: ServiceDependency,
+) -> list[ConnectionResponse]:
+    return service.list_connections(session, model_id)
 
 
 @router.post(
