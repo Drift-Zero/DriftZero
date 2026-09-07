@@ -10,6 +10,7 @@ from fastapi import FastAPI, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
+from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from app.api import router
 from app.config import Settings
@@ -20,6 +21,7 @@ from app.observability import (
     configure_logging,
     configure_opentelemetry,
 )
+from app.security import SecurityMiddleware
 from app.service import (
     AuthorizationDenied,
     ConnectionConfigurationError,
@@ -33,6 +35,7 @@ from app.service import (
 
 def create_app(settings: Settings | None = None) -> FastAPI:
     runtime_settings = settings or Settings.from_env()
+    production = runtime_settings.environment.lower() in {"production", "prod"}
     logger = configure_logging(runtime_settings)
     database = Database(runtime_settings.database_url)
     configure_database_logging(database.engine, slow_query_ms=runtime_settings.slow_query_ms)
@@ -59,6 +62,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         summary="Predict, diagnose, and recover from AI reliability degradation.",
         version="0.1.0",
         lifespan=lifespan,
+        docs_url="/docs" if runtime_settings.docs_enabled and not production else None,
+        redoc_url="/redoc" if runtime_settings.docs_enabled and not production else None,
+        openapi_url=(
+            "/openapi.json" if runtime_settings.docs_enabled and not production else None
+        ),
         openapi_tags=[
             {"name": "models", "description": "Monitored AI system registry."},
             {"name": "pulse", "description": "Health scoring and trajectory."},
@@ -78,10 +86,23 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             CORSMiddleware,
             allow_origins=cors_origins,
             allow_origin_regex=runtime_settings.cors_origin_regex,
-            allow_methods=["*"],
-            allow_headers=["*"],
+            allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
+            allow_headers=[
+                "Authorization",
+                "Content-Type",
+                "X-DriftZero-Actor",
+                "X-DriftZero-Ingest-Key",
+                "X-DriftZero-Role",
+                "X-Request-ID",
+            ],
         )
     application.add_middleware(RequestLoggingMiddleware)
+    application.add_middleware(SecurityMiddleware, settings=runtime_settings)
+    if runtime_settings.trusted_hosts:
+        application.add_middleware(
+            TrustedHostMiddleware,
+            allowed_hosts=list(runtime_settings.trusted_hosts),
+        )
     application.include_router(router, prefix=runtime_settings.api_prefix)
     application.state.opentelemetry_enabled = configure_opentelemetry(
         application,
