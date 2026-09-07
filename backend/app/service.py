@@ -14,6 +14,7 @@ from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session
 
 from app.alerting import AlertEvaluation, AlertEvaluator
+from app.cache import TenantTTLCache
 from app.config import Settings
 from app.connections import ConnectionCheckError, ConnectionInspector, CredentialVault
 from app.database import (
@@ -178,6 +179,7 @@ class DriftZeroService:
         self.alert_evaluator = AlertEvaluator()
         self.credential_vault = CredentialVault(settings.connection_secret_key)
         self.connection_inspector = ConnectionInspector(settings)
+        self.dashboard_cache = TenantTTLCache(settings.dashboard_cache_ttl_seconds)
 
     def create_model(self, session: Session, payload: ModelCreate) -> ModelResponse:
         tenant_id = self._tenant_id(session)
@@ -660,6 +662,9 @@ class DriftZeroService:
             },
         )
         session.commit()
+        self.dashboard_cache.invalidate(
+            self._tenant_id(session), namespace="health_timeline"
+        )
         return self._snapshot_response(record)
 
     def record_shopassist_telemetry(
@@ -694,6 +699,11 @@ class DriftZeroService:
         limit: int = 50,
     ) -> HealthTimelineResponse:
         model = self._require_model(session, model_id)
+        tenant_id = self._tenant_id(session)
+        cache_key = f"{model_id}:{limit}"
+        cached = self.dashboard_cache.get(tenant_id, "health_timeline", cache_key)
+        if cached is not None:
+            return cached
         records = list(
             session.scalars(
                 select(HealthSnapshot)
@@ -708,7 +718,7 @@ class DriftZeroService:
             for record in records
             if record.score is not None
         ]
-        return HealthTimelineResponse(
+        response = HealthTimelineResponse(
             model=self._model_response(model),
             snapshots=[self._snapshot_response(record) for record in records],
             forecast=forecast_health(
@@ -716,6 +726,8 @@ class DriftZeroService:
                 horizon_minutes=self.settings.forecast_horizon_minutes,
             ),
         )
+        self.dashboard_cache.set(tenant_id, "health_timeline", cache_key, response)
+        return response
 
     def diagnose_latest(self, session: Session, model_id: str) -> DiagnosisResponse:
         model = self._require_model(session, model_id)
@@ -2613,6 +2625,8 @@ class DriftZeroService:
     def reset_demo(self, session: Session) -> DemoResetResponse:
         if self.settings.environment.strip().lower() in {"production", "prod"}:
             raise AuthorizationDenied("Demo reset is disabled in production environments.")
+        if self._tenant_id(session) != DEFAULT_TENANT_ID:
+            raise AuthorizationDenied("Demo reset is limited to the built-in demo tenant.")
 
         existing_ids = list(
             session.scalars(
