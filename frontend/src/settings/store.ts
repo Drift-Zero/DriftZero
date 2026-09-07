@@ -8,9 +8,13 @@ const API_KEY_STORAGE_KEY='driftzero.dashboard.recovery-key'
 
 const env=import.meta.env
 const trimmed=(value:unknown,fallback:string)=>typeof value==='string'&&value.trim()?value.trim():fallback
+const LEGACY_API_BASE_URLS:Record<string,string>={
+  'https://driftzero-demo.onrender.com':'https://driftzero-demo-7jzm.onrender.com',
+}
+const migrateApiBaseUrl=(value:string)=>LEGACY_API_BASE_URLS[value.replace(/\/$/,'')]??value
 const envRole=trimmed(env.VITE_RECOVERY_ROLE,'operator')
 export const envDefaults={
-  baseUrl:trimmed(env.VITE_API_BASE_URL,'http://127.0.0.1:8000').replace(/\/$/,''),
+  baseUrl:migrateApiBaseUrl(trimmed(env.VITE_API_BASE_URL,'http://127.0.0.1:8000').replace(/\/$/,'')),
   mode:(trimmed(env.VITE_DEMO_MODE,'true').toLowerCase()==='true'?'demo':'live') as ConnectionMode,
   actor:trimmed(env.VITE_RECOVERY_ACTOR,'dashboard-operator'),
   role:(OPERATOR_ROLES.includes(envRole as OperatorRole)?envRole:'operator') as OperatorRole,
@@ -38,7 +42,7 @@ export function isValidBaseUrl(value:string):boolean{
 export function normalizeBaseUrl(value:unknown):string{
   if(typeof value!=='string'||!isValidBaseUrl(value))return DEFAULT_SETTINGS.connection.baseUrl
   const url=new URL(value.trim())
-  return (url.origin+url.pathname).replace(/\/$/,'')
+  return migrateApiBaseUrl((url.origin+url.pathname).replace(/\/$/,''))
 }
 
 /* A stored blob can be older than this build, hand-edited, or simply corrupt. Rebuild every
