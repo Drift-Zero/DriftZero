@@ -91,13 +91,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             CORSMiddleware,
             allow_origins=cors_origins,
             allow_origin_regex=runtime_settings.cors_origin_regex,
+            allow_credentials=True,
             allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
             allow_headers=[
                 "Authorization",
                 "Content-Type",
                 "X-DriftZero-Actor",
                 "X-DriftZero-Ingest-Key",
+                "X-DriftZero-Registration-Token",
                 "X-DriftZero-Role",
+                "X-CSRF-Token",
                 "X-Request-ID",
             ],
         )
