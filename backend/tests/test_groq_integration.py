@@ -52,7 +52,8 @@ def test_import_and_run_groq_model_with_local_scoring(session) -> None:
                 expected_terms=["500 GB"],
                 trusted_facts=["Premium plan includes 500 GB"],
                 forbidden_terms=["unlimited"],
-                latency_target_ms=1000,
+                latency_best_ms=200,
+                latency_worst_ms=1000,
             ),
             actor="operator@example.com",
         ),
@@ -68,7 +69,7 @@ def test_import_and_run_groq_model_with_local_scoring(session) -> None:
     audit = session.scalars(
         select(AuditEvent).where(AuditEvent.event_type == "evaluation.groq_completed")
     ).one()
-    assert audit.details["formula"] == "weighted-geometric-mean-v1"
+    assert audit.details["formula"] == "weighted-arithmetic-health-v2"
 
 
 def test_groq_configuration_and_catalog_are_validated(session) -> None:

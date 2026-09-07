@@ -29,7 +29,13 @@ services:
       - key: DRIFTZERO_API_RATE_LIMIT_PER_MINUTE
         value: "300"
       - key: DRIFTZERO_API_MAX_REQUEST_BYTES
-        value: "1048576"
+        value: "8388608"
+      - key: DRIFTZERO_EVIDENCE_MAX_FILE_BYTES
+        value: "5242880"
+      - key: DRIFTZERO_EVIDENCE_URL_TIMEOUT_SECONDS
+        value: "15"
+      - key: DRIFTZERO_EVIDENCE_SYNC_INTERVAL_SECONDS
+        value: "60"
       - key: DRIFTZERO_TRUSTED_HOSTS
         value: "*.onrender.com,localhost,127.0.0.1"
       - key: DRIFTZERO_CORS_ORIGIN_REGEX

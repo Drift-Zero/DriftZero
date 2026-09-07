@@ -36,6 +36,7 @@ from app.service import (
     ResourceNotFound,
     TelemetryIngestionError,
 )
+from app.website_sync import WebsiteSyncService
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
@@ -49,6 +50,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         runtime_settings,
         structurer=build_evidence_structurer(runtime_settings),
     )
+    website_sync_service = WebsiteSyncService(runtime_settings, evidence_service)
     auth_service = AuthService(runtime_settings)
 
     @asynccontextmanager
@@ -95,6 +97,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     application.state.settings = runtime_settings
     application.state.auth_service = auth_service
     application.state.evidence_service = evidence_service
+    application.state.website_sync_service = website_sync_service
     cors_origins = list(runtime_settings.cors_origins)
     if not cors_origins and runtime_settings.environment.lower() not in {"production", "prod"}:
         cors_origins = ["http://127.0.0.1:5173", "http://localhost:5173"]

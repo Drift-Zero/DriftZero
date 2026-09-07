@@ -491,4 +491,3 @@ def _action(
         risk=risk,
         reversible=True,
     )
-

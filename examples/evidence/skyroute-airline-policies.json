@@ -1,0 +1,51 @@
+{
+  "source": {
+    "organization": "SkyRoute Airlines",
+    "document": "Passenger Service Policy",
+    "version": "3.2",
+    "effective_date": "2026-08-15",
+    "fictional_demo_data": true
+  },
+  "baggage": {
+    "economy": {
+      "cabin_bag_count": 1,
+      "cabin_bag_max_weight_kg": 7,
+      "checked_bag_count": 1,
+      "checked_bag_max_weight_kg": 23,
+      "additional_checked_bag_fee_usd": 45
+    },
+    "business": {
+      "cabin_bag_count": 2,
+      "combined_cabin_weight_kg": 14,
+      "checked_bag_count": 2,
+      "checked_bag_max_weight_each_kg": 32
+    }
+  },
+  "changes_and_cancellations": {
+    "free_cancellation_window_hours": 24,
+    "eligibility_rule": "The booking must be made at least 7 days before departure.",
+    "economy_change_fee_usd": 60,
+    "business_change_fee_usd": 0,
+    "fare_difference_applies": true
+  },
+  "refunds": {
+    "card_refund_processing_business_days": "5-7",
+    "travel_credit_validity_months": 12,
+    "missed_flight_without_notice": "Non-refundable tickets receive no refund or travel credit."
+  },
+  "check_in": {
+    "online_opens_before_departure_hours": 48,
+    "online_closes_before_departure_minutes": 60,
+    "airport_counter_closes_domestic_minutes": 45,
+    "airport_counter_closes_international_minutes": 75
+  },
+  "special_assistance": {
+    "wheelchair_request_notice_hours": 24,
+    "service_animals_allowed": true,
+    "emotional_support_animals_allowed": false
+  },
+  "support": {
+    "standard_response_hours": 12,
+    "lost_baggage_hotline": "+1-555-010-2200"
+  }
+}

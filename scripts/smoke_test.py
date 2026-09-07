@@ -61,7 +61,7 @@ def run(base_url: str, timeout: int, api_key: str | None = None) -> None:
     model_id = demo["model"]["id"]
     plan_id = demo["recovery"]["id"]
     scores = [item["score"] for item in demo["health"]["snapshots"]]
-    assert scores == [92.0, 87.0, 74.0, 61.0], scores
+    assert scores == [91.9, 87.2, 74.8, 62.5], scores
     assert demo["model"]["name"] == "ShopAssist"
     assert demo["diagnosis"]["probable_cause"] == "knowledge_freshness_failure"
 
@@ -129,8 +129,8 @@ def run(base_url: str, timeout: int, api_key: str | None = None) -> None:
     assert recovered["state"] == "recovered", recovered["state"]
     timeline = request(base_url, f"/api/v1/models/{model_id}/health", api_key=api_key)
     final_score = timeline["snapshots"][-1]["score"]
-    assert final_score == 84.2, final_score
-    print("ShopAssist smoke test passed: 92 → 61 → 84.2, recovery verified.")
+    assert final_score == 84.7, final_score
+    print("ShopAssist smoke test passed: 92 → 61 → 84.7, recovery verified.")
 
 
 if __name__ == "__main__":

@@ -25,9 +25,19 @@ x-backend-environment: &backend-environment
   DRIFTZERO_CONNECTION_CHECK_TIMEOUT_SECONDS: ${DRIFTZERO_CONNECTION_CHECK_TIMEOUT_SECONDS:-8}
   DRIFTZERO_API_MAX_REQUEST_BYTES: ${DRIFTZERO_API_MAX_REQUEST_BYTES:-8388608}
   DRIFTZERO_EVIDENCE_MAX_FILE_BYTES: ${DRIFTZERO_EVIDENCE_MAX_FILE_BYTES:-5242880}
+  DRIFTZERO_EVIDENCE_URL_TIMEOUT_SECONDS: ${DRIFTZERO_EVIDENCE_URL_TIMEOUT_SECONDS:-15}
+  DRIFTZERO_EVIDENCE_SYNC_INTERVAL_SECONDS: ${DRIFTZERO_EVIDENCE_SYNC_INTERVAL_SECONDS:-60}
   DRIFTZERO_EVIDENCE_LLM_PROVIDER: ${DRIFTZERO_EVIDENCE_LLM_PROVIDER:-disabled}
   DRIFTZERO_EVIDENCE_LLM_MODEL: ${DRIFTZERO_EVIDENCE_LLM_MODEL:-}
   DRIFTZERO_EVIDENCE_LLM_TIMEOUT_SECONDS: ${DRIFTZERO_EVIDENCE_LLM_TIMEOUT_SECONDS:-30}
+  DRIFTZERO_WEBSITE_REFRESH_INTERVAL_SECONDS: ${DRIFTZERO_WEBSITE_REFRESH_INTERVAL_SECONDS:-30}
+  DRIFTZERO_WEBSITE_FETCH_TIMEOUT_SECONDS: ${DRIFTZERO_WEBSITE_FETCH_TIMEOUT_SECONDS:-15}
+  DRIFTZERO_WEBSITE_LLM_TIMEOUT_SECONDS: ${DRIFTZERO_WEBSITE_LLM_TIMEOUT_SECONDS:-45}
+  DRIFTZERO_WEBSITE_MAX_RESPONSE_BYTES: ${DRIFTZERO_WEBSITE_MAX_RESPONSE_BYTES:-1048576}
+  DRIFTZERO_WEBSITE_LLM_TEXT_CHARS: ${DRIFTZERO_WEBSITE_LLM_TEXT_CHARS:-40000}
+  XAI_API_KEY: ${XAI_API_KEY:-}
+  DRIFTZERO_XAI_MODEL: ${DRIFTZERO_XAI_MODEL:-grok-4.6}
+  DRIFTZERO_XAI_BASE_URL: ${DRIFTZERO_XAI_BASE_URL:-https://api.x.ai/v1}
   GEMINI_API_KEY: ${GEMINI_API_KEY:-}
   DRIFTZERO_RETENTION_INTERVAL_SECONDS: ${DRIFTZERO_RETENTION_INTERVAL_SECONDS:-3600}
   DRIFTZERO_LOG_LEVEL: ${DRIFTZERO_LOG_LEVEL:-INFO}
@@ -105,6 +115,36 @@ services:
     build:
       context: ./backend
     entrypoint: ["python", "-m", "app.retention_worker"]
+    environment:
+      <<: *backend-environment
+    volumes:
+      - driftzero-data:/data
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      test: ["NONE"]
+
+  website-worker:
+    <<: *service-defaults
+    build:
+      context: ./backend
+    entrypoint: ["python", "-m", "app.website_worker"]
+    environment:
+      <<: *backend-environment
+    volumes:
+      - driftzero-data:/data
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      test: ["NONE"]
+
+  evidence-sync-worker:
+    <<: *service-defaults
+    build:
+      context: ./backend
+    entrypoint: ["python", "-m", "app.evidence_sync_worker"]
     environment:
       <<: *backend-environment
     volumes:

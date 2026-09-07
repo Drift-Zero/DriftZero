@@ -106,6 +106,7 @@ from app.db.session import (
 )
 
 __all__ = [
+    "EvidenceChunk",
     "DEFAULT_TENANT_ID",
     "DEFAULT_TENANT_SLUG",
     "ActorType",

@@ -226,4 +226,5 @@ class TestDriftInference:
         )
 
         assert response.dimensions.drift is None
-        assert "drift" in response.missing_dimensions
+        # Drift remains visible diagnostically but is not required by health-v2.
+        assert "drift" not in response.missing_dimensions

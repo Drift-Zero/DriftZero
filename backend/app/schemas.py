@@ -317,7 +317,7 @@ class ModelVersionCreate(BaseModel):
     configuration: dict[str, object] = Field(default_factory=dict)
     tools: list[str] = Field(default_factory=list, max_length=100)
     corpus_version: str | None = Field(default=None, max_length=80)
-    evaluation_policy_version: str = Field(default="health-v1", min_length=1, max_length=40)
+    evaluation_policy_version: str = Field(default="health-v2", min_length=1, max_length=40)
     actor: str = Field(default="system", min_length=1, max_length=120)
 
 
@@ -420,6 +420,21 @@ class EvidenceImportRequest(BaseModel):
     actor: str = Field(default="system", min_length=1, max_length=120)
 
 
+class EvidenceUrlImportRequest(BaseModel):
+    """Import a public direct-file URL and optionally keep it synchronized."""
+
+    source_url: str = Field(min_length=1, max_length=2048)
+    name: str | None = Field(default=None, min_length=1, max_length=160)
+    use_llm: bool = False
+    auto_refresh: bool = False
+    refresh_interval_minutes: int = Field(default=60, ge=5, le=10_080)
+    actor: str = Field(default="system", min_length=1, max_length=120)
+
+
+class EvidenceRefreshRequest(BaseModel):
+    actor: str = Field(default="system", min_length=1, max_length=120)
+
+
 class EvidenceChunkResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -448,6 +463,14 @@ class EvidenceSourceResponse(BaseModel):
     extraction_method: str
     llm_provider: str | None
     llm_model: str | None
+    source_url: str | None = None
+    etag: str | None = None
+    last_modified: str | None = None
+    fetched_at: datetime | None = None
+    last_checked_at: datetime | None = None
+    refresh_interval_minutes: int | None = None
+    auto_refresh: bool = False
+    supersedes_source_id: str | None = None
     chunk_count: int
     approved_by: str | None
     approved_at: datetime | None
@@ -474,13 +497,34 @@ class EvidenceSearchRequest(BaseModel):
     limit: int = Field(default=5, ge=1, le=20)
 
 
+class WebsiteRefreshRequest(BaseModel):
+    actor: str = Field(default="website-operator", min_length=1, max_length=120)
+
+
+class WebsiteRefreshResponse(BaseModel):
+    connection_id: str
+    status: Literal["updated", "unchanged"]
+    source_id: str | None
+    fetched_at: datetime
+    content_hash: str
+    fact_count: int
+    message: str
+
+
 class AutomatedEvaluationRequest(BaseModel):
     """Controls for a source-generated black-box model health check."""
 
     max_questions: int = Field(default=20, ge=1, le=50)
     variants_per_fact: int = Field(default=4, ge=2, le=5)
-    latency_target_ms: int = Field(default=2000, ge=1, le=300_000)
+    latency_best_ms: int = Field(default=200, ge=0, le=300_000)
+    latency_worst_ms: int = Field(default=2000, ge=1, le=300_000)
     actor: str = Field(default="system", min_length=1, max_length=120)
+
+    @model_validator(mode="after")
+    def validate_latency_range(self) -> AutomatedEvaluationRequest:
+        if self.latency_worst_ms <= self.latency_best_ms:
+            raise ValueError("latency_worst_ms must be greater than latency_best_ms")
+        return self
 
 
 class AutomatedEvaluationCaseResponse(BaseModel):
@@ -523,6 +567,70 @@ class EvidenceSearchHit(BaseModel):
     evidence_quote: str
     locator: dict[str, object]
     relevance: float = Field(ge=0, le=1)
+
+
+ClaimVerdict = Literal["supported", "contradicted", "unverified"]
+
+
+class InteractionObservation(BaseModel):
+    """One provider-independent model interaction supplied by an owner connector."""
+
+    request_id: str | None = Field(default=None, min_length=1, max_length=120)
+    occurred_at: datetime = Field(default_factory=utc_now)
+    question: str = Field(min_length=1, max_length=8000)
+    answer: str = Field(default="", max_length=32_000)
+    provider: str | None = Field(default=None, max_length=80)
+    status: TraceStatus = TraceStatus.OK
+    error_code: str | None = Field(default=None, max_length=80)
+    latency_ms: int | None = Field(default=None, ge=0)
+    input_tokens: int | None = Field(default=None, ge=0)
+    output_tokens: int | None = Field(default=None, ge=0)
+    cost_usd: float | None = Field(default=None, ge=0)
+    safety_flags: list[str] = Field(default_factory=list, max_length=20)
+    is_simulated: bool = False
+
+
+class InteractionBatchEvaluateRequest(BaseModel):
+    event_id: str | None = Field(
+        default=None,
+        min_length=8,
+        max_length=128,
+        pattern=r"^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+    )
+    interactions: list[InteractionObservation] = Field(min_length=1, max_length=100)
+    latency_target_ms: int = Field(default=2000, ge=1, le=300_000)
+    cost_target_usd_per_interaction: float | None = Field(default=None, gt=0)
+    source: SignalSource = SignalSource.OBSERVED
+    actor: str = Field(default="connector", min_length=1, max_length=120)
+
+
+class ClaimEvaluationResponse(BaseModel):
+    claim: str
+    verdict: ClaimVerdict
+    confidence: float = Field(ge=0, le=1)
+    reason: str
+    evidence: EvidenceSearchHit | None = None
+
+
+class ClaimVerificationRequest(BaseModel):
+    answer: str = Field(min_length=1, max_length=32_000)
+
+
+class ClaimVerificationResponse(BaseModel):
+    formula: str = "claim-verification-v1"
+    supported_claims: int
+    contradicted_claims: int
+    unverified_claims: int
+    claims: list[ClaimEvaluationResponse]
+
+
+class InteractionResultResponse(BaseModel):
+    request_id: str | None
+    groundedness_score: float | None
+    supported_claims: int
+    contradicted_claims: int
+    unverified_claims: int
+    claims: list[ClaimEvaluationResponse]
 
 
 class ModelResponse(BaseModel):
@@ -746,6 +854,19 @@ class HealthSnapshotResponse(BaseModel):
     missing_dimensions: list[str] = Field(default_factory=list)
 
 
+class InteractionBatchEvaluateResponse(BaseModel):
+    model_id: str
+    event_id: str
+    formula: str = "claim-verification-v1"
+    supported_claims: int
+    contradicted_claims: int
+    unverified_claims: int
+    evidence_coverage: float = Field(ge=0, le=1)
+    groundedness_score: float | None
+    interactions: list[InteractionResultResponse]
+    health_snapshot: HealthSnapshotResponse
+
+
 class GroqModelCatalogResponse(BaseModel):
     """Models visible to the server-owned Groq credential."""
 
@@ -768,10 +889,18 @@ class GroqEvaluationProfileInput(BaseModel):
     trusted_facts: list[str] = Field(default_factory=list, max_length=100)
     forbidden_terms: list[str] = Field(default_factory=list, max_length=100)
     expected_json: bool = False
-    latency_target_ms: int = Field(default=2000, ge=1, le=300_000)
-    cost_target_usd: float | None = Field(default=None, gt=0)
+    feedback_score: float | None = Field(default=None, ge=0, le=100)
+    latency_best_ms: int = Field(default=200, ge=0, le=300_000)
+    latency_worst_ms: int = Field(default=2000, ge=1, le=300_000)
+    cost_max_usd: float | None = Field(default=None, gt=0)
     input_cost_per_million: float = Field(default=0.0, ge=0)
     output_cost_per_million: float = Field(default=0.0, ge=0)
+
+    @model_validator(mode="after")
+    def validate_latency_range(self) -> GroqEvaluationProfileInput:
+        if self.latency_worst_ms <= self.latency_best_ms:
+            raise ValueError("latency_worst_ms must be greater than latency_best_ms")
+        return self
 
 
 class GroqEvaluationRequest(BaseModel):

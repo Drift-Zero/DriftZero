@@ -152,7 +152,7 @@ def test_formula_string_explains_the_cap() -> None:
 def test_quality_is_the_documented_weighted_mean() -> None:
     grounded = score_groundedness([claim(CENTRAL, SUPPORTED)])
     result = score_quality(
-        RubricScores(correctness=4, relevance=4, completeness=4, instruction_adherence=4),
+        RubricScores(correctness=4, relevance=4, completeness=4, feedback=4),
         grounded,
     )
 
@@ -163,7 +163,7 @@ def test_quality_is_the_documented_weighted_mean() -> None:
 def test_quality_weights_correctness_at_forty_percent() -> None:
     grounded = score_groundedness([claim(CENTRAL, SUPPORTED)])
     result = score_quality(
-        RubricScores(correctness=0, relevance=4, completeness=4, instruction_adherence=4),
+        RubricScores(correctness=0, relevance=4, completeness=4, feedback=4),
         grounded,
     )
 
@@ -174,7 +174,7 @@ def test_quality_weights_correctness_at_forty_percent() -> None:
 def test_contradicted_central_claim_caps_correctness() -> None:
     grounded = score_groundedness([claim(CENTRAL, CONTRADICTED)])
     result = score_quality(
-        RubricScores(correctness=4, relevance=4, completeness=4, instruction_adherence=4),
+        RubricScores(correctness=4, relevance=4, completeness=4, feedback=4),
         grounded,
     )
 

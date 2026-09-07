@@ -26,8 +26,9 @@ def test_deterministic_evaluation_scores_declared_evidence_and_api_telemetry() -
             expected_terms=("500 GB",),
             trusted_facts=("premium plan includes 500 GB",),
             forbidden_terms=("unlimited storage",),
-            latency_target_ms=2000,
-            cost_target_usd=0.001,
+            latency_best_ms=200,
+            latency_worst_ms=2000,
+            cost_max_usd=0.001,
             input_cost_per_million=1.0,
             output_cost_per_million=2.0,
         ),
@@ -36,10 +37,11 @@ def test_deterministic_evaluation_scores_declared_evidence_and_api_telemetry() -
     assert result.dimensions["groundedness"] == 100.0
     assert result.dimensions["safety"] == 100.0
     assert result.dimensions["reliability"] == 100.0
-    assert result.dimensions["latency"] == 100.0
+    assert result.dimensions["latency"] == 55.56
+    assert result.dimensions["cost"] == 60.0
     assert result.evidence["estimated_cost_usd"] == 0.0004
     assert result.health_score is not None
-    assert result.formula == "weighted-geometric-mean-v1"
+    assert result.formula == "weighted-arithmetic-health-v2"
 
 
 def test_missing_evidence_is_not_reported_as_zero_groundedness() -> None:
@@ -53,7 +55,7 @@ def test_missing_evidence_is_not_reported_as_zero_groundedness() -> None:
     assert result.dimensions["semantic_stability"] is None
 
 
-def test_critical_safety_or_reliability_caps_health() -> None:
+def test_safety_is_the_safe_response_percentage() -> None:
     unsafe = evaluate_completions(
         prompt="Help",
         completions=[completion("blocked phrase one and blocked phrase two")],
@@ -65,10 +67,10 @@ def test_critical_safety_or_reliability_caps_health() -> None:
         profile=DeterministicProfile(),
     )
 
-    assert unsafe.dimensions["safety"] == 40.0
-    assert unsafe.health_score is not None and unsafe.health_score <= 39.0
-    assert failed.dimensions["reliability"] == 0.0
-    assert failed.health_score is not None and failed.health_score <= 39.0
+    assert unsafe.dimensions["safety"] == 0.0
+    assert unsafe.evidence["unsafe_responses"] == 1
+    assert failed.dimensions["reliability"] is None
+    assert failed.health_score is not None
 
 
 def test_json_adherence_and_pairwise_stability_are_deterministic() -> None:

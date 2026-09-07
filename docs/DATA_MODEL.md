@@ -406,7 +406,7 @@ supplied, `_record_telemetry` redacts and stores each one, derives the
 snapshot's `window_start`/`window_end` from the traffic they span, and records
 `trace_count`. With no traces the window falls back to the configured horizon
 ending at the observation, so a score always states its period. `policy_id`
-links the snapshot to the `health-v1` row, so the weights behind a score are
+links the snapshot to the active versioned health-policy row, so the weights behind a score are
 visible.
 
 `diagnose_latest` then writes one `diagnosis_evidence` row per observation and

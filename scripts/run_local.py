@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Run the whole DriftZero stack on one machine.
 
-Supervises the API, the recovery and alert workers, the operator dashboard, and the
-ShopAssist chatbot, then shuts them all down together.
+Supervises the API, four background workers, the operator dashboard, and the ShopAssist
+chatbot, then shuts them all down together.
 
 Each piece needs the others to be useful. Approving a recovery plan only queues a command,
 so an API without the recovery worker leaves every recovery stuck in 'queued'. ShopAssist
@@ -144,7 +144,9 @@ def main() -> int:
     parser.add_argument("--api-port", type=int, default=8000)
     parser.add_argument("--dashboard-port", type=int, default=5173)
     parser.add_argument("--host", default="127.0.0.1")
-    parser.add_argument("--database", help="SQLAlchemy URL (default: backend/driftzero.db)")
+    parser.add_argument(
+        "--database", help="SQLAlchemy URL (default: backend/driftzero.db)"
+    )
     parser.add_argument("--shop-assist-port", type=int, default=3000)
     parser.add_argument(
         "--no-seed", action="store_true", help="Keep the existing database contents"
@@ -153,16 +155,22 @@ def main() -> int:
         "--no-dashboard", action="store_true", help="Do not run the operator dashboard"
     )
     parser.add_argument(
-        "--no-shop-assist", action="store_true", help="Do not run the ShopAssist chatbot"
+        "--no-shop-assist",
+        action="store_true",
+        help="Do not run the ShopAssist chatbot",
     )
     args = parser.parse_args()
 
     npm = shutil.which("npm")
     node_apps: list[tuple[str, Path, int, str]] = []
     if not args.no_dashboard:
-        node_apps.append(("dashboard", FRONTEND, args.dashboard_port, "--dashboard-port"))
+        node_apps.append(
+            ("dashboard", FRONTEND, args.dashboard_port, "--dashboard-port")
+        )
     if not args.no_shop_assist:
-        node_apps.append(("shop-assist", SHOP_ASSIST, args.shop_assist_port, "--shop-assist-port"))
+        node_apps.append(
+            ("shop-assist", SHOP_ASSIST, args.shop_assist_port, "--shop-assist-port")
+        )
     if node_apps and npm is None:
         sys.exit(
             "npm was not found on PATH. Install Node.js, or pass "
@@ -170,7 +178,9 @@ def main() -> int:
         )
     for label, directory, _, _ in node_apps:
         if not (directory / "node_modules").exists():
-            sys.exit(f"Install the {label} dependencies first:\n  cd {directory}\n  npm install")
+            sys.exit(
+                f"Install the {label} dependencies first:\n  cd {directory}\n  npm install"
+            )
 
     require_free(args.host, args.api_port, "API", "--api-port")
     for label, _, port, flag in node_apps:
@@ -178,23 +188,42 @@ def main() -> int:
 
     python = backend_python()
     probe = subprocess.run(
-        [python, "-c", "import app.main"], cwd=str(BACKEND), capture_output=True, check=False
+        [python, "-c", "import app.main"],
+        cwd=str(BACKEND),
+        capture_output=True,
+        check=False,
     )
     if probe.returncode:
         sys.exit(
             f"The backend dependencies are missing. Install them first:\n"
-            f"  cd {BACKEND}\n  python -m venv .venv\n  .venv/Scripts/pip install -e \".[dev]\""
+            f'  cd {BACKEND}\n  python -m venv .venv\n  .venv/Scripts/pip install -e ".[dev]"'
         )
 
     base_url = f"http://{args.host}:{args.api_port}"
     environment = backend_environment(args)
 
+    migration = subprocess.run(
+        [python, "-m", "app.migrations"],
+        env=environment,
+        cwd=str(BACKEND),
+        check=False,
+    )
+    if migration.returncode:
+        sys.exit("Database migration failed; the local stack was not started.")
+
     print("DriftZero local stack")
     api = spawn(
         "api",
         [
-            python, "-m", "uvicorn", "app.main:app",
-            "--host", args.host, "--port", str(args.api_port), "--no-access-log",
+            python,
+            "-m",
+            "uvicorn",
+            "app.main:app",
+            "--host",
+            args.host,
+            "--port",
+            str(args.api_port),
+            "--no-access-log",
         ],
         environment,
         BACKEND,
@@ -204,11 +233,22 @@ def main() -> int:
         seed_demo(base_url)
 
     # Started after the API so the schema exists before a worker runs its first query.
-    spawn("recovery worker", [python, "-m", "app.recovery_worker"], environment, BACKEND)
+    spawn(
+        "recovery worker", [python, "-m", "app.recovery_worker"], environment, BACKEND
+    )
     spawn("alert worker", [python, "-m", "app.alert_worker"], environment, BACKEND)
     spawn("retention worker", [python, "-m", "app.retention_worker"], environment, BACKEND)
+    spawn("website worker", [python, "-m", "app.website_worker"], environment, BACKEND)
+    spawn(
+        "evidence sync worker",
+        [python, "-m", "app.evidence_sync_worker"],
+        environment,
+        BACKEND,
+    )
 
-    urls: list[tuple[str, str]] = [("API", f"{base_url}  (OpenAPI docs at {base_url}/docs)")]
+    urls: list[tuple[str, str]] = [
+        ("API", f"{base_url}  (OpenAPI docs at {base_url}/docs)")
+    ]
     if not args.no_dashboard and npm is not None:
         write_dashboard_environment(base_url)
         # Vite binds the "localhost" name rather than a literal address, so advertise that
@@ -216,7 +256,15 @@ def main() -> int:
         urls.append(("dashboard", f"http://localhost:{args.dashboard_port}"))
         spawn(
             "dashboard",
-            [npm, "run", "dev", "--", "--port", str(args.dashboard_port), "--strictPort"],
+            [
+                npm,
+                "run",
+                "dev",
+                "--",
+                "--port",
+                str(args.dashboard_port),
+                "--strictPort",
+            ],
             dict(os.environ),
             FRONTEND,
         )
@@ -236,8 +284,10 @@ def main() -> int:
         urls.append(
             (
                 "shop-assist",
-                f"http://localhost:{args.shop_assist_port}  "
-                "(presenter controls at /demo)",
+                (
+                    f"http://localhost:{args.shop_assist_port}  "
+                    "(presenter controls at /demo)"
+                ),
             )
         )
 
@@ -253,7 +303,9 @@ def main() -> int:
             for label, process in processes:
                 code = process.poll()
                 if code is not None:
-                    print(f"\n{label} exited with code {code}; shutting the stack down.")
+                    print(
+                        f"\n{label} exited with code {code}; shutting the stack down."
+                    )
                     return code or 1
             time.sleep(0.5)
     except KeyboardInterrupt:

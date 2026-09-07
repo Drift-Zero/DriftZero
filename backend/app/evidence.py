@@ -13,12 +13,16 @@ import binascii
 import csv
 import hashlib
 import io
+import ipaddress
 import json
 import mimetypes
 import re
+import socket
 import urllib.error
+import urllib.parse
 import urllib.request
 from dataclasses import dataclass
+from datetime import timedelta
 from pathlib import PurePath
 from typing import Any, Protocol
 
@@ -37,10 +41,12 @@ from app.db import (
 )
 from app.schemas import (
     EvidenceImportRequest,
+    EvidenceRefreshRequest,
     EvidenceReviewRequest,
     EvidenceSearchHit,
     EvidenceSearchRequest,
     EvidenceSourceResponse,
+    EvidenceUrlImportRequest,
 )
 
 SUPPORTED_SUFFIXES = frozenset({".pdf", ".json", ".csv", ".txt", ".md"})
@@ -82,6 +88,158 @@ class EvidenceStructurer(Protocol):
     def structure(self, segments: list[RawSegment]) -> list[StructuredFact]: ...
 
 
+@dataclass(frozen=True, slots=True)
+class FetchedEvidence:
+    content: bytes | None
+    filename: str
+    media_type: str
+    etag: str | None = None
+    last_modified: str | None = None
+    not_modified: bool = False
+
+
+class EvidenceFetcher(Protocol):
+    def fetch(
+        self,
+        source_url: str,
+        *,
+        etag: str | None = None,
+        last_modified: str | None = None,
+    ) -> FetchedEvidence: ...
+
+
+def _validate_public_url(source_url: str) -> urllib.parse.SplitResult:
+    parsed = urllib.parse.urlsplit(source_url)
+    if parsed.scheme not in {"http", "https"}:
+        raise EvidenceError("Evidence URLs must use http or https.")
+    if not parsed.hostname or parsed.username or parsed.password or parsed.fragment:
+        raise EvidenceError("Evidence URL must be a public direct-file URL without credentials.")
+    if parsed.port not in {None, 80, 443}:
+        raise EvidenceError("Evidence URLs may use only ports 80 and 443.")
+    try:
+        addresses = socket.getaddrinfo(
+            parsed.hostname,
+            parsed.port or (443 if parsed.scheme == "https" else 80),
+            type=socket.SOCK_STREAM,
+        )
+    except socket.gaierror as exc:
+        raise EvidenceError("Evidence URL hostname could not be resolved.") from exc
+    if not addresses:
+        raise EvidenceError("Evidence URL hostname could not be resolved.")
+    for address in addresses:
+        try:
+            ip = ipaddress.ip_address(address[4][0].split("%", 1)[0])
+        except ValueError as exc:
+            raise EvidenceError("Evidence URL resolved to an invalid address.") from exc
+        if not ip.is_global:
+            raise EvidenceError(
+                "Private, local, reserved, and link-local evidence URLs are blocked."
+            )
+    return parsed
+
+
+def _filename_from_response(source_url: str, media_type: str) -> str:
+    path_name = PurePath(urllib.parse.unquote(urllib.parse.urlsplit(source_url).path)).name
+    stem = PurePath(path_name).stem or "evidence-source"
+    suffix = PurePath(path_name).suffix.lower()
+    if suffix == ".geojson":
+        return f"{stem}.json"
+    if suffix in SUPPORTED_SUFFIXES:
+        return path_name
+    normalized = media_type.partition(";")[0].strip().lower()
+    by_type = {
+        "application/json": ".json",
+        "application/geo+json": ".json",
+        "text/csv": ".csv",
+        "application/pdf": ".pdf",
+        "text/plain": ".txt",
+        "text/markdown": ".md",
+    }
+    inferred = by_type.get(normalized)
+    if inferred is None:
+        raise EvidenceError("URL must return JSON, GeoJSON, CSV, PDF, plain text, or Markdown.")
+    return f"{stem}{inferred}"
+
+
+class _SafeRedirectHandler(urllib.request.HTTPRedirectHandler):
+    def __init__(self) -> None:
+        super().__init__()
+        self.redirects = 0
+
+    def redirect_request(
+        self, req: Any, fp: Any, code: int, msg: str, headers: Any, newurl: str
+    ) -> Any:
+        self.redirects += 1
+        if self.redirects > 3:
+            raise EvidenceError("Evidence URL redirected more than three times.")
+        _validate_public_url(newurl)
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+
+class PublicUrlEvidenceFetcher:
+    """Download bounded public evidence without allowing server-side network pivots."""
+
+    def __init__(self, settings: Settings) -> None:
+        self.settings = settings
+
+    def fetch(
+        self,
+        source_url: str,
+        *,
+        etag: str | None = None,
+        last_modified: str | None = None,
+    ) -> FetchedEvidence:
+        _validate_public_url(source_url)
+        headers = {
+            "Accept": (
+                "application/json, application/geo+json, text/csv, "
+                "application/pdf, text/plain, text/markdown"
+            ),
+            "User-Agent": "DriftZero-EvidenceSync/1.0",
+        }
+        if etag:
+            headers["If-None-Match"] = etag
+        if last_modified:
+            headers["If-Modified-Since"] = last_modified
+        request = urllib.request.Request(source_url, headers=headers, method="GET")
+        opener = urllib.request.build_opener(_SafeRedirectHandler())
+        try:
+            response = opener.open(request, timeout=self.settings.evidence_url_timeout_seconds)
+        except urllib.error.HTTPError as exc:
+            if exc.code == 304:
+                return FetchedEvidence(
+                    content=None,
+                    filename="evidence-source.json",
+                    media_type="application/json",
+                    etag=etag,
+                    last_modified=last_modified,
+                    not_modified=True,
+                )
+            raise EvidenceError(f"Evidence URL returned HTTP {exc.code}.") from exc
+        except (TimeoutError, urllib.error.URLError, OSError) as exc:
+            raise EvidenceError("Evidence URL could not be downloaded within the timeout.") from exc
+        with response:
+            media_type = response.headers.get_content_type()
+            filename = _filename_from_response(response.geturl(), media_type)
+            declared = response.headers.get("Content-Length")
+            if (
+                declared
+                and declared.isdigit()
+                and int(declared) > self.settings.evidence_max_file_bytes
+            ):
+                raise EvidenceError("Evidence URL exceeds the configured file-size limit.")
+            content = response.read(self.settings.evidence_max_file_bytes + 1)
+            if len(content) > self.settings.evidence_max_file_bytes:
+                raise EvidenceError("Evidence URL exceeds the configured file-size limit.")
+            return FetchedEvidence(
+                content=content,
+                filename=filename,
+                media_type=media_type,
+                etag=response.headers.get("ETag"),
+                last_modified=response.headers.get("Last-Modified"),
+            )
+
+
 def _clean_text(value: str) -> str:
     return re.sub(r"[ \t]+", " ", value.replace("\x00", "")).strip()
 
@@ -118,9 +276,7 @@ def _json_segments(value: object, path: str = "$") -> list[RawSegment]:
         ]
     if isinstance(value, dict):
         scalar = {
-            str(key): item
-            for key, item in value.items()
-            if not isinstance(item, (dict, list))
+            str(key): item for key, item in value.items() if not isinstance(item, (dict, list))
         }
         segments = []
         if scalar:
@@ -231,8 +387,8 @@ class OpenAICompatibleStructurer:
                         "role": "system",
                         "content": (
                             "Extract atomic factual statements from the supplied source segments. "
-                            "Return JSON only as {\"facts\":[{\"segment_index\":0,"
-                            "\"statement\":\"...\",\"evidence_quote\":\"exact substring...\"}]}. "
+                            'Return JSON only as {"facts":[{"segment_index":0,'
+                            '"statement":"...","evidence_quote":"exact substring..."}]}. '
                             "Do not infer or add facts. The quote must be copied exactly from its "
                             "segment. Omit headings, opinions, instructions, and non-factual text."
                         ),
@@ -342,9 +498,15 @@ def build_evidence_structurer(settings: Settings) -> EvidenceStructurer | None:
 
 
 class EvidenceService:
-    def __init__(self, settings: Settings, structurer: EvidenceStructurer | None = None) -> None:
+    def __init__(
+        self,
+        settings: Settings,
+        structurer: EvidenceStructurer | None = None,
+        fetcher: EvidenceFetcher | None = None,
+    ) -> None:
         self.settings = settings
         self.structurer = structurer
+        self.fetcher = fetcher or PublicUrlEvidenceFetcher(settings)
 
     @staticmethod
     def _tenant_id(session: Session) -> str:
@@ -443,6 +605,187 @@ class EvidenceService:
         session.commit()
         return self.get_source(session, source.id)
 
+    def import_url(
+        self, session: Session, model_id: str, payload: EvidenceUrlImportRequest
+    ) -> EvidenceSourceResponse:
+        fetched = self.fetcher.fetch(payload.source_url)
+        if fetched.content is None:
+            raise EvidenceError("Evidence URL returned no content.")
+        imported = self.import_source(
+            session,
+            model_id,
+            EvidenceImportRequest(
+                filename=fetched.filename,
+                name=payload.name,
+                media_type=fetched.media_type,
+                content_base64=base64.b64encode(fetched.content).decode(),
+                use_llm=payload.use_llm,
+                actor=payload.actor,
+            ),
+        )
+        source = session.get(EvidenceSource, imported.id)
+        if source is None:  # pragma: no cover - guarded by the successful import
+            raise EvidenceNotFound("Evidence source not found after import.")
+        checked_at = utc_now()
+        source.source_url = payload.source_url
+        source.etag = fetched.etag
+        source.last_modified = fetched.last_modified
+        source.fetched_at = checked_at
+        source.last_checked_at = checked_at
+        source.refresh_interval_minutes = payload.refresh_interval_minutes
+        source.auto_refresh = payload.auto_refresh
+        self._audit(
+            session,
+            model_id,
+            payload.actor,
+            "evidence.url_connected",
+            source.id,
+            {
+                "source_url": payload.source_url,
+                "auto_refresh": payload.auto_refresh,
+                "refresh_interval_minutes": payload.refresh_interval_minutes,
+            },
+        )
+        session.commit()
+        return self.get_source(session, source.id)
+
+    def refresh_source(
+        self, session: Session, source_id: str, payload: EvidenceRefreshRequest
+    ) -> EvidenceSourceResponse:
+        source = session.scalar(
+            select(EvidenceSource).where(
+                EvidenceSource.id == source_id,
+                EvidenceSource.tenant_id == self._tenant_id(session),
+            )
+        )
+        if source is None:
+            raise EvidenceNotFound("Evidence source not found.")
+        if not source.source_url:
+            raise EvidenceError("Only URL evidence sources can be refreshed.")
+        fetched = self.fetcher.fetch(
+            source.source_url,
+            etag=source.etag,
+            last_modified=source.last_modified,
+        )
+        checked_at = utc_now()
+        source.last_checked_at = checked_at
+        if fetched.not_modified or fetched.content is None:
+            self._audit(
+                session,
+                source.model_id,
+                payload.actor,
+                "evidence.url_unchanged",
+                source.id,
+                {"source_url": source.source_url},
+            )
+            session.commit()
+            return self.get_source(session, source.id)
+
+        digest = hashlib.sha256(fetched.content).hexdigest()
+        if digest == source.content_hash:
+            source.etag = fetched.etag or source.etag
+            source.last_modified = fetched.last_modified or source.last_modified
+            source.fetched_at = checked_at
+            self._audit(
+                session,
+                source.model_id,
+                payload.actor,
+                "evidence.url_unchanged",
+                source.id,
+                {"source_url": source.source_url},
+            )
+            session.commit()
+            return self.get_source(session, source.id)
+
+        previous_id = source.id
+        previous_url = source.source_url
+        previous_auto_refresh = source.auto_refresh
+        previous_interval = source.refresh_interval_minutes or 60
+        use_llm = source.extraction_method == "deterministic+llm"
+        source.auto_refresh = False
+        session.commit()
+        imported = self.import_source(
+            session,
+            source.model_id,
+            EvidenceImportRequest(
+                filename=fetched.filename,
+                name=source.name,
+                media_type=fetched.media_type,
+                content_base64=base64.b64encode(fetched.content).decode(),
+                use_llm=use_llm,
+                actor=payload.actor,
+            ),
+        )
+        replacement = session.get(EvidenceSource, imported.id)
+        if replacement is None:  # pragma: no cover - guarded by the successful import
+            raise EvidenceNotFound("Evidence source not found after refresh.")
+        replacement.source_url = previous_url
+        replacement.etag = fetched.etag
+        replacement.last_modified = fetched.last_modified
+        replacement.fetched_at = checked_at
+        replacement.last_checked_at = checked_at
+        replacement.refresh_interval_minutes = previous_interval
+        replacement.auto_refresh = previous_auto_refresh
+        replacement.supersedes_source_id = previous_id
+        self._audit(
+            session,
+            replacement.model_id,
+            payload.actor,
+            "evidence.url_changed",
+            replacement.id,
+            {
+                "source_url": previous_url,
+                "supersedes_source_id": previous_id,
+                "review_required": True,
+            },
+        )
+        session.commit()
+        return self.get_source(session, replacement.id)
+
+    def sync_due_sources(self, session: Session) -> dict[str, int]:
+        now = utc_now()
+        candidates = session.execute(
+            select(
+                EvidenceSource.id,
+                EvidenceSource.tenant_id,
+                EvidenceSource.last_checked_at,
+                EvidenceSource.refresh_interval_minutes,
+            ).where(
+                EvidenceSource.source_url.is_not(None),
+                EvidenceSource.auto_refresh.is_(True),
+            )
+        ).all()
+        due = [
+            row
+            for row in candidates
+            if row.last_checked_at is None
+            or row.last_checked_at
+            + timedelta(minutes=row.refresh_interval_minutes or 60)
+            <= now
+        ]
+        refreshed = changed = failed = 0
+        original_tenant = session.info.get("tenant_id")
+        try:
+            for row in due:
+                session.info["tenant_id"] = row.tenant_id
+                try:
+                    result = self.refresh_source(
+                        session,
+                        row.id,
+                        EvidenceRefreshRequest(actor="evidence-sync-worker"),
+                    )
+                    refreshed += 1
+                    changed += int(result.id != row.id)
+                except (EvidenceError, EvidenceConflict, EvidenceNotFound):
+                    session.rollback()
+                    failed += 1
+        finally:
+            if original_tenant is None:
+                session.info.pop("tenant_id", None)
+            else:
+                session.info["tenant_id"] = original_tenant
+        return {"evaluated": len(due), "refreshed": refreshed, "changed": changed, "failed": failed}
+
     def list_sources(self, session: Session, model_id: str) -> list[EvidenceSourceResponse]:
         records = session.scalars(
             select(EvidenceSource)
@@ -486,6 +829,19 @@ class EvidenceService:
         if payload.status == "approved":
             source.approved_by = payload.actor
             source.approved_at = utc_now()
+            if source.source_url:
+                prior_approved = session.scalars(
+                    select(EvidenceSource).where(
+                        EvidenceSource.model_id == source.model_id,
+                        EvidenceSource.tenant_id == self._tenant_id(session),
+                        EvidenceSource.source_url == source.source_url,
+                        EvidenceSource.id != source.id,
+                        EvidenceSource.status == "approved",
+                    )
+                ).all()
+                for prior in prior_approved:
+                    prior.status = "retired"
+                    prior.auto_refresh = False
         else:
             source.approved_by = None
             source.approved_at = None

@@ -120,7 +120,7 @@ jobs:
             sleep 2
           done
 
-          for service in alert-worker recovery-worker retention-worker; do
+          for service in alert-worker recovery-worker retention-worker evidence-sync-worker; do
             if [ "$(docker compose ps --status running --services "$service")" != "$service" ]; then
               echo "$service is not running" >&2
               exit 1
@@ -144,6 +144,8 @@ jobs:
           grep --quiet 'alert_evaluation.completed' /tmp/alert-worker.log
           docker compose logs --no-color retention-worker | tee /tmp/retention-worker.log
           grep --quiet 'retention.completed' /tmp/retention-worker.log
+          docker compose logs --no-color evidence-sync-worker | tee /tmp/evidence-sync-worker.log
+          grep --quiet 'evidence_sync.completed' /tmp/evidence-sync-worker.log
           docker compose logs --no-color shop-assist | tee /tmp/shop-assist.log
           grep --quiet 'shopassist.telemetry.sent' /tmp/shop-assist.log
       - name: Verify single-container deployment
@@ -161,7 +163,8 @@ jobs:
             docker logs driftzero-deploy-test > /tmp/deploy.log 2>&1
             if grep --quiet 'alert_evaluation.completed' /tmp/deploy.log \
               && grep --quiet 'recovery_commands.completed' /tmp/deploy.log \
-              && grep --quiet 'retention.completed' /tmp/deploy.log; then
+              && grep --quiet 'retention.completed' /tmp/deploy.log \
+              && grep --quiet 'evidence_sync.completed' /tmp/deploy.log; then
               break
             fi
             if [ "$attempt" -eq 20 ]; then

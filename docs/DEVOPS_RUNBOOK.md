@@ -12,6 +12,7 @@ Browser → Dashboard proxy → FastAPI → SQLite
 Alert worker ───────────────────────────────┤
 Recovery worker → mock action → verification┤
 Retention worker ───────────────────────────┘
+Evidence sync worker → public source URL → reviewable evidence version
 Browser → ShopAssist server → Groq or local grounded fallback
                             └→ 20-request window → DriftZero telemetry API
 ```
@@ -74,7 +75,10 @@ Copy `.env.example` to `.env`. Never commit `.env`.
 | `DRIFTZERO_API_OPERATOR_KEY` | unset | Read/write credential without delete permission |
 | `DRIFTZERO_API_ADMIN_KEY` | unset | Full-control management credential |
 | `DRIFTZERO_API_RATE_LIMIT_PER_MINUTE` | `300` | Per-process limit keyed by credential or client |
-| `DRIFTZERO_API_MAX_REQUEST_BYTES` | `1048576` | Maximum body size, including chunked requests |
+| `DRIFTZERO_API_MAX_REQUEST_BYTES` | `8388608` | Maximum body size, including a 5 MiB base64 evidence upload |
+| `DRIFTZERO_EVIDENCE_MAX_FILE_BYTES` | `5242880` | Maximum uploaded or URL-fetched evidence size |
+| `DRIFTZERO_EVIDENCE_URL_TIMEOUT_SECONDS` | `15` | Timeout for public evidence URL fetches |
+| `DRIFTZERO_EVIDENCE_SYNC_INTERVAL_SECONDS` | `60` | URL evidence worker poll interval |
 | `DRIFTZERO_TRUSTED_HOSTS` | `localhost,127.0.0.1,testserver,api` | Accepted HTTP Host values, including the Compose API service name; supports `*.example.com` |
 | `DRIFTZERO_TELEMETRY_MAX_FUTURE_SKEW_SECONDS` | `300` | Maximum clock lead for observed telemetry |
 | `DRIFTZERO_DOCS_ENABLED` | `true` | Local docs switch; docs remain disabled in production |
@@ -113,6 +117,7 @@ running multiple replicas.
 | `alert-worker` | Evaluates alert rules without waiting for API traffic | Process stays running and emits JSON completion logs |
 | `recovery-worker` | Claims leased execute/verify/rollback commands and runs the configured adapter | Command becomes `succeeded`, retried, or `failed` |
 | `retention-worker` | Applies each model's configured trace-retention window | Process stays running and logs failures |
+| `evidence-sync-worker` | Rechecks opted-in public source URLs and versions changed content | Emits `evidence_sync.completed` logs |
 | `driftzero-data` | Named SQLite volume shared by API and workers | API database operations |
 
 SQLite works here because there is one local host and low demo traffic. It is the wrong choice for horizontally scaled services. Move to managed PostgreSQL before adding replicas or real users.
@@ -172,6 +177,7 @@ docker compose logs -f api
 docker compose logs -f alert-worker
 docker compose logs -f recovery-worker
 docker compose logs -f retention-worker
+docker compose logs -f evidence-sync-worker
 docker compose logs -f dashboard
 docker compose logs -f shop-assist
 ```
@@ -207,7 +213,7 @@ python3 scripts/smoke_test.py --base-url http://localhost:3000
 python3 scripts/smoke_shop_assist.py
 curl --fail http://localhost:3100
 docker compose ps
-docker compose logs --no-color api recovery-worker alert-worker retention-worker shop-assist
+docker compose logs --no-color api recovery-worker alert-worker retention-worker evidence-sync-worker shop-assist
 docker compose down
 ```
 
@@ -232,7 +238,7 @@ There is no automatic GitHub-to-production deployment job. Infrastructure change
 
 ## 9. Render demo deployment
 
-`render.yaml` builds one public container that serves the FastAPI API and dashboard and runs the alert, recovery, and retention workers. One container is deliberate: Render's free services have ephemeral filesystems, and separate SQLite services cannot safely share a database. The bundled process supervisor is a demo compromise; production should run the API and workers as separate services backed by PostgreSQL.
+`render.yaml` builds one public container that serves the FastAPI API and dashboard and runs the alert, recovery, retention, and evidence-sync workers. One container is deliberate: Render's free services have ephemeral filesystems, and separate SQLite services cannot safely share a database. The bundled process supervisor is a demo compromise; production should run the API and workers as separate services backed by PostgreSQL.
 
 1. Merge the reviewed branch into the repository default branch.
 2. In Render, create a new Blueprint and connect this repository.

@@ -363,8 +363,10 @@ class DriftZeroService:
             trusted_facts=tuple(payload.profile.trusted_facts),
             forbidden_terms=tuple(payload.profile.forbidden_terms),
             expected_json=payload.profile.expected_json,
-            latency_target_ms=payload.profile.latency_target_ms,
-            cost_target_usd=payload.profile.cost_target_usd,
+            feedback_score=payload.profile.feedback_score,
+            latency_best_ms=payload.profile.latency_best_ms,
+            latency_worst_ms=payload.profile.latency_worst_ms,
+            cost_max_usd=payload.profile.cost_max_usd,
             input_cost_per_million=payload.profile.input_cost_per_million,
             output_cost_per_million=payload.profile.output_cost_per_million,
         )
@@ -480,7 +482,11 @@ class DriftZeroService:
         except AutomatedEvaluationError as exc:
             raise ExternalProviderError(str(exc)) from exc
 
-        dimensions = dimensions_from_results(results, latency_target_ms=payload.latency_target_ms)
+        dimensions = dimensions_from_results(
+            results,
+            latency_best_ms=payload.latency_best_ms,
+            latency_worst_ms=payload.latency_worst_ms,
+        )
         traces = [
             TraceCreate(
                 request_id=f"auto-eval-{secrets.token_hex(12)}-{index}",

@@ -32,7 +32,9 @@ export const groundingSources = [
   { id: policySources.retiredReturns.id, label: `${policySources.retiredReturns.title} ${policySources.retiredReturns.version}` },
   { id: policySources.warranty.id, label: `${policySources.warranty.title} ${policySources.warranty.version}` },
   { id: policySources.shipping.id, label: `${policySources.shipping.title} ${policySources.shipping.version}` },
+  { id: policySources.shippingConflict.id, label: `${policySources.shippingConflict.title} ${policySources.shippingConflict.version}` },
   { id: policySources.promotions.id, label: `${policySources.promotions.title} ${policySources.promotions.version}` },
+  { id: policySources.promotionsRetired.id, label: `${policySources.promotionsRetired.title} ${policySources.promotionsRetired.version}` },
 ] as const;
 
 export const currentStoreKnowledge = {

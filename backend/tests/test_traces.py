@@ -279,6 +279,6 @@ class TestDemoScenario:
         demo = _service().reset_demo(session)
 
         scores = [snapshot.score for snapshot in demo.health.snapshots if snapshot.score]
-        assert scores == [92.0, 87.0, 74.0, 61.0]
+        assert scores == [91.9, 87.2, 74.8, 62.5]
         assert demo.health.forecast is not None
-        assert demo.health.forecast.predicted_score == 48.0
+        assert demo.health.forecast.predicted_score == 50.2

@@ -173,7 +173,7 @@ existing database and do not create the schema, so run migrations first.
 
 ## Health-score policy
 
-All dimensions are normalized to `0–100`, where higher is healthier. The `health-v1` policy uses
+All dimensions are normalized to `0–100`, where higher is healthier. The `health-v2` policy uses
 published weights and renormalizes across available dimensions. It returns `insufficient_data`
 instead of a score when sample size, request coverage, or weighted dimension coverage is too low.
 Every snapshot retains its policy version, confidence, sample size, coverage, missing dimensions,

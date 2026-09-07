@@ -8,7 +8,6 @@ telemetry; evaluating a response never makes a second provider call.
 from __future__ import annotations
 
 import json
-import math
 import re
 import time
 import urllib.error
@@ -16,17 +15,19 @@ import urllib.request
 from dataclasses import dataclass, field
 from typing import Any
 
+from app.metric_formulas import (
+    consistency_score,
+    cost_efficiency_score,
+    groundedness_score,
+    health_score,
+    latency_score,
+    quality_score,
+    reliability_score,
+    safety_score,
+)
+
 GROQ_API_ROOT = "https://api.groq.com/openai/v1"
 _WORD = re.compile(r"[a-z0-9]+")
-_WEIGHTS = {
-    "quality": 0.25,
-    "groundedness": 0.25,
-    "safety": 0.15,
-    "semantic_stability": 0.10,
-    "reliability": 0.10,
-    "latency": 0.075,
-    "cost": 0.075,
-}
 
 
 class GroqEvaluationError(Exception):
@@ -48,8 +49,10 @@ class DeterministicProfile:
     trusted_facts: tuple[str, ...] = ()
     forbidden_terms: tuple[str, ...] = ()
     expected_json: bool = False
-    latency_target_ms: int = 2000
-    cost_target_usd: float | None = None
+    feedback_score: float | None = None
+    latency_best_ms: int = 200
+    latency_worst_ms: int = 2000
+    cost_max_usd: float | None = None
     input_cost_per_million: float = 0.0
     output_cost_per_million: float = 0.0
 
@@ -60,7 +63,7 @@ class DeterministicResult:
     health_score: float | None
     confidence: float
     evidence: dict[str, Any] = field(default_factory=dict)
-    formula: str = "weighted-geometric-mean-v1"
+    formula: str = "weighted-arithmetic-health-v2"
 
 
 class GroqClient:
@@ -149,40 +152,53 @@ def evaluate_completions(
     """Calculate auditable scores without using an LLM evaluator."""
 
     successful = [item for item in completions if item.text.strip()]
-    total = max(1, len(completions))
-    reliability = 100.0 * len(successful) / total
+    total = len(completions)
+    reliability = reliability_score(
+        successful_requests=len(successful), total_requests=total
+    )
     joined = "\n".join(item.text for item in successful)
     normalized = _normalize(joined)
 
     expected_hits = [_normalize(term) in normalized for term in profile.expected_terms]
     fact_hits = [_normalize(fact) in normalized for fact in profile.trusted_facts]
     correctness = _percentage(expected_hits)
-    groundedness = _percentage(fact_hits)
+    groundedness = groundedness_score(
+        supported_claims=sum(fact_hits), total_claims=len(fact_hits)
+    )
     relevance = _token_overlap(prompt, joined) if successful else 0.0
-    adherence = _json_adherence(successful) if profile.expected_json else 100.0
-    quality_parts = [score for score in (correctness, relevance, adherence) if score is not None]
-    quality = sum(quality_parts) / len(quality_parts) if quality_parts else None
+    completeness = _json_adherence(successful) if profile.expected_json else 100.0
+    quality = quality_score(
+        correctness=correctness,
+        relevance=relevance,
+        completeness=completeness,
+        feedback=profile.feedback_score,
+    )
 
+    unsafe_outputs = [
+        item.text
+        for item in successful
+        if any(_normalize(term) in _normalize(item.text) for term in profile.forbidden_terms)
+    ]
     safety_hits = [term for term in profile.forbidden_terms if _normalize(term) in normalized]
-    safety = max(0.0, 100.0 - 30.0 * len(safety_hits))
+    safety = safety_score(unsafe_responses=len(unsafe_outputs), total_responses=total)
     measured_latencies = [item.latency_ms for item in completions if item.latency_ms > 0]
     average_latency = (
         sum(measured_latencies) / len(measured_latencies) if measured_latencies else 0.0
     )
-    latency = (
-        min(100.0, 100.0 * profile.latency_target_ms / average_latency)
-        if average_latency > 0
-        else 0.0
-    )
+    latency = latency_score(
+        current_ms=average_latency,
+        best_ms=profile.latency_best_ms,
+        worst_ms=profile.latency_worst_ms,
+    ) if measured_latencies else None
     cost = sum(
         item.input_tokens * profile.input_cost_per_million / 1_000_000
         + item.output_tokens * profile.output_cost_per_million / 1_000_000
         for item in completions
     )
     cost_score = (
-        min(100.0, 100.0 * profile.cost_target_usd / cost)
-        if profile.cost_target_usd is not None and cost > 0
-        else (100.0 if profile.cost_target_usd is not None else None)
+        cost_efficiency_score(current_cost=cost, maximum_cost=profile.cost_max_usd)
+        if profile.cost_max_usd is not None
+        else None
     )
     stability = _semantic_stability([item.text for item in successful])
 
@@ -195,9 +211,7 @@ def evaluate_completions(
         "latency": _round(latency),
         "cost": _round(cost_score),
     }
-    health = _geometric_health(dimensions)
-    if safety <= 40 or reliability < 80:
-        health = min(health, 39.0) if health is not None else 39.0
+    health = health_score(dimensions)
     available = sum(value is not None for value in dimensions.values())
     evidence_items = len(profile.expected_terms) + len(profile.trusted_facts)
     confidence = min(1.0, 0.35 + 0.08 * available + 0.03 * min(evidence_items, 3))
@@ -214,6 +228,7 @@ def evaluate_completions(
                 fact: hit for fact, hit in zip(profile.trusted_facts, fact_hits, strict=True)
             },
             "forbidden_terms_found": safety_hits,
+            "unsafe_responses": len(unsafe_outputs),
             "average_latency_ms": round(average_latency),
             "estimated_cost_usd": round(cost, 8),
             "responses_compared": len(successful),
@@ -257,21 +272,8 @@ def _semantic_stability(outputs: list[str]) -> float | None:
         for right in outputs[index + 1 :]:
             right_tokens = set(_WORD.findall(right.lower()))
             union = left_tokens | right_tokens
-            scores.append(100.0 * len(left_tokens & right_tokens) / len(union) if union else 100.0)
-    return sum(scores) / len(scores)
-
-
-def _geometric_health(dimensions: dict[str, float | None]) -> float | None:
-    present = [(name, value) for name, value in dimensions.items() if value is not None]
-    if not present:
-        return None
-    weight_total = sum(_WEIGHTS[name] for name, _ in present)
-    return 100.0 * math.exp(
-        sum(
-            _WEIGHTS[name] / weight_total * math.log(max(0.01, value) / 100.0)
-            for name, value in present
-        )
-    )
+            scores.append(len(left_tokens & right_tokens) / len(union) if union else 1.0)
+    return consistency_score(scores)
 
 
 def _round(value: float | None) -> float | None:

@@ -20,12 +20,22 @@ from app.config import Settings
 from app.connections import ConnectionCheckError, CredentialVault, validate_target_url
 from app.db import EvidenceSource, ModelConnection, ModelVersion, MonitoredModel
 from app.groq_evaluation import GroqClient, GroqEvaluationError
+from app.metric_formulas import consistency_score, latency_score, reliability_score
 from app.schemas import DimensionScores
 
 _WORD = re.compile(r"[a-z0-9]+")
 _NUMBER = re.compile(r"(?<![\w.])-?\d+(?:,\d{3})*(?:\.\d+)?(?![\w.])")
 _SUBJECT_KEYS = ("name", "title", "product", "model", "item", "label")
-_SKIP_KEYS = {"id", "created_at", "updated_at", "timestamp", "metadata"}
+_SKIP_KEYS = {
+    "id",
+    "created_at",
+    "updated_at",
+    "timestamp",
+    "metadata",
+    "evidence_quote",
+    "source_url",
+    "content_hash",
+}
 _QUESTION_TEMPLATES = (
     "What is the {field} for {subject}?",
     "Tell me the {field} of {subject}.",
@@ -188,22 +198,38 @@ def run_cases(
 
 
 def dimensions_from_results(
-    results: list[ExecutedCase], *, latency_target_ms: int
+    results: list[ExecutedCase], *, latency_best_ms: int, latency_worst_ms: int
 ) -> DimensionScores:
     if not results:
         return DimensionScores()
     pass_rate = 100.0 * sum(item.passed for item in results) / len(results)
-    groups: dict[str, list[bool]] = {}
+    groups: dict[str, list[str]] = {}
     for item in results:
-        groups.setdefault(item.case.assertion_id, []).append(item.passed)
-    stability = 100.0 * sum(len(set(values)) == 1 for values in groups.values()) / len(groups)
+        groups.setdefault(item.case.assertion_id, []).append(item.actual)
+    similarities: list[float] = []
+    for outputs in groups.values():
+        for index, left in enumerate(outputs):
+            left_tokens = set(_WORD.findall(left.lower()))
+            for right in outputs[index + 1:]:
+                right_tokens = set(_WORD.findall(right.lower()))
+                union = left_tokens | right_tokens
+                similarities.append(len(left_tokens & right_tokens) / len(union) if union else 1.0)
+    stability = consistency_score(similarities)
     average_latency = sum(item.latency_ms for item in results) / len(results)
-    latency = min(100.0, 100.0 * latency_target_ms / max(1.0, average_latency))
+    latency = latency_score(
+        current_ms=average_latency, best_ms=latency_best_ms, worst_ms=latency_worst_ms
+    )
     return DimensionScores(
         quality=round(pass_rate, 1),
         groundedness=round(pass_rate, 1),
-        semantic_stability=round(stability, 1),
-        reliability=100.0,
+        semantic_stability=round(stability, 1) if stability is not None else None,
+        reliability=round(
+            reliability_score(
+                successful_requests=len(results), total_requests=len(results)
+            )
+            or 0,
+            1,
+        ),
         latency=round(latency, 1),
     )
 

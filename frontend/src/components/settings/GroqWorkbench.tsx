@@ -49,7 +49,7 @@ export function GroqWorkbench({models,onImported}:{models:ApiModel[];onImported:
   const evaluate=async()=>{
     if(!registeredId||!prompt.trim())return
     setBusy('evaluate');setError(null);setResult(null)
-    try{setResult(await api.evaluateGroqModel(registeredId,{prompt:prompt.trim(),repeat,temperature:0,profile:{expected_terms:lines(expected),trusted_facts:lines(facts),forbidden_terms:lines(forbidden),expected_json:expectedJson,latency_target_ms:2000,input_cost_per_million:0,output_cost_per_million:0}}))}
+    try{setResult(await api.evaluateGroqModel(registeredId,{prompt:prompt.trim(),repeat,temperature:0,profile:{expected_terms:lines(expected),trusted_facts:lines(facts),forbidden_terms:lines(forbidden),expected_json:expectedJson,latency_best_ms:200,latency_worst_ms:2000,input_cost_per_million:0,output_cost_per_million:0}}))}
     catch(err){setError(err instanceof Error?err.message:'The evaluation could not be completed.')}
     finally{setBusy(null)}
   }

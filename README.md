@@ -31,6 +31,8 @@ Recovery is a lifecycle rather than a button click. A plan can be recommended, a
 
 - **Model registry and versioning** — register monitored systems, track lifecycle state, and fingerprint model, prompt, tool, corpus, and evaluation-policy versions.
 - **Telemetry ingestion** — accept provider-neutral health dimensions and optional request-level traces through a versioned API.
+- **Owner connector evaluation** — capture interactions from any hosted or local model, verify claims against approved evidence with deterministic rules, and derive auditable health windows.
+- **Live evidence URLs** — fetch public direct data URLs, preserve provenance, detect changes, and require approval before a new version replaces trusted evidence.
 - **Privacy-aware evidence** — redact prompt and response text before storage while retaining hashes, safe trace fields, and configurable retention periods.
 - **Model Health Score** — combine available reliability dimensions into a transparent score with state, confidence, sample size, coverage, policy version, and missing-dimension reporting.
 - **Health history and forecasting** — store health snapshots and short-horizon forecasts, then record forecast outcomes when the horizon passes.
@@ -54,7 +56,7 @@ AI application ───────────────→ Hosted, local, o
   ↓
 Evaluator / telemetry collector / connector
   ↓
-POST /api/v1/models/{model_id}/telemetry
+POST /api/v1/models/{model_id}/interactions/evaluate
   ↓
 FastAPI service
   ├── trace redaction and signal inference
@@ -84,12 +86,13 @@ DriftZero is designed around the behavior of a monitored application, not a part
 POST /api/v1/models/{model_id}/telemetry
 ```
 
-Each submitted window contains normalized `0–100` health dimensions, its sample size and traffic coverage, a signal source, and optional trace evidence. This boundary allows the scoring, incident, diagnosis, alert, recovery, and verification pipeline to operate independently of the underlying provider. The repository includes a dependency-free synthetic connector example, but it does not yet ship finished connectors for every provider.
+The owner connector sends raw application observations—not invented scores—to the interaction endpoint. DriftZero verifies factual claims against approved evidence and derives groundedness, quality, reliability, latency, safety, sample size, and coverage. Applications with their own domain evaluator can continue sending normalized `0–100` dimensions directly to the telemetry endpoint.
 
 See [`docs/HEALTH_EVENT_SCHEMA.md`](docs/HEALTH_EVENT_SCHEMA.md) for the current contract.
 See [`docs/CONNECTIONS.md`](docs/CONNECTIONS.md) for GitHub, telemetry, website, and API
 onboarding, credential handling, and connection checks.
 See [`docs/GROQ_EVALUATION.md`](docs/GROQ_EVALUATION.md) for the server-side Groq import and deterministic evaluation flow.
+See [`docs/OWNER_CONNECTOR.md`](docs/OWNER_CONNECTOR.md) for live URL evidence and hosted or local model integration.
 
 ## Evaluation layer
 
@@ -103,19 +106,19 @@ The built-in semantic and temporal stability evaluator is a deterministic simula
 
 ## Model Health
 
-The Model Health Score is a policy-versioned summary of available signals, not an objective statement about a model. The current `health-v1` policy uses these dimensions, where higher always means healthier:
+The Model Health Score is a policy-versioned summary of available signals, not an objective statement about a model. The current `health-v2` policy uses these dimensions, where higher always means healthier:
 
 - quality
 - groundedness
 - semantic stability
-- temporal stability
 - safety
-- drift health
 - operational reliability
 - latency health
 - cost health
 
 The backend calculates a weighted score from the dimensions that are present and reports missing dimensions explicitly. It also derives confidence from traffic coverage, sample size, and available dimension coverage. By default, fewer than 20 samples, less than 30% traffic coverage, or insufficient dimension weight produces an `insufficient_data` state instead of a misleading score.
+
+The published weights are quality 25%, groundedness 20%, reliability 20%, semantic consistency 15%, safety 10%, latency 5%, and cost efficiency 5%. Temporal stability and drift remain available diagnostic signals but are not inputs to the `health-v2` aggregate.
 
 Health snapshots preserve the evidence window and scoring policy. The current forecast is an inspectable short-horizon slope projection with a variability-based interval; it is a baseline forecast, not a guarantee of a future incident.
 
@@ -217,7 +220,7 @@ Requirements: Python 3.12 or newer with the backend dependencies installed, and 
 python scripts/run_local.py
 ```
 
-That starts six processes and shuts them all down together on Ctrl+C:
+That starts seven processes and shuts them all down together on Ctrl+C:
 
 | Service | URL | Role |
 | --- | --- | --- |
@@ -225,6 +228,7 @@ That starts six processes and shuts them all down together on Ctrl+C:
 | Recovery worker | — | Applies approved recovery plans and records verification |
 | Alert worker | — | Evaluates alert rules |
 | Retention worker | — | Removes traces beyond each model's retention window |
+| Evidence sync worker | — | Rechecks opted-in URL sources and versions changed content |
 | Dashboard | <http://localhost:5173> | Operator view: health, incidents, recovery |
 | ShopAssist | <http://localhost:3000> | The monitored chatbot; presenter controls at `/demo` |
 
@@ -396,6 +400,10 @@ Important current boundaries:
 - the single-container Render deployment files should be revalidated against the current Vite frontend build before use.
 
 Do not attach consequential production credentials or recovery permissions to the demo configuration.
+
+Website reference sources can also be refreshed into source-verifiable JSON on a schedule, with
+optional xAI/Grok structuring. See [`docs/WEBSITE_SYNC.md`](docs/WEBSITE_SYNC.md) for the trust
+boundary, configuration, API, and worker behavior.
 
 ## Roadmap
 
