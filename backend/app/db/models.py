@@ -194,6 +194,9 @@ class MonitoredModel(IdMixin, TenantMixin, Base):
     connections: Mapped[list[ModelConnection]] = relationship(
         back_populates="model", cascade="all, delete-orphan", passive_deletes=True
     )
+    evidence_sources: Mapped[list[EvidenceSource]] = relationship(
+        back_populates="model", cascade="all, delete-orphan", passive_deletes=True
+    )
 
 
 class ModelConnection(IdMixin, TenantMixin, Base):
@@ -348,6 +351,76 @@ class KnowledgeDocument(IdMixin, Base):
     superseded_by: Mapped[KnowledgeDocument | None] = relationship(
         remote_side="KnowledgeDocument.id"
     )
+
+
+class EvidenceSource(IdMixin, TenantMixin, Base):
+    """A user-supplied source that may become trusted verification evidence.
+
+    The original file is deliberately not persisted. Its SHA-256 hash proves
+    which bytes produced the corpus, while chunks retain exact source excerpts
+    and locations. Only ``approved`` sources are eligible for retrieval.
+    """
+
+    __tablename__ = "evidence_sources"
+    __table_args__ = (
+        sa.UniqueConstraint("model_id", "content_hash", name="model_evidence_hash"),
+        sa.CheckConstraint(
+            "status IN ('awaiting_review', 'approved', 'rejected', 'retired')",
+            name="evidence_status",
+        ),
+        sa.CheckConstraint("chunk_count >= 0", name="evidence_chunk_count_non_negative"),
+    )
+
+    model_id: Mapped[str] = mapped_column(
+        sa.String(36), sa.ForeignKey(_MODEL_FK, ondelete="CASCADE"), index=True
+    )
+    name: Mapped[str] = mapped_column(sa.String(160))
+    filename: Mapped[str] = mapped_column(sa.String(255))
+    media_type: Mapped[str] = mapped_column(sa.String(100))
+    content_hash: Mapped[str] = mapped_column(sa.String(64), index=True)
+    corpus_version: Mapped[str] = mapped_column(sa.String(80), index=True)
+    status: Mapped[str] = mapped_column(sa.String(24), default="awaiting_review", index=True)
+    extraction_method: Mapped[str] = mapped_column(sa.String(40))
+    llm_provider: Mapped[str | None] = mapped_column(sa.String(40))
+    llm_model: Mapped[str | None] = mapped_column(sa.String(120))
+    chunk_count: Mapped[int] = mapped_column(default=0)
+    approved_by: Mapped[str | None] = mapped_column(sa.String(120))
+    approved_at: Mapped[datetime | None] = mapped_column()
+    rejection_reason: Mapped[str | None] = mapped_column(sa.Text())
+    created_at: Mapped[datetime] = mapped_column(default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(default=utc_now, onupdate=utc_now)
+
+    model: Mapped[MonitoredModel] = relationship(back_populates="evidence_sources")
+    chunks: Mapped[list[EvidenceChunk]] = relationship(
+        back_populates="source", cascade="all, delete-orphan", passive_deletes=True
+    )
+
+
+class EvidenceChunk(IdMixin, Base):
+    """One exact, locatable unit used to verify a model-output claim."""
+
+    __tablename__ = "evidence_chunks"
+    __table_args__ = (
+        sa.UniqueConstraint("source_id", "ordinal", name="evidence_source_ordinal"),
+        sa.CheckConstraint("ordinal >= 0", name="evidence_ordinal_non_negative"),
+        sa.CheckConstraint(
+            "validation_status IN ('deterministic', 'exact_match')",
+            name="evidence_validation_status",
+        ),
+    )
+
+    source_id: Mapped[str] = mapped_column(
+        sa.String(36), sa.ForeignKey("evidence_sources.id", ondelete="CASCADE"), index=True
+    )
+    ordinal: Mapped[int] = mapped_column()
+    text: Mapped[str] = mapped_column(sa.Text())
+    evidence_quote: Mapped[str] = mapped_column(sa.Text())
+    locator: Mapped[dict[str, Any]] = mapped_column(default=dict)
+    content_hash: Mapped[str] = mapped_column(sa.String(64), index=True)
+    validation_status: Mapped[str] = mapped_column(sa.String(24), default="deterministic")
+    created_at: Mapped[datetime] = mapped_column(default=utc_now)
+
+    source: Mapped[EvidenceSource] = relationship(back_populates="chunks")
 
 
 # --------------------------------------------------------------------------- #

@@ -4,6 +4,7 @@ import { AppShell } from './components/layout/AppShell'
 import { DashboardProvider } from './context/DashboardContext'
 import { SettingsProvider } from './context/SettingsContext'
 import { EventsPage } from './pages/EventsPage'
+import { EvidencePage } from './pages/EvidencePage'
 import { IncidentsPage } from './pages/IncidentsPage'
 import { ModelDetailPage } from './pages/ModelDetailPage'
 import { ModelsPage } from './pages/ModelsPage'
@@ -23,6 +24,7 @@ export default function App() {
             <Route path="/incidents" element={<IncidentsPage />} />
             <Route path="/incidents/:incidentId" element={<IncidentsPage />} />
             <Route path="/events" element={<EventsPage />} />
+            <Route path="/evidence" element={<EvidencePage />} />
             <Route path="/settings" element={<Navigate to="/settings/workspace" replace />} />
             <Route path="/settings/:section" element={<SettingsPage />} />
             <Route path="*" element={<Navigate to="/" replace />} />

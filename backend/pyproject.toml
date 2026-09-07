@@ -14,6 +14,7 @@ dependencies = [
   "cryptography>=46,<47",
   "fastapi>=0.136,<1",
   "pydantic>=2.13,<3",
+  "pypdf>=6,<7",
   "sqlalchemy>=2.0,<3",
   "uvicorn[standard]>=0.41,<1",
 ]
@@ -50,4 +51,3 @@ extend-exclude = ["alembic/versions"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "SIM"]
-

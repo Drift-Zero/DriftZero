@@ -56,7 +56,12 @@ class Settings:
     api_operator_key: str | None = None
     api_admin_key: str | None = None
     api_rate_limit_per_minute: int = 300
-    api_max_request_bytes: int = 1_048_576
+    # A 5 MiB file expands to roughly 6.7 MiB when transported as base64 JSON.
+    api_max_request_bytes: int = 8_388_608
+    evidence_max_file_bytes: int = 5_242_880
+    evidence_llm_provider: str = "disabled"
+    evidence_llm_model: str | None = None
+    evidence_llm_timeout_seconds: float = 30.0
     trusted_hosts: tuple[str, ...] = ("localhost", "127.0.0.1", "testserver")
     telemetry_max_future_skew_seconds: int = 300
     docs_enabled: bool = True
@@ -219,6 +224,28 @@ class Settings:
                     os.getenv(
                         "DRIFTZERO_API_MAX_REQUEST_BYTES",
                         str(defaults.api_max_request_bytes),
+                    )
+                ),
+            ),
+            evidence_max_file_bytes=max(
+                1,
+                int(
+                    os.getenv(
+                        "DRIFTZERO_EVIDENCE_MAX_FILE_BYTES",
+                        str(defaults.evidence_max_file_bytes),
+                    )
+                ),
+            ),
+            evidence_llm_provider=os.getenv(
+                "DRIFTZERO_EVIDENCE_LLM_PROVIDER", defaults.evidence_llm_provider
+            ).strip().lower(),
+            evidence_llm_model=os.getenv("DRIFTZERO_EVIDENCE_LLM_MODEL") or None,
+            evidence_llm_timeout_seconds=max(
+                1.0,
+                float(
+                    os.getenv(
+                        "DRIFTZERO_EVIDENCE_LLM_TIMEOUT_SECONDS",
+                        str(defaults.evidence_llm_timeout_seconds),
                     )
                 ),
             ),

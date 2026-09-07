@@ -17,6 +17,8 @@ from app.auth import AuthService
 from app.auth_api import router as auth_router
 from app.config import Settings
 from app.database import Database
+from app.evidence import EvidenceService, build_evidence_structurer
+from app.evidence_api import router as evidence_router
 from app.observability import (
     RequestLoggingMiddleware,
     configure_database_logging,
@@ -43,6 +45,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     database = Database(runtime_settings.database_url)
     configure_database_logging(database.engine, slow_query_ms=runtime_settings.slow_query_ms)
     service = DriftZeroService(runtime_settings)
+    evidence_service = EvidenceService(
+        runtime_settings,
+        structurer=build_evidence_structurer(runtime_settings),
+    )
     auth_service = AuthService(runtime_settings)
 
     @asynccontextmanager
@@ -80,10 +86,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             {"name": "alerts", "description": "Rules, alert lifecycle, and notifications."},
             {"name": "audit", "description": "Immutable operator action history."},
             {"name": "demo", "description": "Deterministic ShopAssist scenario."},
+            {
+                "name": "evidence",
+                "description": "Trusted-source ingestion, approval, and retrieval.",
+            },
         ],
     )
     application.state.settings = runtime_settings
     application.state.auth_service = auth_service
+    application.state.evidence_service = evidence_service
     cors_origins = list(runtime_settings.cors_origins)
     if not cors_origins and runtime_settings.environment.lower() not in {"production", "prod"}:
         cors_origins = ["http://127.0.0.1:5173", "http://localhost:5173"]
@@ -118,6 +129,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         )
     application.include_router(router, prefix=runtime_settings.api_prefix)
     application.include_router(auth_router, prefix=runtime_settings.api_prefix)
+    application.include_router(evidence_router, prefix=runtime_settings.api_prefix)
     application.state.opentelemetry_enabled = configure_opentelemetry(
         application,
         database.engine,
