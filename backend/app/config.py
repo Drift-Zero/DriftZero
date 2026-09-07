@@ -49,6 +49,15 @@ class Settings:
     recovery_admin_api_key: str | None = None
     connection_secret_key: str | None = None
     connection_check_timeout_seconds: float = 8.0
+    api_require_auth: bool = False
+    api_viewer_key: str | None = None
+    api_operator_key: str | None = None
+    api_admin_key: str | None = None
+    api_rate_limit_per_minute: int = 300
+    api_max_request_bytes: int = 1_048_576
+    trusted_hosts: tuple[str, ...] = ("localhost", "127.0.0.1", "testserver")
+    telemetry_max_future_skew_seconds: int = 300
+    docs_enabled: bool = True
     recovery_allow_local_identity: bool = False
     log_level: str = "INFO"
     log_file: str | None = None
@@ -172,6 +181,46 @@ class Settings:
                         str(defaults.connection_check_timeout_seconds),
                     )
                 ),
+            ),
+            api_require_auth=_environment_bool(
+                "DRIFTZERO_API_REQUIRE_AUTH", defaults.api_require_auth
+            ),
+            api_viewer_key=os.getenv("DRIFTZERO_API_VIEWER_KEY") or None,
+            api_operator_key=os.getenv("DRIFTZERO_API_OPERATOR_KEY") or None,
+            api_admin_key=os.getenv("DRIFTZERO_API_ADMIN_KEY") or None,
+            api_rate_limit_per_minute=max(
+                0,
+                int(
+                    os.getenv(
+                        "DRIFTZERO_API_RATE_LIMIT_PER_MINUTE",
+                        str(defaults.api_rate_limit_per_minute),
+                    )
+                ),
+            ),
+            api_max_request_bytes=max(
+                1,
+                int(
+                    os.getenv(
+                        "DRIFTZERO_API_MAX_REQUEST_BYTES",
+                        str(defaults.api_max_request_bytes),
+                    )
+                ),
+            ),
+            trusted_hosts=_environment_list(
+                "DRIFTZERO_TRUSTED_HOSTS", defaults.trusted_hosts
+            ),
+            telemetry_max_future_skew_seconds=max(
+                0,
+                int(
+                    os.getenv(
+                        "DRIFTZERO_TELEMETRY_MAX_FUTURE_SKEW_SECONDS",
+                        str(defaults.telemetry_max_future_skew_seconds),
+                    )
+                ),
+            ),
+            docs_enabled=_environment_bool(
+                "DRIFTZERO_DOCS_ENABLED",
+                defaults.docs_enabled,
             ),
             recovery_allow_local_identity=_environment_bool(
                 "DRIFTZERO_RECOVERY_ALLOW_LOCAL_IDENTITY",
