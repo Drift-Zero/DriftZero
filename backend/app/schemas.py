@@ -512,6 +512,13 @@ class StabilityRunRequest(BaseModel):
 
 
 class TelemetryCreate(BaseModel):
+    event_id: str | None = Field(
+        default=None,
+        min_length=8,
+        max_length=128,
+        pattern=r"^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+    )
+    schema_version: Literal["1.0"] = "1.0"
     observed_at: datetime = Field(default_factory=utc_now)
     dimensions: DimensionScores
     sample_size: int = Field(ge=1)
@@ -532,6 +539,8 @@ class ShopAssistTelemetryCreate(TelemetryCreate):
 class HealthSnapshotResponse(BaseModel):
     id: str
     model_id: str
+    event_id: str | None = None
+    schema_version: str = "1.0"
     observed_at: datetime
     window_start: datetime | None = None
     window_end: datetime | None = None
