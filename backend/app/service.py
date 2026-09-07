@@ -861,7 +861,15 @@ class DriftZeroService:
     def get_recovery_command(
         self, session: Session, command_id: str
     ) -> RecoveryCommandResponse:
-        command = session.get(RecoveryCommand, command_id)
+        command = session.scalar(
+            select(RecoveryCommand)
+            .join(RecoveryPlan, RecoveryPlan.id == RecoveryCommand.plan_id)
+            .join(MonitoredModel, MonitoredModel.id == RecoveryPlan.model_id)
+            .where(
+                RecoveryCommand.id == command_id,
+                MonitoredModel.tenant_id == self._tenant_id(session),
+            )
+        )
         if command is None:
             raise ResourceNotFound("Recovery command not found.")
         return RecoveryCommandResponse.model_validate(command)
@@ -1908,7 +1916,14 @@ class DriftZeroService:
         ``in_review`` is claiming it, not deciding it.
         """
 
-        item = session.get(ReviewQueueItem, item_id)
+        item = session.scalar(
+            select(ReviewQueueItem)
+            .join(MonitoredModel, MonitoredModel.id == ReviewQueueItem.model_id)
+            .where(
+                ReviewQueueItem.id == item_id,
+                MonitoredModel.tenant_id == self._tenant_id(session),
+            )
+        )
         if item is None:
             raise ResourceNotFound("Review item not found.")
         if ReviewState(item.state) in {ReviewState.APPROVED, ReviewState.REJECTED}:
@@ -3185,7 +3200,14 @@ class DriftZeroService:
         return [IncidentResponse.model_validate(record) for record in records]
 
     def get_incident(self, session: Session, incident_id: str) -> IncidentResponse:
-        record = session.get(Incident, incident_id)
+        record = session.scalar(
+            select(Incident)
+            .join(MonitoredModel, MonitoredModel.id == Incident.model_id)
+            .where(
+                Incident.id == incident_id,
+                MonitoredModel.tenant_id == self._tenant_id(session),
+            )
+        )
         if record is None:
             raise ResourceNotFound("Incident not found.")
         return IncidentResponse.model_validate(record)
