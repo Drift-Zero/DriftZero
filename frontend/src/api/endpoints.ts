@@ -1,8 +1,9 @@
 import { apiRequest,recoveryActor,recoveryHeaders,recoveryRole } from './client'
-import type { ApiAlertFeed,ApiAuditEvent,ApiDiagnosis,ApiHealthTimeline,ApiIncident,ApiModel,ApiRecovery,ApiRecoveryCommand } from './types'
+import type { ApiAlertFeed,ApiAlertRule,ApiAlertRuleInput,ApiAuditEvent,ApiDiagnosis,ApiHealthTimeline,ApiIncident,ApiModel,ApiRecovery,ApiRecoveryCommand } from './types'
 const v1='/api/v1'
-const actor={actor:recoveryActor,role:recoveryRole}
-const mutate=(body:Record<string,unknown>):RequestInit=>({method:'POST',headers:recoveryHeaders(),body:JSON.stringify({...actor,...body})})
+const actor=()=>({actor:recoveryActor(),role:recoveryRole()})
+const send=(method:string,body:Record<string,unknown>):RequestInit=>({method,headers:recoveryHeaders(),body:JSON.stringify({...actor(),...body})})
+const mutate=(body:Record<string,unknown>):RequestInit=>send('POST',body)
 export const api={
   healthcheck:()=>apiRequest<{status:string;environment:string}>('/healthz'),
   models:()=>apiRequest<ApiModel[]>(`${v1}/models`),
@@ -19,4 +20,13 @@ export const api={
      No expected_version here: queuing bumps the plan version, so the guard would reject the
      very replay the idempotency key exists to serve. */
   executeRecovery:(planId:string,approvedVersion:number)=>apiRequest<ApiRecoveryCommand>(`${v1}/recovery/${planId}/execute`,mutate({idempotency_key:`dashboard-${planId}-v${approvedVersion}`})),
+
+  alertRules:(modelId:string)=>apiRequest<ApiAlertRule[]>(`${v1}/models/${modelId}/alert-rules`),
+  createAlertRule:(modelId:string,rule:ApiAlertRuleInput)=>apiRequest<ApiAlertRule>(`${v1}/models/${modelId}/alert-rules`,mutate({...rule})),
+  updateAlertRule:(ruleId:string,patch:Partial<ApiAlertRuleInput>)=>apiRequest<ApiAlertRule>(`${v1}/alert-rules/${ruleId}`,send('PATCH',{...patch})),
+  /* The API takes the actor in the body even on a delete, so this cannot be a bare DELETE. */
+  deleteAlertRule:(ruleId:string)=>apiRequest<void>(`${v1}/alert-rules/${ruleId}`,send('DELETE',{})),
+
+  updateModel:(modelId:string,patch:{name?:string;provider?:string;environment?:string;description?:string|null;retention_days?:number})=>apiRequest<ApiModel>(`${v1}/models/${modelId}`,send('PATCH',{...patch})),
+  setModelLifecycle:(modelId:string,status:ApiModel['status'])=>apiRequest<ApiModel>(`${v1}/models/${modelId}/lifecycle`,mutate({status})),
 }

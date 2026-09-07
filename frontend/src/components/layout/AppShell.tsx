@@ -2,6 +2,7 @@ import type { ReactNode } from 'react'
 import { Activity, BellRing, Boxes, CircleGauge, Radio, Settings } from 'lucide-react'
 import { NavLink } from 'react-router-dom'
 import { useDashboard } from '../../context/DashboardContext'
+import { useSettings } from '../../context/SettingsContext'
 import { DemoControls } from '../demo/DemoControls'
 
 const links = [
@@ -13,6 +14,8 @@ const links = [
 
 export function AppShell({ children }: { children: ReactNode }) {
   const { connection } = useDashboard()
+  const { settings } = useSettings()
+  const { name, environmentLabel } = settings.workspace
   const connectionLabel = connection === 'demo' ? 'Demo mode' : connection === 'connected' ? 'API connected' : 'API offline'
   return (
     <div className="app-shell">
@@ -27,10 +30,8 @@ export function AppShell({ children }: { children: ReactNode }) {
         </nav>
         <div className="sidebar-bottom">
           <div className="connection-pill"><span className={`status-dot ${connection}`} /> {connectionLabel}</div>
-          {/* No settings view exists yet. Left visible but inert rather than offering a
-              hover affordance and a tab stop that lead nowhere. */}
-          <button className="nav-link settings-link" type="button" disabled title="Settings are not available in this build"><Settings size={17} /><span>Settings</span></button>
-          <div className="workspace"><span>DZ</span><div><strong>DriftZero</strong><small>Production workspace</small></div></div>
+          <NavLink to="/settings" className={({ isActive }) => isActive ? 'nav-link settings-link active' : 'nav-link settings-link'}><Settings size={17} /><span>Settings</span></NavLink>
+          <div className="workspace"><span>{name.slice(0, 2).toUpperCase()}</span><div><strong>{name}</strong><small>{environmentLabel}</small></div></div>
         </div>
       </aside>
       <main className="main-content">{children}<DemoControls /></main>

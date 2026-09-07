@@ -42,6 +42,7 @@ Recovery is a lifecycle rather than a button click. A plan can be recommended, a
 - **Human review and feedback** — route selected work to a review queue and record human agreement or disagreement with automated judgments.
 - **Audit history** — record model, telemetry, alert, diagnosis, recovery, verification, and governance events.
 - **Dashboard** — explore fleet health, models, model details, incidents, events, recovery state, and deterministic demo controls in a React interface.
+- **Dashboard settings** — set the operator identity used for audited actions, repoint the dashboard at another API and test it before committing, switch between demo and live data, enable background refresh, manage alert rules and per-model retention and lifecycle, tune density, timestamp, and precision formatting, and export, import, or reset the whole configuration.
 
 ## Architecture
 

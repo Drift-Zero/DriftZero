@@ -9,3 +9,9 @@ export interface ApiRecoveryCommand { id:string;plan_id:string;command_type:stri
 export interface ApiAuditEvent { id:string;model_id:string|null;event_type:string;actor:string;reason:string|null;details:Record<string,unknown>;created_at:string }
 export interface ApiAlert { id:string;model_id:string;incident_id:string|null;state:string;severity:string;message:string;observed_value:number|null;fired_at:string;resolved_at:string|null }
 export interface ApiAlertFeed { items:ApiAlert[];total:number;firing:number;acknowledged:number }
+export type ApiAlertRuleType='threshold'|'transition'|'trajectory'|'coverage'|'evaluation_freshness'
+export type ApiAlertMetric='score'|'quality'|'groundedness'|'semantic_stability'|'temporal_stability'|'safety'|'drift'|'reliability'|'latency'|'cost'|'state'|'coverage'|'forecast_score'|'forecast_change_per_hour'|'evaluation_age_minutes'
+export type ApiComparator='lt'|'lte'|'gt'|'gte'
+export type ApiSeverity='info'|'low'|'medium'|'high'|'critical'
+export interface ApiAlertRuleInput { name:string;rule_type:ApiAlertRuleType;metric:ApiAlertMetric;comparator:ApiComparator|null;threshold:number|null;target_state:'healthy'|'warning'|'critical'|null;window_minutes:number;cooldown_minutes:number;minimum_consecutive_windows:number;severity:ApiSeverity;channel:'in_app';is_enabled:boolean }
+export interface ApiAlertRule extends ApiAlertRuleInput { id:string;model_id:string;created_at:string;updated_at:string }
