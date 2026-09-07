@@ -4,6 +4,8 @@ Connectors normalize provider-specific observations into one health event and se
 
 ```json
 {
+  "event_id": "window-prod-20260906T120000Z",
+  "schema_version": "1.0",
   "observed_at": "2026-09-06T12:00:00Z",
   "dimensions": {
     "quality": 88,
@@ -27,11 +29,13 @@ Connectors normalize provider-specific observations into one health event and se
 
 | Field | Type | Rule |
 |---|---|---|
+| `event_id` | string | Recommended stable producer ID, 8–128 safe characters; unique per model and idempotent on retry |
+| `schema_version` | string | Currently `1.0`; unsupported versions are rejected |
 | `observed_at` | ISO-8601 timestamp | UTC is recommended; defaults to ingestion time |
 | `dimensions` | object | Each supplied score is from 0–100, where higher is healthier |
 | `sample_size` | integer | At least 1; number of requests represented by this window |
 | `coverage` | number | 0–1; fraction of eligible traffic evaluated |
-| `source` | enum | `observed`, `evaluated`, or `simulated` |
+| `source` | enum | `observed`, `inferred`, or `simulated` |
 | `traces` | array | Optional request-level evidence; raw text is redacted before storage |
 
 Missing dimensions are allowed, but they reduce confidence. The default MVP requires at least 20 samples and 30% coverage for a fully usable score. A connector must calculate or obtain normalized dimension scores; the API does not pretend raw latency or token counts are already health scores.
@@ -42,8 +46,13 @@ Missing dimensions are allowed, but they reduce confidence. The default MVP requ
 2. Aggregate a short observation window in the model-serving application.
 3. Redact sensitive content before transmission. Server-side redaction is a second safety layer, not permission to transmit secrets.
 4. Convert the window into normalized 0–100 dimension scores.
-5. Send the event and retain the returned health snapshot ID for correlation.
-6. Retry transient network failures with exponential backoff; do not retry validation errors blindly.
+5. Create a telemetry model connection once and retain its one-time ingestion key securely.
+6. Send the key as `X-DriftZero-Ingest-Key`, then retain the returned health snapshot ID.
+7. Retry transient failures with the same `event_id`; DriftZero returns the original snapshot
+   instead of recording a duplicate. Do not retry validation errors blindly.
+
+In `production`, ingestion is denied until a telemetry connection exists. Observed timestamps
+more than `DRIFTZERO_TELEMETRY_MAX_FUTURE_SKEW_SECONDS` ahead of the server clock are rejected.
 
 Run the dependency-free example after the local stack starts:
 
