@@ -68,7 +68,7 @@ def test_startup_migration_creates_a_fresh_database(tmp_path: Path) -> None:
     engine.dispose()
 
     assert set(Base.metadata.tables) <= tables
-    assert current == "0010"
+    assert current == "0011"
 
 
 def test_migration_root_uses_deployment_working_directory(
@@ -101,9 +101,38 @@ def test_startup_migration_upgrades_unversioned_revision_six(tmp_path: Path) -> 
     snapshot_columns = {column["name"] for column in inspector.get_columns("health_snapshots")}
     engine.dispose()
 
-    assert current == "0010"
+    assert current == "0011"
     assert {"model_connections", "users", "tenant_memberships", "user_sessions"} <= tables
     assert {"event_id", "schema_version"} <= snapshot_columns
+
+
+def test_startup_migration_repairs_mixed_create_all_schema(tmp_path: Path) -> None:
+    url = f"sqlite:///{tmp_path / 'startup-mixed.db'}"
+    config = _alembic_config(url)
+    command.upgrade(config, "0006")
+    engine = sa.create_engine(url)
+    with engine.begin() as connection:
+        connection.execute(sa.text("DROP TABLE alembic_version"))
+    Base.metadata.create_all(engine)
+    before = {column["name"] for column in sa.inspect(engine).get_columns("health_snapshots")}
+    engine.dispose()
+
+    assert "event_id" not in before
+    upgrade_database(url)
+
+    engine = sa.create_engine(url)
+    inspector = sa.inspect(engine)
+    after = {column["name"] for column in inspector.get_columns("health_snapshots")}
+    constraints = {
+        constraint["name"] for constraint in inspector.get_unique_constraints("health_snapshots")
+    }
+    with engine.connect() as connection:
+        current = connection.scalar(sa.text("SELECT version_num FROM alembic_version"))
+    engine.dispose()
+
+    assert current == "0011"
+    assert {"event_id", "schema_version"} <= after
+    assert "model_event_id" in constraints
 
 
 def test_downgrade_removes_every_table(migrated_url: str) -> None:
