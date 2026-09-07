@@ -13,6 +13,8 @@ from fastapi.staticfiles import StaticFiles
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from app.api import router
+from app.auth import AuthService
+from app.auth_api import router as auth_router
 from app.config import Settings
 from app.database import Database
 from app.observability import (
@@ -40,6 +42,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     database = Database(runtime_settings.database_url)
     configure_database_logging(database.engine, slow_query_ms=runtime_settings.slow_query_ms)
     service = DriftZeroService(runtime_settings)
+    auth_service = AuthService(runtime_settings)
 
     @asynccontextmanager
     async def lifespan(application: FastAPI) -> AsyncIterator[None]:
@@ -69,6 +72,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         ),
         openapi_tags=[
             {"name": "models", "description": "Monitored AI system registry."},
+            {"name": "auth", "description": "Tenant user sessions."},
             {"name": "pulse", "description": "Health scoring and trajectory."},
             {"name": "diagnose", "description": "Evidence-backed root causes."},
             {"name": "recover", "description": "Approved recovery playbooks."},
@@ -78,6 +82,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         ],
     )
     application.state.settings = runtime_settings
+    application.state.auth_service = auth_service
     cors_origins = list(runtime_settings.cors_origins)
     if not cors_origins and runtime_settings.environment.lower() not in {"production", "prod"}:
         cors_origins = ["http://127.0.0.1:5173", "http://localhost:5173"]
@@ -108,6 +113,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             allowed_hosts=list(runtime_settings.trusted_hosts),
         )
     application.include_router(router, prefix=runtime_settings.api_prefix)
+    application.include_router(auth_router, prefix=runtime_settings.api_prefix)
     application.state.opentelemetry_enabled = configure_opentelemetry(
         application,
         database.engine,
