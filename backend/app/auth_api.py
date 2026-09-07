@@ -8,7 +8,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, Response, status
 from sqlalchemy.orm import Session
 
-from app.auth import AuthIdentity, AuthenticationError, AuthService, IssuedSession
+from app.auth import AuthenticationError, AuthIdentity, AuthService, IssuedSession
 from app.database import Database
 from app.schemas import (
     AuthSessionResponse,
