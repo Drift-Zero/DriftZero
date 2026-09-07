@@ -1,0 +1,31 @@
+{
+  "source": {
+    "name": "ShopAssist policy reference",
+    "version": "2026-09-06",
+    "updated": "6 September 2026"
+  },
+  "returns": {
+    "general_return_window_days": 30,
+    "general_condition": "Most unused items can be returned within 30 days.",
+    "electronics_return_window_days": 14,
+    "electronics_condition": "Electronics can be returned within 14 days.",
+    "clearance_policy": "Clearance items are final sale unless they arrive damaged or defective."
+  },
+  "refunds": {
+    "destination": "Original payment method",
+    "processing_time": "5-7 business days"
+  },
+  "warranty": {
+    "electronics_duration_months": 12,
+    "covered": "Manufacturer defects",
+    "not_covered": "Accidental damage"
+  },
+  "shipping": {
+    "standard_delivery_time": "3-5 business days",
+    "specific_estimate_location": "Order confirmation"
+  },
+  "promotions": {
+    "storewide_codes_active": false,
+    "markdown_location": "Product-specific markdowns appear directly in the catalog."
+  }
+}
