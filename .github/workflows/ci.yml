@@ -163,7 +163,12 @@ jobs:
           grep --quiet 'retention.completed' /tmp/deploy.log
       - name: Print logs after failure
         if: failure()
-        run: docker compose logs --no-color
+        run: |
+          docker compose logs --no-color
+          container_id=$(docker ps --all --quiet --filter name=^driftzero-deploy-test$)
+          if [ -n "$container_id" ]; then
+            docker logs driftzero-deploy-test 2>&1
+          fi
       - name: Stop stack
         if: always()
         run: |

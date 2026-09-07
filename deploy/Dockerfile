@@ -1,7 +1,8 @@
 FROM python:3.12-slim
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONUNBUFFERED=1
+    PYTHONUNBUFFERED=1 \
+    DRIFTZERO_DATABASE_URL=sqlite:////data/driftzero.db
 
 WORKDIR /app
 
@@ -11,7 +12,9 @@ RUN python -m pip install --no-cache-dir ".[postgres]"
 
 COPY deploy/start.py ./deploy/start.py
 
-RUN useradd --create-home driftzero
+RUN useradd --create-home driftzero \
+    && mkdir /data \
+    && chown driftzero:driftzero /data
 
 USER driftzero
 EXPOSE 10000
