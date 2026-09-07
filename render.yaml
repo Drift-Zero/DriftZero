@@ -1,10 +1,3 @@
-databases:
-  - name: driftzero-db
-    plan: free
-    region: singapore
-    databaseName: driftzero
-    user: driftzero
-
 services:
   - type: web
     name: driftzero-demo
@@ -21,10 +14,12 @@ services:
     envVars:
       - key: DRIFTZERO_ENVIRONMENT
         value: hackathon-demo
+      # The hackathon demo uses the SQLite default baked into deploy/Dockerfile.
+      # Render permits only one free PostgreSQL database per workspace, and this
+      # workspace's existing database belongs to another application. Replace
+      # this with a managed DRIFTZERO_DATABASE_URL for persistent production data.
       - key: DRIFTZERO_DATABASE_URL
-        fromDatabase:
-          name: driftzero-db
-          property: connectionString
+        value: sqlite:////tmp/driftzero.db
       - key: DRIFTZERO_API_PREFIX
         value: /api/v1
       - key: DRIFTZERO_API_REQUIRE_AUTH
