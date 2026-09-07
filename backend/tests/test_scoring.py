@@ -87,4 +87,3 @@ def test_knowledge_freshness_diagnosis_exposes_evidence() -> None:
         "SEMANTIC_STABILITY_DETERIORATED",
         "SAFETY_REMAINED_STABLE",
     }
-

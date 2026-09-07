@@ -1,6 +1,12 @@
 # Health event schema
 
-Connectors normalize provider-specific observations into one health event and send it to `POST /api/v1/models/{model_id}/telemetry`.
+DriftZero accepts two provider-neutral paths:
+
+- Owner connectors send questions, answers, latency, and errors to
+  `POST /api/v1/models/{model_id}/interactions/evaluate`. DriftZero derives evidence-backed
+  dimensions from approved sources.
+- Domain-specific evaluators that already calculate normalized dimensions send a health event to
+  `POST /api/v1/models/{model_id}/telemetry`.
 
 ```json
 {
@@ -38,7 +44,7 @@ Connectors normalize provider-specific observations into one health event and se
 | `source` | enum | `observed`, `inferred`, or `simulated` |
 | `traces` | array | Optional request-level evidence; raw text is redacted before storage |
 
-Missing dimensions are allowed, but they reduce confidence. The default MVP requires at least 20 samples and 30% coverage for a fully usable score. A connector must calculate or obtain normalized dimension scores; the API does not pretend raw latency or token counts are already health scores.
+Missing dimensions are allowed, but they reduce confidence. The default MVP requires at least 20 samples and 30% coverage for a fully usable score. A direct telemetry producer must calculate or obtain normalized dimension scores; raw latency or token counts are not themselves health scores. The owner-connector endpoint performs its documented deterministic conversion before it records this same event contract.
 
 ## Connector flow
 
@@ -61,6 +67,10 @@ python3 examples/connectors/send_sample_telemetry.py
 ```
 
 This example sends synthetic data. It does not call OpenAI or another provider, so it requires no API key.
+
+For raw application interactions and live evidence URLs, use the Python or Node connector in
+[`OWNER_CONNECTOR.md`](OWNER_CONNECTOR.md). That path works with hosted and local models without
+giving DriftZero the model provider's API key.
 
 ## ShopAssist adapter
 

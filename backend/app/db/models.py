@@ -389,6 +389,16 @@ class EvidenceSource(IdMixin, TenantMixin, Base):
     extraction_method: Mapped[str] = mapped_column(sa.String(40))
     llm_provider: Mapped[str | None] = mapped_column(sa.String(40))
     llm_model: Mapped[str | None] = mapped_column(sa.String(120))
+    source_url: Mapped[str | None] = mapped_column(sa.String(2048), index=True)
+    etag: Mapped[str | None] = mapped_column(sa.String(255))
+    last_modified: Mapped[str | None] = mapped_column(sa.String(255))
+    fetched_at: Mapped[datetime | None] = mapped_column()
+    last_checked_at: Mapped[datetime | None] = mapped_column()
+    refresh_interval_minutes: Mapped[int | None] = mapped_column()
+    auto_refresh: Mapped[bool] = mapped_column(default=False)
+    supersedes_source_id: Mapped[str | None] = mapped_column(
+        sa.String(36), sa.ForeignKey("evidence_sources.id", ondelete="SET NULL"), index=True
+    )
     chunk_count: Mapped[int] = mapped_column(default=0)
     approved_by: Mapped[str | None] = mapped_column(sa.String(120))
     approved_at: Mapped[datetime | None] = mapped_column()

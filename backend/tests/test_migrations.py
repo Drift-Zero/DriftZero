@@ -68,7 +68,7 @@ def test_startup_migration_creates_a_fresh_database(tmp_path: Path) -> None:
     engine.dispose()
 
     assert set(Base.metadata.tables) <= tables
-    assert current == "0013"
+    assert current == "0014"
 
 
 def test_migration_root_uses_deployment_working_directory(
@@ -101,7 +101,7 @@ def test_startup_migration_upgrades_unversioned_revision_six(tmp_path: Path) -> 
     snapshot_columns = {column["name"] for column in inspector.get_columns("health_snapshots")}
     engine.dispose()
 
-    assert current == "0013"
+    assert current == "0014"
     assert {"model_connections", "users", "tenant_memberships", "user_sessions"} <= tables
     assert {"event_id", "schema_version"} <= snapshot_columns
 
@@ -130,7 +130,7 @@ def test_startup_migration_repairs_mixed_create_all_schema(tmp_path: Path) -> No
         current = connection.scalar(sa.text("SELECT version_num FROM alembic_version"))
     engine.dispose()
 
-    assert current == "0013"
+    assert current == "0014"
     assert {"event_id", "schema_version"} <= after
     assert "model_event_id" in constraints
 
