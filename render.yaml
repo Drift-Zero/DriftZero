@@ -14,7 +14,10 @@ services:
     dockerfilePath: ./deploy/Dockerfile
     dockerContext: .
     healthCheckPath: /healthz
-    autoDeployTrigger: checksPass
+    # Deploy backend routes with every main-branch commit. Waiting for the
+    # repository-wide CI check allowed Vercel to advance while this service
+    # remained on an older API contract.
+    autoDeployTrigger: commit
     envVars:
       - key: DRIFTZERO_ENVIRONMENT
         value: hackathon-demo

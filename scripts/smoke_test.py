@@ -65,6 +65,16 @@ def run(base_url: str, timeout: int, api_key: str | None = None) -> None:
     assert demo["model"]["name"] == "ShopAssist"
     assert demo["diagnosis"]["probable_cause"] == "knowledge_freshness_failure"
 
+    # The Vercel dashboard depends on the evidence router. Keep this route in
+    # the deployment contract so an outdated backend cannot appear healthy
+    # merely because its basic health check and recovery endpoints still work.
+    evidence_sources = request(
+        base_url,
+        f"/api/v1/models/{model_id}/evidence-sources",
+        api_key=api_key,
+    )
+    assert isinstance(evidence_sources, list), evidence_sources
+
     telemetry = request(
         base_url,
         "/api/v1/shopassist/telemetry",
