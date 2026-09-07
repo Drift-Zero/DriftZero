@@ -23,6 +23,21 @@ uvicorn app.main:app --reload
 
 Open `http://127.0.0.1:8000/docs` for the interactive OpenAPI documentation.
 
+`production` and `prod` environments automatically protect management endpoints.
+Configure distinct `DRIFTZERO_API_VIEWER_KEY`, `DRIFTZERO_API_OPERATOR_KEY`, and
+`DRIFTZERO_API_ADMIN_KEY` secrets, then send the appropriate value as
+`Authorization: Bearer <key>`. Viewer credentials are read-only, operators may
+write but not delete, and administrators have full control. If production has no
+management keys, protected routes return `503` instead of starting insecurely.
+Set `DRIFTZERO_API_REQUIRE_AUTH=true` to enable the same behavior in staging.
+The production OpenAPI UI is disabled.
+
+Every response carries browser hardening headers. Requests are restricted by
+`DRIFTZERO_API_MAX_REQUEST_BYTES`, throttled per credential or client by
+`DRIFTZERO_API_RATE_LIMIT_PER_MINUTE`, and checked against
+`DRIFTZERO_TRUSTED_HOSTS`. The built-in limiter is process-local; horizontally
+scaled deployments must also enforce a shared limit at their gateway.
+
 Recovery mutations are authenticated separately from read and telemetry routes.
 For a local demo only, set `DRIFTZERO_RECOVERY_ALLOW_LOCAL_IDENTITY=true` and
 send `X-DriftZero-Actor` plus `X-DriftZero-Role`. Hosted environments should set
