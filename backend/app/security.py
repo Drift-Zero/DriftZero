@@ -12,11 +12,75 @@ from threading import Lock
 from fastapi import Request, Response, status
 from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
+from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from app.config import Settings
 from app.schemas import ActorRole
 
 _SAFE_ACTOR = re.compile(r"^[A-Za-z0-9][A-Za-z0-9@._:+/-]{0,119}$")
+
+
+class _RequestTooLarge(Exception):
+    pass
+
+
+class RequestBodyLimitMiddleware:
+    """Enforce the body limit while streaming, including chunked requests."""
+
+    def __init__(self, app: ASGIApp, *, max_bytes: int) -> None:
+        self.app = app
+        self.max_bytes = max_bytes
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        header_response = self._content_length_rejection(scope)
+        if header_response is not None:
+            await header_response(scope, receive, send)
+            return
+
+        received = 0
+
+        async def limited_receive() -> Message:
+            nonlocal received
+            message = await receive()
+            if message["type"] == "http.request":
+                received += len(message.get("body", b""))
+                if received > self.max_bytes:
+                    raise _RequestTooLarge
+            return message
+
+        try:
+            await self.app(scope, limited_receive, send)
+        except _RequestTooLarge:
+            await self._too_large_response()(scope, receive, send)
+
+    def _content_length_rejection(self, scope: Scope) -> Response | None:
+        raw_value = next(
+            (value for key, value in scope["headers"] if key == b"content-length"),
+            None,
+        )
+        if raw_value is None:
+            return None
+        try:
+            length = int(raw_value)
+        except ValueError:
+            return JSONResponse(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                content={"error": "invalid_request", "detail": "Invalid Content-Length."},
+            )
+        return self._too_large_response() if length > self.max_bytes else None
+
+    def _too_large_response(self) -> JSONResponse:
+        return JSONResponse(
+            status_code=status.HTTP_413_CONTENT_TOO_LARGE,
+            content={
+                "error": "request_too_large",
+                "detail": f"Request body exceeds the configured limit of {self.max_bytes} bytes.",
+            },
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -47,8 +111,8 @@ class SecurityMiddleware(BaseHTTPMiddleware):
         request: Request,
         call_next: RequestResponseEndpoint,
     ) -> Response:
-        response = self._reject_oversized_request(request)
-        if response is None and self._is_api_request(request):
+        response = None
+        if self._is_api_request(request):
             response = self._authenticate_api_request(request)
         if response is None and self._is_rate_limited(request):
             response = JSONResponse(
@@ -63,30 +127,6 @@ class SecurityMiddleware(BaseHTTPMiddleware):
             response = await call_next(request)
         self._apply_security_headers(request, response)
         return response
-
-    def _reject_oversized_request(self, request: Request) -> Response | None:
-        content_length = request.headers.get("content-length")
-        if not content_length:
-            return None
-        try:
-            length = int(content_length)
-        except ValueError:
-            return JSONResponse(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                content={"error": "invalid_request", "detail": "Invalid Content-Length."},
-            )
-        if length <= self.settings.api_max_request_bytes:
-            return None
-        return JSONResponse(
-            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-            content={
-                "error": "request_too_large",
-                "detail": (
-                    "Request body exceeds the configured limit of "
-                    f"{self.settings.api_max_request_bytes} bytes."
-                ),
-            },
-        )
 
     def _is_api_request(self, request: Request) -> bool:
         return request.url.path == self.settings.api_prefix or request.url.path.startswith(
