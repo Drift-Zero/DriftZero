@@ -1,0 +1,70 @@
+[
+  {
+    "name": "Examination fee",
+    "academic_year": "2026-2027",
+    "amount_inr": 2500,
+    "payment_deadline": "10 September 2026",
+    "late_payment_deadline": "15 September 2026",
+    "late_fee_inr": 500,
+    "payment_portal": "Student ERP",
+    "refundable": false
+  },
+  {
+    "name": "Semester registration",
+    "semester": "Autumn 2026",
+    "registration_opens": "1 August 2026",
+    "registration_closes": "12 August 2026",
+    "minimum_attendance_percent": 75,
+    "advisor_approval_required": true
+  },
+  {
+    "name": "Library borrowing",
+    "undergraduate_book_limit": 5,
+    "postgraduate_book_limit": 8,
+    "faculty_book_limit": 12,
+    "loan_period_days": 21,
+    "renewal_limit": 2,
+    "overdue_fee_inr_per_day": 5
+  },
+  {
+    "name": "Campus hostel",
+    "application_deadline": "20 July 2026",
+    "annual_fee_inr": 85000,
+    "security_deposit_inr": 10000,
+    "mess_included": true,
+    "check_in_date": "25 July 2026"
+  },
+  {
+    "name": "Merit scholarship",
+    "minimum_cgpa": 8.5,
+    "minimum_attendance_percent": 80,
+    "tuition_waiver_percent": 25,
+    "application_deadline": "30 August 2026",
+    "active_backlogs_allowed": false
+  },
+  {
+    "name": "Placement eligibility",
+    "minimum_cgpa": 7.0,
+    "maximum_active_backlogs": 0,
+    "minimum_attendance_percent": 75,
+    "resume_submission_deadline": "5 September 2026",
+    "preplacement_training_required": true
+  },
+  {
+    "name": "Student support desk",
+    "working_days": "Monday to Friday",
+    "opening_time": "09:00",
+    "closing_time": "17:00",
+    "email": "support@example.edu",
+    "phone_extension": 204,
+    "location": "Administration Building, Ground Floor"
+  },
+  {
+    "name": "Medical centre",
+    "weekday_hours": "08:00 to 20:00",
+    "weekend_hours": "10:00 to 16:00",
+    "emergency_support_available": true,
+    "consultation_fee_inr": 0,
+    "location": "Campus Block C"
+  }
+]
