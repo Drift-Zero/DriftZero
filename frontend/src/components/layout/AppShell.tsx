@@ -27,7 +27,9 @@ export function AppShell({ children }: { children: ReactNode }) {
         </nav>
         <div className="sidebar-bottom">
           <div className="connection-pill"><span className={`status-dot ${connection}`} /> {connectionLabel}</div>
-          <button className="nav-link settings-link" type="button"><Settings size={17} /><span>Settings</span></button>
+          {/* No settings view exists yet. Left visible but inert rather than offering a
+              hover affordance and a tab stop that lead nowhere. */}
+          <button className="nav-link settings-link" type="button" disabled title="Settings are not available in this build"><Settings size={17} /><span>Settings</span></button>
           <div className="workspace"><span>DZ</span><div><strong>DriftZero</strong><small>Production workspace</small></div></div>
         </div>
       </aside>
