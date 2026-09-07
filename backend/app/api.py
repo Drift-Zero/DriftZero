@@ -66,7 +66,15 @@ router = APIRouter()
 
 def get_session(request: Request) -> Iterator[Session]:
     database: Database = request.app.state.database
-    yield from database.session()
+    with database.session_factory() as session:
+        principal = getattr(request.state, "principal", None)
+        if principal is not None:
+            session.info["tenant_id"] = principal.tenant_id
+        try:
+            yield session
+        except Exception:
+            session.rollback()
+            raise
 
 
 def get_service(request: Request) -> DriftZeroService:
