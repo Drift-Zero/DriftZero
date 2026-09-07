@@ -1,5 +1,5 @@
 import { apiRequest,recoveryActor,recoveryHeaders,recoveryRole } from './client'
-import type { ApiAlertFeed,ApiAlertRule,ApiAlertRuleInput,ApiAuditEvent,ApiDiagnosis,ApiGroqCatalog,ApiGroqEvaluation,ApiGroqEvaluationProfile,ApiHealthTimeline,ApiIncident,ApiModel,ApiRecovery,ApiRecoveryCommand } from './types'
+import type { ApiAlertFeed,ApiAlertRule,ApiAlertRuleInput,ApiAuditEvent,ApiDiagnosis,ApiEvidenceHit,ApiEvidenceSource,ApiGroqCatalog,ApiGroqEvaluation,ApiGroqEvaluationProfile,ApiHealthTimeline,ApiIncident,ApiModel,ApiRecovery,ApiRecoveryCommand } from './types'
 const v1='/api/v1'
 const actor=()=>({actor:recoveryActor(),role:recoveryRole()})
 const send=(method:string,body:Record<string,unknown>):RequestInit=>({method,headers:recoveryHeaders(),body:JSON.stringify({...actor(),...body})})
@@ -32,4 +32,9 @@ export const api={
 
   updateModel:(modelId:string,patch:{name?:string;provider?:string;environment?:string;description?:string|null;retention_days?:number})=>apiRequest<ApiModel>(`${v1}/models/${modelId}`,send('PATCH',{...patch})),
   setModelLifecycle:(modelId:string,status:ApiModel['status'])=>apiRequest<ApiModel>(`${v1}/models/${modelId}/lifecycle`,mutate({status})),
+
+  evidenceSources:(modelId:string)=>apiRequest<ApiEvidenceSource[]>(`${v1}/models/${modelId}/evidence-sources`),
+  importEvidence:(modelId:string,payload:{filename:string;name?:string;media_type?:string;content_base64:string;use_llm:boolean;actor:string})=>apiRequest<ApiEvidenceSource>(`${v1}/models/${modelId}/evidence-sources/import`,send('POST',{...payload})),
+  reviewEvidence:(sourceId:string,status:'approved'|'rejected'|'retired',reason?:string)=>apiRequest<ApiEvidenceSource>(`${v1}/evidence-sources/${sourceId}/review`,mutate({status,...(reason?{reason}:{})})),
+  searchEvidence:(modelId:string,query:string)=>apiRequest<ApiEvidenceHit[]>(`${v1}/models/${modelId}/evidence/search`,send('POST',{query,limit:5})),
 }

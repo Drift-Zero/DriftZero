@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react'
-import { Activity, BellRing, Boxes, CircleGauge, Radio, Settings } from 'lucide-react'
+import { Activity, BellRing, Boxes, CircleGauge, Database, Radio, Settings } from 'lucide-react'
 import { NavLink } from 'react-router-dom'
 import { useDashboard } from '../../context/DashboardContext'
 import { useSettings } from '../../context/SettingsContext'
@@ -10,6 +10,7 @@ const links = [
   { to: '/models', label: 'Models', icon: Boxes },
   { to: '/incidents', label: 'Incidents', icon: BellRing },
   { to: '/events', label: 'Events', icon: Radio },
+  { to: '/evidence', label: 'Evidence', icon: Database },
 ]
 
 export function AppShell({ children }: { children: ReactNode }) {

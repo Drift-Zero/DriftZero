@@ -1,0 +1,33 @@
+{
+  "source": {
+    "id": "catalog-snapshot-2026-09-06",
+    "version": "6 Sep snapshot",
+    "updated": "6 Sep 2026"
+  },
+  "products": [
+    {
+      "id": "nova-headphones",
+      "name": "Nova ANC Headphones",
+      "category": "electronics",
+      "price_usd": 149,
+      "stock": 18,
+      "description": "Wireless over-ear headphones with adaptive noise cancellation."
+    },
+    {
+      "id": "arc-speaker",
+      "name": "Arc Mini Speaker",
+      "category": "electronics",
+      "price_usd": 79,
+      "stock": 0,
+      "description": "Portable waterproof speaker with room-filling sound."
+    },
+    {
+      "id": "stride-runner",
+      "name": "Stride Runner",
+      "category": "fitness",
+      "price_usd": 118,
+      "stock": 12,
+      "description": "Responsive daily running shoe for road training."
+    }
+  ]
+}
