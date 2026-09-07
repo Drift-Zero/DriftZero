@@ -15,7 +15,7 @@ from sqlalchemy.schema import CreateTable
 from alembic import command
 from app.db import models  # noqa: F401  (registers every table)
 from app.db.base import Base
-from app.migrations import upgrade_database
+from app.migrations import _migration_root, upgrade_database
 
 BACKEND_ROOT = Path(__file__).resolve().parents[1]
 
@@ -69,6 +69,17 @@ def test_startup_migration_creates_a_fresh_database(tmp_path: Path) -> None:
 
     assert set(Base.metadata.tables) <= tables
     assert current == "0010"
+
+
+def test_migration_root_uses_deployment_working_directory(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    (tmp_path / "alembic.ini").touch()
+    (tmp_path / "alembic").mkdir()
+    (tmp_path / "alembic" / "env.py").touch()
+    monkeypatch.chdir(tmp_path)
+
+    assert _migration_root() == tmp_path
 
 
 def test_startup_migration_upgrades_unversioned_revision_six(tmp_path: Path) -> None:

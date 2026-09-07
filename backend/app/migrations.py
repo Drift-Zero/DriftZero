@@ -12,12 +12,21 @@ from alembic import command
 from app.config import Settings
 from app.db.session import normalize_database_url
 
-BACKEND_ROOT = Path(__file__).resolve().parents[1]
+
+def _migration_root() -> Path:
+    configured_root = os.getenv("DRIFTZERO_MIGRATION_ROOT")
+    candidates = [Path(configured_root)] if configured_root else []
+    candidates.extend((Path.cwd(), Path(__file__).resolve().parents[1]))
+    for candidate in candidates:
+        if (candidate / "alembic.ini").is_file() and (candidate / "alembic" / "env.py").is_file():
+            return candidate
+    raise RuntimeError("Could not locate the DriftZero Alembic migration files.")
 
 
 def _alembic_config() -> Config:
-    config = Config(str(BACKEND_ROOT / "alembic.ini"))
-    config.set_main_option("script_location", str(BACKEND_ROOT / "alembic"))
+    migration_root = _migration_root()
+    config = Config(str(migration_root / "alembic.ini"))
+    config.set_main_option("script_location", str(migration_root / "alembic"))
     return config
 
 
