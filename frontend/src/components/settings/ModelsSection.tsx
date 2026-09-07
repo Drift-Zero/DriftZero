@@ -5,6 +5,7 @@ import type { ApiModel } from '../../api/types'
 import { useDashboard } from '../../context/DashboardContext'
 import { labelize } from '../../utils/format'
 import { Note,SelectField,SettingsPanel } from './controls'
+import { GroqWorkbench } from './GroqWorkbench'
 
 const LIFECYCLE:Array<ApiModel['status']>=['active','paused','retired']
 
@@ -59,6 +60,7 @@ function ModelRegistry(){
   }
 
   return <>
+    <GroqWorkbench models={models} onImported={reload}/>
     {error&&<Note tone="danger">{error}</Note>}
     {loading&&<p className="settings-loading"><Loader2 size={14} className="spin"/>Loading models…</p>}
     {!loading&&!models.length&&!error&&<Note>No models are registered yet. Register one through the API or a telemetry integration.</Note>}

@@ -1,5 +1,5 @@
 import { apiRequest,recoveryActor,recoveryHeaders,recoveryRole } from './client'
-import type { ApiAlertFeed,ApiAlertRule,ApiAlertRuleInput,ApiAuditEvent,ApiDiagnosis,ApiHealthTimeline,ApiIncident,ApiModel,ApiRecovery,ApiRecoveryCommand } from './types'
+import type { ApiAlertFeed,ApiAlertRule,ApiAlertRuleInput,ApiAuditEvent,ApiDiagnosis,ApiGroqCatalog,ApiGroqEvaluation,ApiGroqEvaluationProfile,ApiHealthTimeline,ApiIncident,ApiModel,ApiRecovery,ApiRecoveryCommand } from './types'
 const v1='/api/v1'
 const actor=()=>({actor:recoveryActor(),role:recoveryRole()})
 const send=(method:string,body:Record<string,unknown>):RequestInit=>({method,headers:recoveryHeaders(),body:JSON.stringify({...actor(),...body})})
@@ -7,6 +7,9 @@ const mutate=(body:Record<string,unknown>):RequestInit=>send('POST',body)
 export const api={
   healthcheck:()=>apiRequest<{status:string;environment:string}>('/healthz'),
   models:()=>apiRequest<ApiModel[]>(`${v1}/models`),
+  groqModels:()=>apiRequest<ApiGroqCatalog>(`${v1}/integrations/groq/models`),
+  importGroqModel:(body:{name:string;model_identifier:string;environment:string;description?:string;prompt_version:string})=>apiRequest<ApiModel>(`${v1}/integrations/groq/models`,mutate(body)),
+  evaluateGroqModel:(modelId:string,body:{prompt:string;repeat:number;temperature:number;profile:ApiGroqEvaluationProfile})=>apiRequest<ApiGroqEvaluation>(`${v1}/models/${modelId}/evaluations/groq`,mutate(body)),
   health:(modelId:string)=>apiRequest<ApiHealthTimeline>(`${v1}/models/${modelId}/health`),
   incidents:(modelId:string)=>apiRequest<ApiIncident[]>(`${v1}/models/${modelId}/incidents?limit=100`),
   diagnosis:(modelId:string)=>apiRequest<ApiDiagnosis>(`${v1}/models/${modelId}/diagnoses/latest`),

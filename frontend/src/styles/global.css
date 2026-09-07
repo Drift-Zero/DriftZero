@@ -156,6 +156,18 @@ nav { display:flex; flex-direction:column; gap:4px; }
 .retention-input small{color:#707882;font-size:11px}
 .retention-input .button{margin-left:0;padding:7px 10px}
 
+.groq-workbench{margin-top:16px;padding:15px;border:1px solid #284b3d;border-radius:10px;background:linear-gradient(145deg,rgba(19,39,31,.55),rgba(13,15,18,.95) 58%)}
+.groq-heading{display:flex;align-items:flex-start;gap:10px}.groq-heading .settings-icon{width:32px;height:32px;display:grid;place-items:center;border:1px solid #2b513f;border-radius:8px;background:#10251c;color:var(--green)}
+.groq-heading strong{font-size:13px}.groq-heading p{margin:4px 0 0;color:#78818b;font-size:11px;line-height:1.5}
+.groq-step{margin-top:14px;padding-top:14px;border-top:1px solid #23342d}.groq-step-title{display:flex;align-items:center;gap:8px;margin-bottom:11px}.groq-step-title>span{width:20px;height:20px;display:grid;place-items:center;border:1px solid #34654f;border-radius:50%;color:var(--green);font:500 9px DM Mono,monospace}.groq-step-title strong{font-size:12px}.groq-step>small{display:block;margin-top:7px;color:#68756f;font-size:10px}
+.groq-form-row{display:grid;grid-template-columns:auto minmax(180px,1fr) minmax(160px,1fr) auto;gap:8px}.groq-form-row .settings-select,.groq-form-row .settings-input{min-width:0;width:100%}
+.groq-step>label,.groq-profile-grid label,.groq-run-row label{display:flex;flex-direction:column;gap:6px;margin-top:9px}.groq-step label>span,.groq-profile-grid label>span,.groq-run-row label>span{color:#7d868f;font-size:10px}.groq-step>label .settings-select,.groq-step>label .settings-input{width:100%}
+.groq-textarea{min-height:78px;resize:vertical;font-family:DM Mono,monospace;line-height:1.5}.groq-profile-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}.groq-profile-grid textarea{min-height:62px;resize:vertical;font:400 10px DM Mono,monospace}
+.groq-run-row{display:flex;align-items:flex-end;gap:12px;margin-top:10px}.groq-run-row label{margin:0}.groq-run-row .groq-check{flex-direction:row;align-items:center;padding-bottom:9px;color:#9ba39e;font-size:11px}.groq-check input{accent-color:var(--green)}.groq-run-row .button{margin-left:auto}
+.groq-result{margin-top:14px;padding:14px;border:1px solid #2c634c;border-radius:9px;background:#0e1b16}.groq-result-head{display:flex;justify-content:space-between;align-items:center;gap:12px}.groq-result-head>div:first-child{display:flex;flex-direction:column;gap:5px}.groq-result-head>div:first-child span{color:#73817a;font-size:9px;text-transform:uppercase}.groq-result-head>div:first-child strong{font:500 28px DM Mono,monospace;color:#dff8eb}.groq-result-head>div:last-child{display:flex;align-items:center;gap:6px;color:#78b998;font:400 9px DM Mono,monospace}
+.groq-metric-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(90px,1fr));gap:7px;margin-top:12px}.groq-metric-grid>div{display:flex;flex-direction:column;gap:5px;padding:9px;border:1px solid #223a30;border-radius:7px;background:#101813}.groq-metric-grid span{color:#707f77;font-size:9px}.groq-metric-grid strong{font:500 14px DM Mono,monospace}
+.groq-result details{margin-top:11px;border-top:1px solid #223a30;padding-top:10px}.groq-result summary{cursor:pointer;color:#91a39a;font-size:10px}.groq-response{margin-top:9px;padding:9px;border:1px solid #21342b;border-radius:7px;background:#0c120f}.groq-response small{color:#687a70;font:400 8px DM Mono,monospace}.groq-response p{margin:6px 0 0;color:#bdc8c2;font-size:11px;line-height:1.55;white-space:pre-wrap}.groq-result pre{max-height:250px;overflow:auto;margin:9px 0 0;padding:9px;border-radius:7px;background:#090d0b;color:#7e9d8d;font:400 9px DM Mono,monospace}
+
 .settings-textarea{display:block;margin-top:14px}
 .settings-textarea>span{display:block;margin-bottom:7px;color:#8d96a0;font-size:11.5px}
 .settings-textarea textarea{width:100%;border:1px solid #292e34;background:#101317;color:#c3c9d0;border-radius:8px;padding:11px 12px;font:400 11.5px DM Mono,monospace;line-height:1.6;resize:vertical}
@@ -182,4 +194,6 @@ nav { display:flex; flex-direction:column; gap:4px; }
   .rule-list li{grid-template-columns:minmax(0,1fr) auto auto;row-gap:10px}
   .model-admin-list li{grid-template-columns:minmax(0,1fr);gap:14px}
   .diagnostics{grid-template-columns:minmax(0,1fr)}
+  .groq-form-row,.groq-profile-grid{grid-template-columns:minmax(0,1fr)}
+  .groq-run-row{align-items:stretch;flex-direction:column}.groq-run-row .button{margin-left:0}
 }
