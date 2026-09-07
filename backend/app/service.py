@@ -3459,6 +3459,7 @@ class DriftZeroService:
         for item in payloads:
             trace = Trace(
                 model_id=model_id,
+                tenant_id=self._tenant_id(session),
                 occurred_at=item.occurred_at,
                 request_id=item.request_id,
                 question_redacted=redact(item.question),
@@ -3680,6 +3681,7 @@ class DriftZeroService:
         session.add(
             AuditEvent(
                 model_id=model_id,
+                tenant_id=DriftZeroService._tenant_id(session),
                 event_type=event_type,
                 actor=actor,
                 actor_type=DriftZeroService._actor_type(actor),
