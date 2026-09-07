@@ -22,6 +22,26 @@ mode the design exists to prevent.
 
 No new HTTP dependency: providers use `urllib`, matching `GroqClient`. Only `pypdf` is added.
 
+## Status
+
+**Delivered (steps 1, 2, 5, 7 and the explanation view):** six tenant-scoped tables +
+migration `0013`; the deterministic metric formulas; deterministic claim comparison;
+approval-gated evidence retrieval; the offline claim extractor; the evaluation pipeline;
+the ShopAssist corpus; nine API endpoints; and the dashboard Verification page.
+
+**Not yet built:** file/website import behind the new source model (the teammate's
+`EvidencePage` covers PDF/CSV upload against *their* `EvidenceSource` tables), the Gemini and
+Groq verifier wiring, health-snapshot integration, Docker/CI updates.
+
+### Overlap to resolve with the team
+
+A teammate shipped `EvidenceSource`/`EvidenceChunk` plus an import-and-review UI in
+`0012_evidence_ingestion`. That covers ingestion; this work covers claim extraction,
+verification and scoring. Two parallel source tables now exist. The obvious convergence is to
+point `verification/retrieval.py` at their approved chunks -- it needs `structured_facts` on
+those rows for deterministic comparison to fire, otherwise claims fall through to the LLM
+verifier.
+
 ## Build order
 
 **1. Foundation** — six tenant-scoped tables (`VerificationSource`, `CorpusVersion`,

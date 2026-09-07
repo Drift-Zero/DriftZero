@@ -6,9 +6,11 @@ from collections.abc import Iterator
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Header, Query, Request, Response, status
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.database import Database
+from app.db.models import EvaluationRun, VerificationSource
 from app.recovery_auth import recovery_principal
 from app.schemas import (
     ActorRequest,
@@ -22,8 +24,7 @@ from app.schemas import (
     AlertRuleUpdate,
     AlertState,
     AuditEventResponse,
-    AutomatedEvaluationRequest,
-    AutomatedEvaluationResponse,
+    ClaimImportance,
     ConnectionCheckResponse,
     ConnectionCreate,
     ConnectionCreatedResponse,
@@ -33,6 +34,9 @@ from app.schemas import (
     DiagnosisResponse,
     EvaluationFeedbackCreate,
     EvaluationFeedbackResponse,
+    EvaluationRequest,
+    EvaluationResponse,
+    EvaluationSummaryResponse,
     GroqEvaluationRequest,
     GroqEvaluationResponse,
     GroqModelCatalogResponse,
@@ -63,9 +67,30 @@ from app.schemas import (
     StabilityRunRequest,
     StabilityTestResponse,
     TelemetryCreate,
+    VerificationChunkResponse,
     VerificationRunResponse,
+    VerificationSourceDecision,
+    VerificationSourceResponse,
 )
-from app.service import DriftZeroService
+from app.service import DriftZeroService, InvalidTransition, ResourceNotFound
+from app.verification.api_support import (
+    evaluation_claims,
+    evaluation_summary,
+    evidence_response,
+    groundedness_breakdown,
+    quality_breakdown,
+    source_response,
+    stored_evaluation_claims,
+)
+from app.verification.metrics import ClaimOutcome, score_groundedness
+from app.verification.pipeline import evaluate_response
+from app.verification.sources import (
+    SourceError,
+    approve_source,
+    reject_source,
+    retire_source,
+    seed_shopassist_corpus,
+)
 
 router = APIRouter()
 
@@ -918,3 +943,285 @@ def list_forecasts(
     """Stored predictions and, once their horizon passed, what actually happened."""
 
     return service.list_forecasts(session, model_id, limit=limit)
+
+
+# --------------------------------------------------------------------------- #
+# Verification sources and evidence-grounded evaluation
+# --------------------------------------------------------------------------- #
+
+
+def _require_source(
+    session: Session, service: DriftZeroService, source_id: str
+) -> VerificationSource:
+    """Load a source, refusing to cross the tenant boundary."""
+
+    tenant_id = service._tenant_id(session)
+    source = session.get(VerificationSource, source_id)
+    if source is None or source.tenant_id != tenant_id:
+        raise ResourceNotFound("Verification source not found.")
+    return source
+
+
+@router.get(
+    "/verification-sources",
+    response_model=list[VerificationSourceResponse],
+    tags=["verify"],
+)
+def list_verification_sources(
+    session: SessionDependency,
+    service: ServiceDependency,
+) -> list[VerificationSourceResponse]:
+    """Every trusted source this tenant has connected, with version history."""
+
+    tenant_id = service._tenant_id(session)
+    sources = session.scalars(
+        select(VerificationSource)
+        .where(VerificationSource.tenant_id == tenant_id)
+        .order_by(VerificationSource.created_at)
+    ).all()
+    return [source_response(session, source) for source in sources]
+
+
+@router.post(
+    "/verification-sources/demo",
+    response_model=list[VerificationSourceResponse],
+    status_code=status.HTTP_201_CREATED,
+    tags=["verify"],
+)
+def load_demo_verification_source(
+    session: SessionDependency,
+    service: ServiceDependency,
+) -> list[VerificationSourceResponse]:
+    """Load the built-in ShopAssist corpus, awaiting review.
+
+    Deliberately not approved on arrival: a source has to be reviewed before
+    anything can be verified against it, which is the point the demo makes.
+    """
+
+    tenant_id = service._tenant_id(session)
+    current, retired = seed_shopassist_corpus(session, tenant_id=tenant_id, approve=False)
+    service._audit(
+        session,
+        None,
+        "verification.source_imported",
+        "operator",
+        {"source_id": current.id, "name": current.name},
+    )
+    session.commit()
+    return [source_response(session, current), source_response(session, retired)]
+
+
+@router.get(
+    "/verification-sources/{source_id}",
+    response_model=VerificationSourceResponse,
+    tags=["verify"],
+)
+def get_verification_source(
+    source_id: str,
+    session: SessionDependency,
+    service: ServiceDependency,
+) -> VerificationSourceResponse:
+    return source_response(session, _require_source(session, service, source_id))
+
+
+@router.get(
+    "/verification-sources/{source_id}/evidence",
+    response_model=list[VerificationChunkResponse],
+    tags=["verify"],
+)
+def get_verification_evidence(
+    source_id: str,
+    session: SessionDependency,
+    service: ServiceDependency,
+    include_retired: bool = False,
+) -> list[VerificationChunkResponse]:
+    """The passages an operator reads before approving a source."""
+
+    source = _require_source(session, service, source_id)
+    return evidence_response(session, source, include_retired=include_retired)
+
+
+@router.post(
+    "/verification-sources/{source_id}/approve",
+    response_model=VerificationSourceResponse,
+    tags=["verify"],
+)
+def approve_verification_source(
+    source_id: str,
+    payload: VerificationSourceDecision,
+    session: SessionDependency,
+    service: ServiceDependency,
+) -> VerificationSourceResponse:
+    source = _require_source(session, service, source_id)
+    try:
+        approve_source(session, source=source, actor=payload.actor)
+    except SourceError as exc:
+        raise InvalidTransition(str(exc)) from exc
+    service._audit(
+        session,
+        None,
+        "verification.source_approved",
+        payload.actor,
+        {"source_id": source.id, "name": source.name, "reason": payload.reason},
+    )
+    session.commit()
+    return source_response(session, source)
+
+
+@router.post(
+    "/verification-sources/{source_id}/reject",
+    response_model=VerificationSourceResponse,
+    tags=["verify"],
+)
+def reject_verification_source(
+    source_id: str,
+    payload: VerificationSourceDecision,
+    session: SessionDependency,
+    service: ServiceDependency,
+) -> VerificationSourceResponse:
+    source = _require_source(session, service, source_id)
+    reject_source(session, source=source, actor=payload.actor)
+    service._audit(
+        session,
+        None,
+        "verification.source_rejected",
+        payload.actor,
+        {"source_id": source.id, "reason": payload.reason},
+    )
+    session.commit()
+    return source_response(session, source)
+
+
+@router.post(
+    "/verification-sources/{source_id}/retire",
+    response_model=VerificationSourceResponse,
+    tags=["verify"],
+)
+def retire_verification_source(
+    source_id: str,
+    payload: VerificationSourceDecision,
+    session: SessionDependency,
+    service: ServiceDependency,
+) -> VerificationSourceResponse:
+    """Retire every version. The content stays readable; it stops being truth."""
+
+    source = _require_source(session, service, source_id)
+    retire_source(session, source=source, actor=payload.actor)
+    service._audit(
+        session,
+        None,
+        "verification.source_retired",
+        payload.actor,
+        {"source_id": source.id, "reason": payload.reason},
+    )
+    session.commit()
+    return source_response(session, source)
+
+
+@router.post(
+    "/models/{model_id}/evaluate",
+    response_model=EvaluationResponse,
+    status_code=status.HTTP_201_CREATED,
+    tags=["verify"],
+)
+def evaluate_model_response(
+    model_id: str,
+    payload: EvaluationRequest,
+    session: SessionDependency,
+    service: ServiceDependency,
+) -> EvaluationResponse:
+    """Verify one response against approved evidence and record the reasoning."""
+
+    service._require_model(session, model_id)
+    tenant_id = service._tenant_id(session)
+    result = evaluate_response(
+        session,
+        tenant_id=tenant_id,
+        model_id=model_id,
+        question=payload.question,
+        answer=payload.answer,
+        trace_id=payload.trace_id,
+    )
+    run = session.get(EvaluationRun, result.run_id)
+    service._audit(
+        session,
+        model_id,
+        "verification.evaluated",
+        "evaluator",
+        {
+            "evaluation_id": result.run_id,
+            "groundedness": result.groundedness.groundedness,
+            "claims": len(result.claims),
+        },
+    )
+    session.commit()
+    return EvaluationResponse(
+        id=result.run_id,
+        model_id=model_id,
+        status=run.status,
+        evaluator_provider=result.evaluator_provider,
+        evaluator_model=result.evaluator_model,
+        extractor_version=run.extractor_version,
+        verifier_version=run.verifier_version,
+        corpus_versions=result.corpus_versions,
+        created_at=run.created_at,
+        completed_at=run.completed_at,
+        claims=evaluation_claims(result),
+        groundedness=groundedness_breakdown(result.groundedness),
+        quality=quality_breakdown(result.quality),
+    )
+
+
+@router.get(
+    "/evaluations/{evaluation_id}",
+    response_model=EvaluationResponse,
+    tags=["verify"],
+)
+def get_evaluation(
+    evaluation_id: str,
+    session: SessionDependency,
+    service: ServiceDependency,
+) -> EvaluationResponse:
+    """The stored reasoning chain behind a displayed metric."""
+
+    tenant_id = service._tenant_id(session)
+    run = session.get(EvaluationRun, evaluation_id)
+    if run is None or run.tenant_id != tenant_id:
+        raise ResourceNotFound("Evaluation not found.")
+
+    claims = stored_evaluation_claims(session, run)
+    outcomes = [
+        ClaimOutcome(importance=ClaimImportance(claim.importance), verdict=claim.verdict)
+        for claim in claims
+    ]
+    return EvaluationResponse(
+        id=run.id,
+        model_id=run.model_id,
+        status=run.status,
+        evaluator_provider=run.evaluator_provider,
+        evaluator_model=run.evaluator_model,
+        extractor_version=run.extractor_version,
+        verifier_version=run.verifier_version,
+        corpus_versions=run.corpus_versions or [],
+        created_at=run.created_at,
+        completed_at=run.completed_at,
+        error=run.error,
+        claims=claims,
+        groundedness=groundedness_breakdown(score_groundedness(outcomes)),
+    )
+
+
+@router.get(
+    "/models/{model_id}/evaluation-summary",
+    response_model=EvaluationSummaryResponse,
+    tags=["verify"],
+)
+def get_evaluation_summary(
+    model_id: str,
+    session: SessionDependency,
+    service: ServiceDependency,
+) -> EvaluationSummaryResponse:
+    """Window aggregate. ``meets_minimum`` gates any health claim built on it."""
+
+    service._require_model(session, model_id)
+    return evaluation_summary(session, model_id=model_id)

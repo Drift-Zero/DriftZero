@@ -1,12 +1,12 @@
-"""Add the verification corpus and claim-evaluation tables as revision 0013.
+"""Add the verification corpus and claim-evaluation tables.
 
-Purely additive: six new tables for trusted sources, their immutable corpus
-versions, retrievable evidence, and the claim/verdict record behind every
-groundedness figure. No existing table is altered.
+Purely additive: trusted sources, their immutable corpus versions, retrievable
+chunks, and the claim/verdict record behind every groundedness figure. No
+existing table is altered.
 
 Revision ID: 0013
 Revises: 0012
-Create Date: 2026-09-07 15:27:33.002865
+Create Date: 2026-09-07 17:52:47.820914
 """
 
 from __future__ import annotations
@@ -25,12 +25,7 @@ depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:
-    """Create the six verification tables, skipping any a legacy database already has.
-
-    Databases created by an early ``create_all`` may already carry these tables while
-    still being stamped at an older revision, so each block is guarded -- the same
-    approach revision 0011 takes.
-    """
+    """Create the verification tables, skipping any a legacy database already has."""
 
     existing = set(sa.inspect(op.get_bind()).get_table_names())
 
@@ -79,8 +74,8 @@ def upgrade() -> None:
             batch_op.create_index(batch_op.f('ix_corpus_versions_retired_at'), ['retired_at'], unique=False)
             batch_op.create_index(batch_op.f('ix_corpus_versions_source_id'), ['source_id'], unique=False)
 
-    if "verification_evidence_chunks" not in existing:
-        op.create_table('verification_evidence_chunks',
+    if "verification_chunks" not in existing:
+        op.create_table('verification_chunks',
         sa.Column('corpus_version_id', sa.String(length=36), nullable=False),
         sa.Column('text', sa.Text(), nullable=False),
         sa.Column('structured_facts', sa.JSON().with_variant(postgresql.JSONB(astext_type=sa.Text()), 'postgresql'), nullable=False),
@@ -88,12 +83,12 @@ def upgrade() -> None:
         sa.Column('token_count', sa.Integer(), nullable=False),
         sa.Column('chunk_metadata', sa.JSON().with_variant(postgresql.JSONB(astext_type=sa.Text()), 'postgresql'), nullable=False),
         sa.Column('id', sa.String(length=36), nullable=False),
-        sa.ForeignKeyConstraint(['corpus_version_id'], ['corpus_versions.id'], name=op.f('fk_verification_evidence_chunks_corpus_version_id'), ondelete='CASCADE'),
-        sa.PrimaryKeyConstraint('id', name=op.f('pk_verification_evidence_chunks'))
+        sa.ForeignKeyConstraint(['corpus_version_id'], ['corpus_versions.id'], name=op.f('fk_verification_chunks_corpus_version_id'), ondelete='CASCADE'),
+        sa.PrimaryKeyConstraint('id', name=op.f('pk_verification_chunks'))
         )
-        with op.batch_alter_table('verification_evidence_chunks', schema=None) as batch_op:
-            batch_op.create_index(batch_op.f('ix_verification_evidence_chunks_corpus_version_id'), ['corpus_version_id'], unique=False)
-            batch_op.create_index('ix_verification_evidence_chunks_version_sequence', ['corpus_version_id', 'sequence'], unique=False)
+        with op.batch_alter_table('verification_chunks', schema=None) as batch_op:
+            batch_op.create_index(batch_op.f('ix_verification_chunks_corpus_version_id'), ['corpus_version_id'], unique=False)
+            batch_op.create_index('ix_verification_chunks_version_sequence', ['corpus_version_id', 'sequence'], unique=False)
 
     if "evaluation_runs" not in existing:
         op.create_table('evaluation_runs',
@@ -150,7 +145,7 @@ def upgrade() -> None:
         sa.Column('created_at', sa.DateTime(timezone=True), nullable=False),
         sa.Column('id', sa.String(length=36), nullable=False),
         sa.ForeignKeyConstraint(['claim_id'], ['extracted_claims.id'], name=op.f('fk_claim_verdicts_claim_id'), ondelete='CASCADE'),
-        sa.ForeignKeyConstraint(['evidence_chunk_id'], ['verification_evidence_chunks.id'], name=op.f('fk_claim_verdicts_evidence_chunk_id'), ondelete='SET NULL'),
+        sa.ForeignKeyConstraint(['evidence_chunk_id'], ['verification_chunks.id'], name=op.f('fk_claim_verdicts_evidence_chunk_id'), ondelete='SET NULL'),
         sa.PrimaryKeyConstraint('id', name=op.f('pk_claim_verdicts'))
         )
         with op.batch_alter_table('claim_verdicts', schema=None) as batch_op:
@@ -184,11 +179,11 @@ def downgrade() -> None:
             batch_op.drop_index(batch_op.f('ix_evaluation_runs_created_at'))
         op.drop_table('evaluation_runs')
 
-    if "verification_evidence_chunks" in existing:
-        with op.batch_alter_table('verification_evidence_chunks', schema=None) as batch_op:
-            batch_op.drop_index('ix_verification_evidence_chunks_version_sequence')
-            batch_op.drop_index(batch_op.f('ix_verification_evidence_chunks_corpus_version_id'))
-        op.drop_table('verification_evidence_chunks')
+    if "verification_chunks" in existing:
+        with op.batch_alter_table('verification_chunks', schema=None) as batch_op:
+            batch_op.drop_index('ix_verification_chunks_version_sequence')
+            batch_op.drop_index(batch_op.f('ix_verification_chunks_corpus_version_id'))
+        op.drop_table('verification_chunks')
 
     if "corpus_versions" in existing:
         with op.batch_alter_table('corpus_versions', schema=None) as batch_op:

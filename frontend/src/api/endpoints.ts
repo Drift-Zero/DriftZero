@@ -1,5 +1,5 @@
 import { apiRequest,recoveryActor,recoveryHeaders,recoveryRole } from './client'
-import type { ApiAlertFeed,ApiAlertRule,ApiAlertRuleInput,ApiAuditEvent,ApiAutomatedEvaluation,ApiDiagnosis,ApiEvidenceHit,ApiEvidenceSource,ApiGroqCatalog,ApiGroqEvaluation,ApiGroqEvaluationProfile,ApiHealthTimeline,ApiIncident,ApiModel,ApiModelConnection,ApiRecovery,ApiRecoveryCommand } from './types'
+import type { ApiEvaluation,ApiEvaluationSummary,ApiVerificationSource,ApiAlertFeed,ApiAlertRule,ApiAlertRuleInput,ApiAuditEvent,ApiDiagnosis,ApiEvidenceHit,ApiEvidenceSource,ApiGroqCatalog,ApiGroqEvaluation,ApiGroqEvaluationProfile,ApiHealthTimeline,ApiIncident,ApiModel,ApiRecovery,ApiRecoveryCommand } from './types'
 const v1='/api/v1'
 const actor=()=>({actor:recoveryActor(),role:recoveryRole()})
 const send=(method:string,body:Record<string,unknown>):RequestInit=>({method,headers:recoveryHeaders(),body:JSON.stringify({...actor(),...body})})
@@ -40,5 +40,10 @@ export const api={
   importEvidence:(modelId:string,payload:{filename:string;name?:string;media_type?:string;content_base64:string;use_llm:boolean;actor:string})=>apiRequest<ApiEvidenceSource>(`${v1}/models/${modelId}/evidence-sources/import`,send('POST',{...payload})),
   reviewEvidence:(sourceId:string,status:'approved'|'rejected'|'retired',reason?:string)=>apiRequest<ApiEvidenceSource>(`${v1}/evidence-sources/${sourceId}/review`,mutate({status,...(reason?{reason}:{})})),
   searchEvidence:(modelId:string,query:string)=>apiRequest<ApiEvidenceHit[]>(`${v1}/models/${modelId}/evidence/search`,send('POST',{query,limit:5})),
-  runAutomatedEvaluation:(modelId:string,body:{max_questions:number;variants_per_fact:number;latency_target_ms:number})=>apiRequest<ApiAutomatedEvaluation>(`${v1}/models/${modelId}/automated-evaluations`,mutate(body)),
+  verificationSources:()=>apiRequest<ApiVerificationSource[]>(`${v1}/verification-sources`),
+  loadDemoVerificationSource:()=>apiRequest<ApiVerificationSource[]>(`${v1}/verification-sources/demo`,send('POST',{})),
+  decideVerificationSource:(sourceId:string,decision:'approve'|'reject'|'retire',actor:string,reason?:string)=>apiRequest<ApiVerificationSource>(`${v1}/verification-sources/${sourceId}/${decision}`,send('POST',{actor,...(reason?{reason}:{})})),
+  evaluateResponse:(modelId:string,question:string,answer:string)=>apiRequest<ApiEvaluation>(`${v1}/models/${modelId}/evaluate`,send('POST',{question,answer})),
+  evaluation:(evaluationId:string)=>apiRequest<ApiEvaluation>(`${v1}/evaluations/${evaluationId}`),
+  evaluationSummary:(modelId:string)=>apiRequest<ApiEvaluationSummary>(`${v1}/models/${modelId}/evaluation-summary`),
 }

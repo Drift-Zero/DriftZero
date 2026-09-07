@@ -1313,10 +1313,10 @@ class CorpusVersion(IdMixin, Base):
     source_metadata: Mapped[dict[str, Any]] = mapped_column(default=dict)
 
     source: Mapped[VerificationSource] = relationship(back_populates="versions")
-    chunks: Mapped[list[VerificationEvidenceChunk]] = relationship(
+    chunks: Mapped[list[VerificationChunk]] = relationship(
         back_populates="corpus_version",
         cascade="all, delete-orphan",
-        order_by="VerificationEvidenceChunk.sequence",
+        order_by="VerificationChunk.sequence",
     )
 
     @property
@@ -1326,20 +1326,16 @@ class CorpusVersion(IdMixin, Base):
         return self.approved_at is not None and self.retired_at is None
 
 
-class VerificationEvidenceChunk(IdMixin, Base):
+class VerificationChunk(IdMixin, Base):
     """One retrievable passage, plus any structured facts parsed from it.
 
     ``structured_facts`` carries exact values (prices, windows, counts) so a
     numeric claim can be settled by comparison instead of by an opinion.
     """
 
-    __tablename__ = "verification_evidence_chunks"
+    __tablename__ = "verification_chunks"
     __table_args__ = (
-        sa.Index(
-            "ix_verification_evidence_chunks_version_sequence",
-            "corpus_version_id",
-            "sequence",
-        ),
+        sa.Index("ix_verification_chunks_version_sequence", "corpus_version_id", "sequence"),
     )
 
     corpus_version_id: Mapped[str] = mapped_column(
@@ -1430,8 +1426,7 @@ class ClaimVerdict(IdMixin, Base):
     )
     verdict: Mapped[ClaimVerdictValue] = mapped_column(CLAIM_VERDICT, index=True)
     evidence_chunk_id: Mapped[str | None] = mapped_column(
-        sa.String(36),
-        sa.ForeignKey("verification_evidence_chunks.id", ondelete="SET NULL"),
+        sa.String(36), sa.ForeignKey("verification_chunks.id", ondelete="SET NULL")
     )
     explanation: Mapped[str | None] = mapped_column(sa.Text())
     verifier_confidence: Mapped[float | None] = mapped_column()
