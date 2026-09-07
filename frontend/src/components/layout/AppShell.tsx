@@ -22,21 +22,34 @@ export function AppShell({ children }: { children: ReactNode }) {
   return (
     <div className="app-shell">
       <aside className="sidebar">
-        <div className="brand"><span className="brand-mark"><Activity size={17} /></span><span>DriftZero</span></div>
+        <div className="brand" aria-hidden="true"><span className="brand-mark"><Activity size={19} /></span></div>
         <nav aria-label="Primary navigation">
           {links.map(({ to, label, icon: Icon }) => (
-            <NavLink key={to} to={to} end={to === '/'} className={({ isActive }) => isActive ? 'nav-link active' : 'nav-link'}>
+            <NavLink key={to} to={to} end={to === '/'} title={label} aria-label={label} className={({ isActive }) => isActive ? 'nav-link active' : 'nav-link'}>
               <Icon size={17} strokeWidth={1.8} /><span>{label}</span>
             </NavLink>
           ))}
         </nav>
         <div className="sidebar-bottom">
-          <div className="connection-pill"><span className={`status-dot ${connection}`} /> {connectionLabel}</div>
-          <NavLink to="/settings" className={({ isActive }) => isActive ? 'nav-link settings-link active' : 'nav-link settings-link'}><Settings size={17} /><span>Settings</span></NavLink>
-          <div className="workspace"><span>{name.slice(0, 2).toUpperCase()}</span><div><strong>{name}</strong><small>{environmentLabel}</small></div></div>
+          <NavLink to="/settings" title="Settings" aria-label="Settings" className={({ isActive }) => isActive ? 'nav-link settings-link active' : 'nav-link settings-link'}><Settings size={18} /><span>Settings</span></NavLink>
+          <div className="workspace" title={`${name} · ${environmentLabel}`}><span>{name.slice(0, 2).toUpperCase()}</span></div>
         </div>
       </aside>
-      <main className="main-content">{children}<DemoControls /></main>
+      <main className="main-content">
+        <header className="shell-topbar">
+          <div className="topbar-identity">
+            <strong>DriftZero</strong>
+            <i />
+            <span>{name}</span>
+          </div>
+          <div className="topbar-status">
+            <small>{environmentLabel}</small>
+            <div className="connection-pill"><span className={`status-dot ${connection}`} /> {connectionLabel}</div>
+          </div>
+        </header>
+        {children}
+        <DemoControls />
+      </main>
     </div>
   )
 }

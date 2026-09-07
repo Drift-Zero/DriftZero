@@ -55,22 +55,22 @@ export function HealthChart({data,height=230,showMetrics=false}:{data:HealthPoin
         <circle className="beacon-core" cx={cx} cy={cy} r={3}/>
       </g>
       if(!sparse)return <g/>
-      return <circle cx={cx} cy={cy} r={2.5} fill="#0b0d0c" stroke="#c9ff57" strokeWidth={1.5}/>
+      return <circle cx={cx} cy={cy} r={2.5} fill="#2b2521" stroke="#ff7a43" strokeWidth={1.5}/>
     }
     return HealthDot
   },[lastIndex,sparse])
 
   return <div className={`health-chart${reducedMotion?' still':''}`} style={{height}}><ResponsiveContainer width="100%" height="100%"><ComposedChart data={data} margin={{top:12,right:RIGHT_GUTTER,bottom:4,left:-22}}>
-    <defs><linearGradient id="healthFill" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="#c9ff57" stopOpacity={.1}/><stop offset="100%" stopColor="#c9ff57" stopOpacity={0}/></linearGradient></defs>
-    <CartesianGrid stroke="#242824" strokeDasharray="2 5" vertical={false}/>
-    <XAxis dataKey="time" tickFormatter={shortTime} tick={{fill:'#70766e',fontSize:10,fontFamily:'IBM Plex Mono'}} axisLine={false} tickLine={false}/>
-    <YAxis domain={[0,100]} ticks={[25,50,75,100]} tick={{fill:'#70766e',fontSize:10,fontFamily:'IBM Plex Mono'}} axisLine={false} tickLine={false}/>
+    <defs><linearGradient id="healthFill" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="#ffc955" stopOpacity={.2}/><stop offset="52%" stopColor="#ff6a36" stopOpacity={.08}/><stop offset="100%" stopColor="#ff6a36" stopOpacity={0}/></linearGradient></defs>
+    <CartesianGrid stroke="#463b34" strokeDasharray="2 5" vertical={false}/>
+    <XAxis dataKey="time" tickFormatter={shortTime} tick={{fill:'#81756d',fontSize:10,fontFamily:'DM Mono'}} axisLine={false} tickLine={false}/>
+    <YAxis domain={[0,100]} ticks={[25,50,75,100]} tick={{fill:'#81756d',fontSize:10,fontFamily:'DM Mono'}} axisLine={false} tickLine={false}/>
     <Tooltip content={<ChartTooltip/>}/>
-    <ReferenceLine y={WARNING_SCORE} stroke="#6c5d32" strokeDasharray="4 4"/>
+    <ReferenceLine y={WARNING_SCORE} stroke="#8b6d37" strokeDasharray="4 4"/>
     <Area type="monotone" dataKey="score" stroke="none" fill="url(#healthFill)" isAnimationActive={animate} animationDuration={DRAW_MS} animationEasing="ease-out" activeDot={false} legendType="none" tooltipType="none"/>
-    <Line type="monotone" dataKey="score" name="Health" stroke="#c9ff57" strokeWidth={2} dot={renderDot} isAnimationActive={animate} animationDuration={DRAW_MS} animationEasing="ease-out" activeDot={{r:4,fill:'#0b0d0c',stroke:'#c9ff57',strokeWidth:2}}/>
-    {showMetrics&&<Line type="monotone" dataKey="groundedness" name="Groundedness" stroke="#a6ada3" strokeWidth={1.25} dot={false} isAnimationActive={animate} animationDuration={DRAW_MS} animationBegin={140} animationEasing="ease-out"/>}
-    {showMetrics&&<Line type="monotone" dataKey="stability" name="Stability" stroke="#697068" strokeWidth={1.25} dot={false} isAnimationActive={animate} animationDuration={DRAW_MS} animationBegin={280} animationEasing="ease-out"/>}
+    <Line type="monotone" dataKey="score" name="Health" stroke="#ff713a" strokeWidth={2} dot={renderDot} isAnimationActive={animate} animationDuration={DRAW_MS} animationEasing="ease-out" activeDot={{r:4,fill:'#2b2521',stroke:'#ffc955',strokeWidth:2}}/>
+    {showMetrics&&<Line type="monotone" dataKey="groundedness" name="Groundedness" stroke="#ffe399" strokeWidth={1.25} dot={false} isAnimationActive={animate} animationDuration={DRAW_MS} animationBegin={140} animationEasing="ease-out"/>}
+    {showMetrics&&<Line type="monotone" dataKey="stability" name="Stability" stroke="#b19f92" strokeWidth={1.25} dot={false} isAnimationActive={animate} animationDuration={DRAW_MS} animationBegin={280} animationEasing="ease-out"/>}
   </ComposedChart></ResponsiveContainer></div>
 }
 function ChartTooltip({active,payload,label}:{active?:boolean;payload?:Array<{name:string;value:number;color:string}>;label?:string}){if(!active||!payload?.length)return null;return <div className="chart-tooltip"><span>{label?shortTime(label):''}</span>{payload.map(item=><div key={item.name}><i style={{background:item.color}}/>{item.name}<strong>{Math.round(item.value)}</strong></div>)}</div>}
