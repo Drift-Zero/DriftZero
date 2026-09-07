@@ -180,9 +180,10 @@ class DriftZeroService:
         self.connection_inspector = ConnectionInspector(settings)
 
     def create_model(self, session: Session, payload: ModelCreate) -> ModelResponse:
+        tenant_id = self._tenant_id(session)
         existing = session.scalar(
             select(MonitoredModel).where(
-                MonitoredModel.tenant_id == DEFAULT_TENANT_ID,
+                MonitoredModel.tenant_id == tenant_id,
                 MonitoredModel.name == payload.name,
             )
         )
@@ -191,7 +192,7 @@ class DriftZeroService:
 
         record = MonitoredModel(
             **payload.model_dump(exclude={"actor", "initial_version"}),
-            tenant_id=DEFAULT_TENANT_ID,
+            tenant_id=tenant_id,
         )
         session.add(record)
         session.flush()
@@ -215,9 +216,10 @@ class DriftZeroService:
         return self._model_response(record)
 
     def list_models(self, session: Session) -> list[ModelResponse]:
+        tenant_id = self._tenant_id(session)
         records = session.scalars(
             select(MonitoredModel)
-            .where(MonitoredModel.tenant_id == DEFAULT_TENANT_ID)
+            .where(MonitoredModel.tenant_id == tenant_id)
             .order_by(MonitoredModel.name)
         ).all()
         return [self._model_response(record) for record in records]
@@ -669,7 +671,7 @@ class DriftZeroService:
 
         model = session.scalar(
             select(MonitoredModel).where(
-                MonitoredModel.tenant_id == DEFAULT_TENANT_ID,
+                MonitoredModel.tenant_id == self._tenant_id(session),
                 MonitoredModel.name == "ShopAssist",
             )
         )
@@ -2154,10 +2156,11 @@ class DriftZeroService:
         state: AlertState | None = None,
         limit: int = 100,
     ) -> AlertFeedResponse:
+        tenant_id = self._tenant_id(session)
         base = (
             select(Alert)
             .join(MonitoredModel, MonitoredModel.id == Alert.model_id)
-            .where(MonitoredModel.tenant_id == DEFAULT_TENANT_ID)
+            .where(MonitoredModel.tenant_id == tenant_id)
         )
         if state is not None:
             base = base.where(Alert.state == state.value)
@@ -2166,7 +2169,7 @@ class DriftZeroService:
             select(func.count())
             .select_from(Alert)
             .join(MonitoredModel, MonitoredModel.id == Alert.model_id)
-            .where(MonitoredModel.tenant_id == DEFAULT_TENANT_ID)
+            .where(MonitoredModel.tenant_id == tenant_id)
         )
         if state is not None:
             count_base = count_base.where(Alert.state == state.value)
@@ -2175,7 +2178,7 @@ class DriftZeroService:
             session.execute(
                 select(Alert.state, func.count())
                 .join(MonitoredModel, MonitoredModel.id == Alert.model_id)
-                .where(MonitoredModel.tenant_id == DEFAULT_TENANT_ID)
+                .where(MonitoredModel.tenant_id == tenant_id)
                 .group_by(Alert.state)
             ).all()
         )
@@ -3588,7 +3591,7 @@ class DriftZeroService:
         record = session.scalar(
             select(MonitoredModel).where(
                 MonitoredModel.id == model_id,
-                MonitoredModel.tenant_id == DEFAULT_TENANT_ID,
+                MonitoredModel.tenant_id == DriftZeroService._tenant_id(session),
             )
         )
         if not record:
@@ -3600,7 +3603,7 @@ class DriftZeroService:
         record = session.scalar(
             select(ModelConnection).where(
                 ModelConnection.id == connection_id,
-                ModelConnection.tenant_id == DEFAULT_TENANT_ID,
+                ModelConnection.tenant_id == DriftZeroService._tenant_id(session),
             )
         )
         if record is None:
@@ -3608,15 +3611,33 @@ class DriftZeroService:
         return record
 
     @staticmethod
+    def _tenant_id(session: Session) -> str:
+        return str(session.info.get("tenant_id", DEFAULT_TENANT_ID))
+
+    @staticmethod
     def _require_alert_rule(session: Session, rule_id: str) -> AlertRule:
-        record = session.get(AlertRule, rule_id)
+        record = session.scalar(
+            select(AlertRule)
+            .join(MonitoredModel, MonitoredModel.id == AlertRule.model_id)
+            .where(
+                AlertRule.id == rule_id,
+                MonitoredModel.tenant_id == DriftZeroService._tenant_id(session),
+            )
+        )
         if record is None:
             raise ResourceNotFound("Alert rule not found.")
         return record
 
     @staticmethod
     def _require_alert(session: Session, alert_id: str) -> Alert:
-        record = session.get(Alert, alert_id)
+        record = session.scalar(
+            select(Alert)
+            .join(MonitoredModel, MonitoredModel.id == Alert.model_id)
+            .where(
+                Alert.id == alert_id,
+                MonitoredModel.tenant_id == DriftZeroService._tenant_id(session),
+            )
+        )
         if record is None:
             raise ResourceNotFound("Alert not found.")
         return record
@@ -3628,7 +3649,14 @@ class DriftZeroService:
         *,
         for_update: bool = False,
     ) -> RecoveryPlan:
-        statement = select(RecoveryPlan).where(RecoveryPlan.id == plan_id)
+        statement = (
+            select(RecoveryPlan)
+            .join(MonitoredModel, MonitoredModel.id == RecoveryPlan.model_id)
+            .where(
+                RecoveryPlan.id == plan_id,
+                MonitoredModel.tenant_id == DriftZeroService._tenant_id(session),
+            )
+        )
         if for_update:
             statement = statement.with_for_update()
         record = session.scalar(statement)
