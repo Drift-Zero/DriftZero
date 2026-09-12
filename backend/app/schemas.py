@@ -566,6 +566,7 @@ class EvidenceSearchHit(BaseModel):
     text: str
     evidence_quote: str
     locator: dict[str, object]
+    validation_status: Literal["deterministic", "exact_match"] = "deterministic"
     relevance: float = Field(ge=0, le=1)
 
 
@@ -580,6 +581,7 @@ class InteractionObservation(BaseModel):
     question: str = Field(min_length=1, max_length=8000)
     answer: str = Field(default="", max_length=32_000)
     provider: str | None = Field(default=None, max_length=80)
+    model_name: str | None = Field(default=None, max_length=160)
     status: TraceStatus = TraceStatus.OK
     error_code: str | None = Field(default=None, max_length=80)
     latency_ms: int | None = Field(default=None, ge=0)
@@ -714,6 +716,7 @@ class TraceCreate(BaseModel):
     question: str | None = None
     answer: str | None = None
     provider: str | None = Field(default=None, max_length=80)
+    model_name: str | None = Field(default=None, max_length=160)
     status: TraceStatus = TraceStatus.OK
     error_code: str | None = Field(default=None, max_length=80)
     latency_ms: int | None = Field(default=None, ge=0)
@@ -744,6 +747,7 @@ class TraceResponse(BaseModel):
     answer_hash: str | None = None
     redaction_policy_version: str
     provider: str | None = None
+    model_name: str | None = None
     status: TraceStatus
     latency_ms: int | None = None
     retrieved_document_ids: list[str] = Field(default_factory=list)

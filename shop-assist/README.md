@@ -26,19 +26,22 @@ Open `http://localhost:3000` for the customer experience or
 
 ## DriftZero telemetry
 
-ShopAssist evaluates each observed answer against the current catalog and policy
-facts, buffers 20 real interactions, and then sends one evaluation window with
-20 request-level traces to `POST /api/v1/shopassist/telemetry`. Copy
-`.env.example` to `.env.local` and set `DRIFTZERO_API_URL` to point at the
-DriftZero API. If delivery is unavailable, the current batch stays buffered in
-the server process and is retried when the next interaction completes the window.
+ShopAssist buffers 20 raw interactions and sends them to
+`POST /api/v1/models/{model_id}/interactions/evaluate`. DriftZero—not
+ShopAssist—searches approved evidence, verifies claims, derives metrics, stores
+traces, and calculates Health-v2. Copy `.env.example` to `.env.local` and set
+`DRIFTZERO_API_URL`. `DRIFTZERO_MODEL_ID` is optional; without it the server
+resolves the unique model named `ShopAssist`. If delivery is unavailable, the
+batch remains buffered and the customer still receives the provider answer.
 
-The demo is explicitly simulated. It does not call a production model or modify
-an external commerce system.
+Healthy Groq requests are recorded as observed traffic. Controlled failure
+scenarios and the local fallback are explicitly marked as simulated; neither
+modifies an external commerce system.
 
 For the complete local stack, run Docker Compose from the repository root. The
-container receives `DRIFTZERO_API_URL`, `GROQ_API_KEY`, and the reserved
-`GEMINI_API_KEY` only at runtime; none is copied into browser variables. Set
+container receives `DRIFTZERO_API_URL`, optional `DRIFTZERO_MODEL_ID`,
+`GROQ_API_KEY`, and the reserved `GEMINI_API_KEY` only at runtime; none is copied
+into browser variables. Set
 `SHOPASSIST_PUBLIC_URL` to the deployed origin so social preview links are valid.
 
 ## AI providers

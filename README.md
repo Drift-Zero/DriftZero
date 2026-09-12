@@ -143,7 +143,7 @@ The default recovery adapter is clearly marked as simulated. The backend also co
 
 [`shop-assist/`](shop-assist/) is the current reference application. It is an e-commerce support assistant with deterministic scenarios for stale return policies, inventory mismatch, expired promotions, outdated warranties, conflicting shipping guidance, and recovery. Its presenter console makes these states repeatable for demonstrations.
 
-ShopAssist is not the core DriftZero product. It uses a deterministic local answer path and can optionally call Groq through a server-side route when `GROQ_API_KEY` is configured. The key is never sent to browser code. Its server route evaluates observed answers, batches 20 interactions, and posts one normalized telemetry window to DriftZero. Failed delivery remains buffered in the server process for retry.
+ShopAssist is not the core DriftZero product. It uses a deterministic local fallback and calls Groq through a server-side route when `GROQ_API_KEY` is configured. The key is never sent to browser code. Its server route batches 20 raw interactions and sends them to DriftZero's approved-evidence interaction evaluator; ShopAssist does not supply authoritative quality or groundedness scores. Failed delivery remains buffered without replacing a successful provider answer.
 
 The backend also retains a deterministic CampusGPT knowledge-freshness fixture for API, stability, recovery, and test coverage. Both scenarios are simulations and do not modify a real model deployment.
 
@@ -323,6 +323,8 @@ deployment that omits them builds successfully and then fails at runtime against
 | Dashboard | `VITE_API_BASE_URL` | The Render service URL, e.g. `https://driftzero-demo.onrender.com` |
 | Dashboard | `VITE_DEMO_MODE` | `false` for live data, `true` for the offline demo |
 | ShopAssist | `DRIFTZERO_API_URL` | The same Render service URL |
+| ShopAssist | `DRIFTZERO_MODEL_ID` | Optional explicit DriftZero model; otherwise the unique `ShopAssist` model is resolved server-side |
+| ShopAssist | `DRIFTZERO_INGEST_KEY` | Required only for a protected telemetry connection |
 | ShopAssist | `GROQ_API_KEY` | Optional; without it ShopAssist uses its local grounded fallback |
 | ShopAssist | `SHOPASSIST_PUBLIC_URL` | The public ShopAssist origin used for social metadata |
 
@@ -345,7 +347,7 @@ Copy the relevant example file before changing local configuration. Never commit
 - **Evidence ingestion:** `DRIFTZERO_EVIDENCE_MAX_FILE_BYTES`, `DRIFTZERO_EVIDENCE_LLM_PROVIDER`, `DRIFTZERO_EVIDENCE_LLM_MODEL`, `DRIFTZERO_EVIDENCE_LLM_TIMEOUT_SECONDS`, plus server-only `GEMINI_API_KEY` or `DRIFTZERO_GROQ_API_KEY`
 - **Observability:** `DRIFTZERO_LOG_LEVEL`, `DRIFTZERO_OTEL_ENABLED`, `OTEL_EXPORTER_OTLP_ENDPOINT`
 - **Dashboard:** `VITE_API_BASE_URL`, `VITE_DEMO_MODE`, `VITE_RECOVERY_API_KEY`, `VITE_RECOVERY_ACTOR`, `VITE_RECOVERY_ROLE`
-- **ShopAssist:** `DRIFTZERO_API_URL`, `SHOPASSIST_PUBLIC_URL`, `GROQ_API_KEY`; `GEMINI_API_KEY` may also be used server-side by the evidence-ingestion service
+- **ShopAssist:** `DRIFTZERO_API_URL`, optional `DRIFTZERO_MODEL_ID`, optional `DRIFTZERO_INGEST_KEY`, `SHOPASSIST_PUBLIC_URL`, `GROQ_API_KEY`; `GEMINI_API_KEY` may also be used server-side by the evidence-ingestion service
 
 `GROQ_API_KEY` and DriftZero recovery credentials are server-side secrets. They must not be
 exposed through `NEXT_PUBLIC_` variables or committed environment files. Note that every

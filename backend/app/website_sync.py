@@ -1,4 +1,4 @@
-"""Scheduled website-to-JSON evidence refreshes with optional xAI structuring."""
+"""Scheduled website evidence refreshes with optional grounded AI structuring."""
 
 from __future__ import annotations
 
@@ -19,8 +19,13 @@ from sqlalchemy.orm import Session
 
 from app.config import Settings
 from app.connections import ConnectionCheckError, validate_target_url
-from app.db import DEFAULT_TENANT_ID, ModelConnection, utc_now
-from app.evidence import EvidenceService
+from app.db import DEFAULT_TENANT_ID, EvidenceSource, ModelConnection, utc_now
+from app.evidence import (
+    EvidenceConflict,
+    EvidenceError,
+    EvidenceService,
+    build_groq_evidence_structurer,
+)
 from app.schemas import EvidenceImportRequest
 
 
@@ -308,10 +313,17 @@ class WebsiteSyncService:
         if connection.status == "paused":
             raise WebsiteSyncError("Website connection is paused.")
         fetched_at = utc_now()
+        page: FetchedPage | None = None
         try:
             page = fetch_website(str(connection.url), self.settings)
             previous_hash = str((connection.discovered_metadata or {}).get("content_hash", ""))
             if page.content_hash == previous_hash:
+                source_id = (connection.discovered_metadata or {}).get("source_id")
+                if source_id:
+                    current_source = session.get(EvidenceSource, str(source_id))
+                    if current_source is not None:
+                        current_source.fetched_at = fetched_at
+                        current_source.last_checked_at = fetched_at
                 self._update_connection(connection, page, fetched_at, status="connected")
                 session.commit()
                 return WebsiteRefreshResult(
@@ -323,11 +335,37 @@ class WebsiteSyncService:
                     0,
                     "Website content has not changed.",
                 )
-            use_xai = bool((connection.config or {}).get("use_xai", False))
+            config = connection.config or {}
+            use_groq = bool(config.get("use_groq", False))
+            use_xai = bool(config.get("use_xai", False))
+            if page.structured_data is None and use_groq and use_xai:
+                raise WebsiteSyncError("Choose either Groq or xAI website structuring, not both.")
+
+            hostname = urlparse(page.url).hostname or "website"
+            structurer = None
+            require_llm_facts = False
+            groq_structured = False
             if page.structured_data is not None:
                 data = page.structured_data
+                filename = f"website-{hostname}.json"
+                media_type = "application/json"
+                use_llm = False
+            elif use_groq:
+                data = None
+                groq_structured = True
+                filename = f"website-{hostname}.txt"
+                media_type = "text/plain"
+                use_llm = True
+                require_llm_facts = True
+                try:
+                    structurer = build_groq_evidence_structurer(self.settings)
+                except EvidenceError as exc:
+                    raise WebsiteSyncError(str(exc)) from exc
             elif use_xai:
                 data = XaiWebsiteStructurer(self.settings).structure(page)
+                filename = f"website-{hostname}.json"
+                media_type = "application/json"
+                use_llm = False
             else:
                 lines = [
                     line.strip()
@@ -349,18 +387,42 @@ class WebsiteSyncService:
                         for index, line in enumerate(lines, start=1)
                     ],
                 }
-            encoded = base64.b64encode(json.dumps(data, ensure_ascii=False).encode()).decode()
-            hostname = urlparse(page.url).hostname or "website"
+                filename = f"website-{hostname}.json"
+                media_type = "application/json"
+                use_llm = False
+            content = (
+                page.text.encode()
+                if groq_structured
+                else json.dumps(data, ensure_ascii=False).encode()
+            )
             source = self.evidence_service.import_source(
                 session,
                 connection.model_id,
                 EvidenceImportRequest(
-                    filename=f"website-{hostname}.json",
+                    filename=filename,
                     name=f"Website · {connection.name}",
-                    media_type="application/json",
-                    content_base64=encoded,
+                    media_type=media_type,
+                    content_base64=base64.b64encode(content).decode(),
+                    use_llm=use_llm,
                     actor=actor,
                 ),
+                structurer=structurer,
+                require_llm_facts=require_llm_facts,
+                commit=False,
+            )
+            stored_source = session.get(EvidenceSource, source.id)
+            if stored_source is None:  # pragma: no cover - guarded by successful import
+                raise WebsiteSyncError("Website evidence was not persisted.")
+            previous_source_id = (connection.discovered_metadata or {}).get("source_id")
+            stored_source.source_url = page.url
+            stored_source.fetched_at = fetched_at
+            stored_source.last_checked_at = fetched_at
+            stored_source.refresh_interval_minutes = max(
+                1,
+                int(config.get("refresh_interval_minutes", 10)),
+            )
+            stored_source.supersedes_source_id = (
+                str(previous_source_id) if previous_source_id else None
             )
             auto_approve = bool((connection.config or {}).get("auto_approve", False))
             if auto_approve:
@@ -370,13 +432,17 @@ class WebsiteSyncService:
                     session,
                     source.id,
                     EvidenceReviewRequest(status="approved", actor=actor),
+                    commit=False,
                 )
             extracted_facts = data.get("facts") if isinstance(data, dict) else None
-            fact_count = (
-                len(extracted_facts)
-                if isinstance(extracted_facts, list)
-                else source.chunk_count
-            )
+            if groq_structured:
+                fact_count = sum(
+                    chunk.validation_status == "exact_match" for chunk in source.chunks
+                )
+            elif isinstance(extracted_facts, list):
+                fact_count = len(extracted_facts)
+            else:
+                fact_count = source.chunk_count
             self._update_connection(
                 connection,
                 page,
@@ -399,29 +465,64 @@ class WebsiteSyncService:
                 ),
             )
         except WebsiteSyncError as exc:
-            self._record_failure(session, connection, fetched_at, str(exc))
+            self._persist_failure(
+                session,
+                connection_id,
+                fetched_at,
+                str(exc),
+                page=page,
+            )
             raise
+        except (EvidenceError, EvidenceConflict) as exc:
+            self._persist_failure(
+                session,
+                connection_id,
+                fetched_at,
+                str(exc),
+                page=page,
+            )
+            raise WebsiteSyncError(str(exc)) from exc
         except Exception as exc:
             # A parser, persistence, or provider integration failure must not
             # leave the operator staring at "Waiting for first refresh". Roll
             # back any failed transaction, reload the connection, and persist
             # a safe status before presenting one consistent public error.
-            session.rollback()
-            connection = session.scalar(
-                select(ModelConnection).where(
-                    ModelConnection.id == connection_id,
-                    ModelConnection.tenant_id
-                    == str(session.info.get("tenant_id", DEFAULT_TENANT_ID)),
-                )
+            self._persist_failure(
+                session,
+                connection_id,
+                fetched_at,
+                "Website refresh failed unexpectedly.",
+                page=page,
             )
-            if connection is not None:
-                self._record_failure(
-                    session,
-                    connection,
-                    fetched_at,
-                    "Website refresh failed unexpectedly.",
-                )
             raise WebsiteSyncError("Website refresh failed unexpectedly.") from exc
+
+    @staticmethod
+    def _persist_failure(
+        session: Session,
+        connection_id: str,
+        fetched_at: datetime,
+        message: str,
+        *,
+        page: FetchedPage | None = None,
+    ) -> None:
+        """Roll back partial evidence work before recording a retryable failure."""
+
+        session.rollback()
+        connection = session.scalar(
+            select(ModelConnection).where(
+                ModelConnection.id == connection_id,
+                ModelConnection.tenant_id
+                == str(session.info.get("tenant_id", DEFAULT_TENANT_ID)),
+            )
+        )
+        if connection is not None:
+            WebsiteSyncService._record_failure(
+                session,
+                connection,
+                fetched_at,
+                message,
+                page=page,
+            )
 
     @staticmethod
     def _record_failure(
@@ -429,7 +530,21 @@ class WebsiteSyncService:
         connection: ModelConnection,
         fetched_at: datetime,
         message: str,
+        *,
+        page: FetchedPage | None = None,
     ) -> None:
+        if page is not None:
+            metadata = dict(connection.discovered_metadata or {})
+            metadata.update(
+                {
+                    "last_attempted_content_hash": page.content_hash,
+                    "last_attempted_at": fetched_at.isoformat(),
+                    "title": page.title,
+                }
+            )
+            connection.discovered_metadata = metadata
+            connection.last_status_code = page.status_code
+            connection.last_latency_ms = page.latency_ms
         connection.status = "error"
         connection.last_error = message
         connection.last_checked_at = fetched_at

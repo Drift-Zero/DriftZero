@@ -100,7 +100,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     application.state.website_sync_service = website_sync_service
     cors_origins = list(runtime_settings.cors_origins)
     if not cors_origins and runtime_settings.environment.lower() not in {"production", "prod"}:
-        cors_origins = ["http://127.0.0.1:5173", "http://localhost:5173"]
+        cors_origins = ["http://127.0.0.1:5173",
+        "http://localhost:5173",
+        "http://127.0.0.1:3000",
+        "http://localhost:3000",]
     if cors_origins or runtime_settings.cors_origin_regex:
         application.add_middleware(
             CORSMiddleware,

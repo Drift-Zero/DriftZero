@@ -152,10 +152,18 @@ export async function POST(request: Request): Promise<Response> {
     citations: string[],
     inputTokens = 0,
     outputTokens = 0,
+    provider = 'local',
+    modelName = 'Local grounded fallback',
+    requestId?: string,
+    isSimulated = true,
   ) =>
     recordInteraction({
+      requestId,
+      occurredAt: new Date(startedAt).toISOString(),
       question: message,
       answer,
+      provider,
+      modelName,
       scenarios,
       citations,
       intent: reference.intent,
@@ -163,6 +171,7 @@ export async function POST(request: Request): Promise<Response> {
       inputTokens,
       outputTokens,
       status: 'ok',
+      isSimulated,
     });
   const detect = (answer: string, citations: string[]) =>
     buildDetectionReport({
@@ -200,6 +209,12 @@ export async function POST(request: Request): Promise<Response> {
       grounded.sourceIds,
       reply.usage?.inputTokens,
       reply.usage?.outputTokens,
+      'groq',
+      reply.model,
+      reply.interactionId,
+      scenarios.some(
+        (scenario) => scenario !== 'healthy' && scenario !== 'recovered',
+      ),
     );
     return Response.json({
       ...reply,

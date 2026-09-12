@@ -5,8 +5,10 @@ from __future__ import annotations
 import base64
 
 from fastapi.testclient import TestClient
+from sqlalchemy import select
 
 from app.config import Settings
+from app.db import Trace
 from app.main import create_app
 
 
@@ -46,8 +48,12 @@ def test_interaction_batch_generates_claim_results_and_health_snapshot() -> None
                     if index < 15
                     else "Electronics can be returned within 30 days."
                 ),
-                "provider": "local-llama",
+                "provider": "groq",
+                "model_name": "openai/gpt-oss-120b",
                 "latency_ms": 500,
+                "input_tokens": 80,
+                "output_tokens": 40,
+                "is_simulated": False,
             }
             for index in range(20)
         ]
@@ -72,6 +78,14 @@ def test_interaction_batch_generates_claim_results_and_health_snapshot() -> None
 
         timeline = client.get(f"/api/v1/models/{model['id']}/health").json()
         assert timeline["snapshots"][-1]["event_id"] == "window:test-001"
+        with app.state.database.session_factory() as session:
+            trace = session.scalar(select(Trace).where(Trace.request_id == "request-0"))
+            assert trace is not None
+            assert trace.provider == "groq"
+            assert trace.model_name == "openai/gpt-oss-120b"
+            assert trace.input_tokens == 80
+            assert trace.output_tokens == 40
+            assert trace.is_simulated is False
 
 
 def test_unverifiable_batch_does_not_manufacture_a_health_score() -> None:

@@ -3808,6 +3808,7 @@ class DriftZeroService:
                 answer_hash=content_hash(item.answer),
                 redaction_policy_version=REDACTION_POLICY_VERSION,
                 provider=item.provider,
+                model_name=item.model_name,
                 status=item.status.value,
                 error_code=item.error_code,
                 latency_ms=item.latency_ms,

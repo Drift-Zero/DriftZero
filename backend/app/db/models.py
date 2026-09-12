@@ -474,6 +474,7 @@ class Trace(IdMixin, TenantMixin, Base):
     redaction_policy_version: Mapped[str] = mapped_column(sa.String(40), default="redact-v1")
 
     provider: Mapped[str | None] = mapped_column(sa.String(80))
+    model_name: Mapped[str | None] = mapped_column(sa.String(160))
     status: Mapped[TraceStatus] = mapped_column(TRACE_STATUS, default=TraceStatus.OK)
     error_code: Mapped[str | None] = mapped_column(sa.String(80))
     latency_ms: Mapped[int | None] = mapped_column()

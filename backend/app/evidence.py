@@ -53,6 +53,14 @@ SUPPORTED_SUFFIXES = frozenset({".pdf", ".json", ".csv", ".txt", ".md"})
 UNSTRUCTURED_SUFFIXES = frozenset({".pdf", ".txt", ".md"})
 TOKEN_RE = re.compile(r"[\w₹$€£.%+-]+", re.UNICODE)
 NUMBER_RE = re.compile(r"(?<!\w)[+-]?(?:\d[\d,]*(?:\.\d+)?%?)(?!\w)")
+PROVIDER_ERROR_BODY_LIMIT = 16_384
+PROVIDER_ERROR_FIELD_LIMIT = 80
+PROVIDER_ERROR_MESSAGE_LIMIT = 240
+EVIDENCE_STRUCTURING_BATCH_SIZE = 4
+EVIDENCE_STRUCTURING_SEGMENT_MAX_CHARS = 600
+EVIDENCE_EXACT_MATCH_WEIGHT = 0.25
+EVIDENCE_CONCISION_WEIGHT = 0.15
+EVIDENCE_GENERAL_PASSAGE_CHARS = 800
 
 
 class EvidenceError(ValueError):
@@ -373,29 +381,64 @@ class OpenAICompatibleStructurer:
 
     def structure(self, segments: list[RawSegment]) -> list[StructuredFact]:
         facts: list[StructuredFact] = []
-        for start in range(0, len(segments), 12):
-            batch = segments[start : start + 12]
+        bounded_segments = _bounded_structuring_segments(segments)
+        for start in range(0, len(bounded_segments), EVIDENCE_STRUCTURING_BATCH_SIZE):
+            batch = bounded_segments[start : start + EVIDENCE_STRUCTURING_BATCH_SIZE]
             payload_segments = [
                 {"segment_index": index, "text": segment.text}
                 for index, segment in enumerate(batch)
             ]
             request_body = {
                 "model": self.model,
-                "temperature": 0.1,
+                "temperature": 0,
                 "messages": [
                     {
                         "role": "system",
                         "content": (
                             "Extract atomic factual statements from the supplied source segments. "
-                            'Return JSON only as {"facts":[{"segment_index":0,'
-                            '"statement":"...","evidence_quote":"exact substring..."}]}. '
-                            "Do not infer or add facts. The quote must be copied exactly from its "
-                            "segment. Omit headings, opinions, instructions, and non-factual text."
+                            "Output must conform exactly to the provided JSON Schema. Return "
+                            '{"facts": []} when no factual statements exist. Every segment_index '
+                            "must be one of the supplied indexes. Every evidence_quote must be "
+                            "copied verbatim from exactly one supplied segment and use that "
+                            "segment's index. Do not infer facts. Do not add Markdown, "
+                            "explanations, or keys outside the schema."
                         ),
                     },
                     {"role": "user", "content": json.dumps(payload_segments, ensure_ascii=False)},
                 ],
             }
+            if self.provider == "groq":
+                request_body["response_format"] = {
+                    "type": "json_schema",
+                    "json_schema": {
+                        "name": "grounded_evidence_facts",
+                        "strict": True,
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": False,
+                            "properties": {
+                                "facts": {
+                                    "type": "array",
+                                    "items": {
+                                        "type": "object",
+                                        "additionalProperties": False,
+                                        "properties": {
+                                            "segment_index": {"type": "integer"},
+                                            "statement": {"type": "string"},
+                                            "evidence_quote": {"type": "string"},
+                                        },
+                                        "required": [
+                                            "segment_index",
+                                            "statement",
+                                            "evidence_quote",
+                                        ],
+                                    },
+                                }
+                            },
+                            "required": ["facts"],
+                        },
+                    },
+                }
             response = self._post(request_body)
             parsed = _parse_llm_json(response)
             for item in parsed.get("facts", []):
@@ -410,19 +453,112 @@ class OpenAICompatibleStructurer:
             data=json.dumps(payload).encode(),
             headers={
                 "Authorization": f"Bearer {self.api_key}",
+                "Accept": "application/json",
                 "Content-Type": "application/json",
+                "User-Agent": "DriftZero-Evidence/1.0",
             },
             method="POST",
         )
         try:
             with urllib.request.urlopen(request, timeout=self.timeout_seconds) as response:
                 body = json.loads(response.read())
+        except urllib.error.HTTPError as exc:
+            raise EvidenceError(self._safe_http_error(exc)) from exc
         except (urllib.error.URLError, TimeoutError, json.JSONDecodeError) as exc:
             raise EvidenceError(f"{self.provider} evidence structuring failed.") from exc
         try:
             return str(body["choices"][0]["message"]["content"])
         except (KeyError, IndexError, TypeError) as exc:
             raise EvidenceError(f"{self.provider} returned an invalid response.") from exc
+
+    def _safe_http_error(self, error: urllib.error.HTTPError) -> str:
+        """Translate a provider response without exposing request or credential data."""
+
+        try:
+            raw = error.read(PROVIDER_ERROR_BODY_LIMIT + 1)[:PROVIDER_ERROR_BODY_LIMIT]
+            payload = json.loads(raw)
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+            payload = None
+
+        provider_error = payload.get("error") if isinstance(payload, dict) else None
+        provider_error = provider_error if isinstance(provider_error, dict) else {}
+        error_type = self._safe_error_field(
+            provider_error.get("type"), PROVIDER_ERROR_FIELD_LIMIT
+        )
+        error_code = self._safe_error_field(
+            provider_error.get("code"), PROVIDER_ERROR_FIELD_LIMIT
+        )
+        message = self._safe_error_field(
+            provider_error.get("message"), PROVIDER_ERROR_MESSAGE_LIMIT
+        )
+        failed_generation_present = "failed_generation" in provider_error
+        failed_generation = provider_error.get("failed_generation")
+
+        details = []
+        if error_type:
+            details.append(f"type={error_type}")
+        if error_code:
+            details.append(f"code={error_code}")
+        if failed_generation_present:
+            details.append("failed_generation_present=true")
+            if isinstance(failed_generation, str):
+                details.append(f"failed_generation_length={len(failed_generation)}")
+                json_like = "{" in failed_generation and "}" in failed_generation
+                details.append(f"failed_generation_json_like={str(json_like).lower()}")
+        result = f"{self.provider} evidence structuring returned HTTP {error.code}"
+        if details:
+            result += f" ({', '.join(details)})"
+        if message:
+            result += f": {message.rstrip('.')}"
+        return f"{result}."
+
+    def _safe_error_field(self, value: object, limit: int) -> str | None:
+        if not isinstance(value, (str, int)):
+            return None
+        text = re.sub(r"\s+", " ", str(value)).strip()
+        if not text:
+            return None
+        if self.api_key:
+            text = text.replace(self.api_key, "[redacted]")
+        text = re.sub(r"(?i)authorization\s*[:=]\s*\S+", "Authorization=[redacted]", text)
+        text = re.sub(r"(?i)bearer\s+\S+", "Bearer [redacted]", text)
+        text = re.sub(r"\bgsk_[A-Za-z0-9_-]+\b", "[redacted]", text)
+        return f"{text[: limit - 3]}..." if len(text) > limit else text
+
+
+def _bounded_structuring_segments(segments: list[RawSegment]) -> list[RawSegment]:
+    """Split dense parser output into bounded, exact source excerpts for the LLM."""
+
+    bounded: list[RawSegment] = []
+    for segment in segments:
+        line_matches = list(re.finditer(r"[^\r\n]+", segment.text))
+        if not line_matches:
+            continue
+        for line_match in line_matches:
+            line = line_match.group()
+            leading = len(line) - len(line.lstrip())
+            trailing = len(line.rstrip())
+            line_start = line_match.start() + leading
+            line = line[leading:trailing]
+            cursor = 0
+            while cursor < len(line):
+                end = min(cursor + EVIDENCE_STRUCTURING_SEGMENT_MAX_CHARS, len(line))
+                if end < len(line):
+                    word_boundary = line.rfind(" ", cursor, end + 1)
+                    if word_boundary > cursor:
+                        end = word_boundary
+                excerpt = line[cursor:end].strip()
+                if excerpt:
+                    excerpt_start = line_start + cursor
+                    locator = dict(segment.locator)
+                    original_offset = locator.get("character_offset", 0)
+                    if isinstance(original_offset, int) and excerpt_start:
+                        locator["character_offset"] = original_offset + excerpt_start
+                    bounded.append(RawSegment(text=excerpt, locator=locator))
+                cursor = end
+                while cursor < len(line) and line[cursor].isspace():
+                    cursor += 1
+    return bounded
 
 
 def _parse_llm_json(content: str) -> dict[str, Any]:
@@ -482,19 +618,31 @@ def build_evidence_structurer(settings: Settings) -> EvidenceStructurer | None:
             timeout_seconds=settings.evidence_llm_timeout_seconds,
         )
     if provider == "groq":
-        api_key = (settings.groq_api_key or os.getenv("GROQ_API_KEY", "")).strip()
-        if not api_key:
-            raise EvidenceError(
-                "DRIFTZERO_GROQ_API_KEY is required when Groq structuring is enabled."
-            )
-        return OpenAICompatibleStructurer(
-            provider="groq",
-            model=settings.evidence_llm_model or "openai/gpt-oss-20b",
-            api_key=api_key,
-            base_url="https://api.groq.com/openai/v1",
-            timeout_seconds=settings.evidence_llm_timeout_seconds,
-        )
+        return build_groq_evidence_structurer(settings)
     raise EvidenceError("DRIFTZERO_EVIDENCE_LLM_PROVIDER must be disabled, gemini, or groq.")
+
+
+def build_groq_evidence_structurer(settings: Settings) -> EvidenceStructurer:
+    """Build the server-only Groq structurer used by uploads and website refreshes."""
+
+    import os
+
+    api_key = (
+        settings.groq_api_key
+        or os.getenv("DRIFTZERO_GROQ_API_KEY", "")
+        or os.getenv("GROQ_API_KEY", "")
+    ).strip()
+    if not api_key:
+        raise EvidenceError(
+            "DRIFTZERO_GROQ_API_KEY is required when Groq structuring is enabled."
+        )
+    return OpenAICompatibleStructurer(
+        provider="groq",
+        model=settings.evidence_llm_model or "openai/gpt-oss-20b",
+        api_key=api_key,
+        base_url="https://api.groq.com/openai/v1",
+        timeout_seconds=settings.evidence_llm_timeout_seconds,
+    )
 
 
 class EvidenceService:
@@ -513,7 +661,14 @@ class EvidenceService:
         return str(session.info.get("tenant_id", DEFAULT_TENANT_ID))
 
     def import_source(
-        self, session: Session, model_id: str, payload: EvidenceImportRequest
+        self,
+        session: Session,
+        model_id: str,
+        payload: EvidenceImportRequest,
+        *,
+        structurer: EvidenceStructurer | None = None,
+        require_llm_facts: bool = False,
+        commit: bool = True,
     ) -> EvidenceSourceResponse:
         model = session.scalar(
             select(MonitoredModel).where(
@@ -543,14 +698,19 @@ class EvidenceService:
 
         suffix, raw_segments = parse_evidence_file(payload.filename, content)
         facts: list[StructuredFact]
+        active_structurer = structurer or self.structurer
         if payload.use_llm:
             if suffix not in UNSTRUCTURED_SUFFIXES:
                 raise EvidenceError("AI structuring is only used for PDF, TXT, and Markdown files.")
-            if self.structurer is None:
+            if active_structurer is None:
                 raise EvidenceError(
                     "AI structuring is disabled. Configure Gemini or Groq on the API server."
                 )
-            llm_facts = self.structurer.structure(raw_segments)
+            llm_facts = active_structurer.structure(raw_segments)
+            if require_llm_facts and not llm_facts:
+                raise EvidenceError(
+                    f"{active_structurer.provider} returned no source-verifiable facts."
+                )
             # Always retain every parser segment alongside the convenience
             # facts. An LLM can improve retrieval, but can never erase source
             # material by omitting it from a probabilistic response.
@@ -576,8 +736,10 @@ class EvidenceService:
             corpus_version=f"evidence-{digest[:12]}",
             status="awaiting_review",
             extraction_method="deterministic+llm" if payload.use_llm else "deterministic",
-            llm_provider=self.structurer.provider if payload.use_llm and self.structurer else None,
-            llm_model=self.structurer.model if payload.use_llm and self.structurer else None,
+            llm_provider=(
+                active_structurer.provider if payload.use_llm and active_structurer else None
+            ),
+            llm_model=active_structurer.model if payload.use_llm and active_structurer else None,
             chunk_count=len(facts),
         )
         session.add(source)
@@ -602,7 +764,10 @@ class EvidenceService:
             source.id,
             {"filename": source.filename, "chunks": len(facts), "status": source.status},
         )
-        session.commit()
+        if commit:
+            session.commit()
+        else:
+            session.flush()
         return self.get_source(session, source.id)
 
     def import_url(
@@ -812,7 +977,12 @@ class EvidenceService:
         return EvidenceSourceResponse.model_validate(record)
 
     def review_source(
-        self, session: Session, source_id: str, payload: EvidenceReviewRequest
+        self,
+        session: Session,
+        source_id: str,
+        payload: EvidenceReviewRequest,
+        *,
+        commit: bool = True,
     ) -> EvidenceSourceResponse:
         source = session.scalar(
             select(EvidenceSource).where(
@@ -853,7 +1023,10 @@ class EvidenceService:
             source.id,
             {"status": payload.status, "reason": payload.reason},
         )
-        session.commit()
+        if commit:
+            session.commit()
+        else:
+            session.flush()
         return self.get_source(session, source.id)
 
     def search(
@@ -877,10 +1050,32 @@ class EvidenceService:
             chunk_tokens = set(TOKEN_RE.findall(chunk.text.lower()))
             overlap = len(query_tokens & chunk_tokens) / len(query_tokens)
             phrase_bonus = 0.2 if query_lower in chunk.text.casefold() else 0.0
-            score = min(1.0, overlap * 0.8 + phrase_bonus)
+            concision = max(
+                0.0,
+                1.0 - (len(chunk.text) / EVIDENCE_GENERAL_PASSAGE_CHARS),
+            )
+            exact_match_bonus = (
+                EVIDENCE_EXACT_MATCH_WEIGHT * overlap
+                if chunk.validation_status == "exact_match"
+                else 0.0
+            )
+            score = min(
+                1.0,
+                overlap * 0.8
+                + phrase_bonus
+                + exact_match_bonus
+                + concision * EVIDENCE_CONCISION_WEIGHT,
+            )
             if score > 0:
                 ranked.append((score, chunk, source))
-        ranked.sort(key=lambda item: (-item[0], item[1].ordinal))
+        ranked.sort(
+            key=lambda item: (
+                -item[0],
+                item[1].validation_status != "exact_match",
+                len(item[1].text),
+                item[1].ordinal,
+            )
+        )
         return [
             EvidenceSearchHit(
                 chunk_id=chunk.id,
@@ -891,6 +1086,7 @@ class EvidenceService:
                 text=chunk.text,
                 evidence_quote=chunk.evidence_quote,
                 locator=chunk.locator,
+                validation_status=chunk.validation_status,
                 relevance=round(score, 4),
             )
             for score, chunk, source in ranked[: payload.limit]

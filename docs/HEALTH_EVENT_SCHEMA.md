@@ -76,7 +76,7 @@ giving DriftZero the model provider's API key.
 
 ShopAssist evaluates answers inside its `/api/chat` server route and keeps a
 server-side buffer. Every complete 20-interaction batch is normalized into this
-contract and sent to `POST /api/v1/shopassist/telemetry` using the server-only
+contract and sent to the legacy `POST /api/v1/shopassist/telemetry` simulated-demo route using the server-only
 `DRIFTZERO_API_URL`. Browser JavaScript never reads provider keys or the API URL.
 
 The window uses `source: "observed"` because its scores are derived from the 20

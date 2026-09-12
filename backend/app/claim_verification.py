@@ -14,8 +14,17 @@ from difflib import SequenceMatcher
 from app.schemas import ClaimEvaluationResponse, EvidenceSearchHit
 
 _CLAIM_BREAK = re.compile(r"(?<=[.!?])\s+|\n+|(?<=;)\s+")
+_CONTEXT_BREAK = re.compile(r"(?<=[.!?;])\s+|\n+|,\s+|\s+[·•]\s+")
 _TOKEN = re.compile(r"[a-z0-9]+(?:\.[0-9]+)?", re.IGNORECASE)
 _NUMBER = re.compile(r"(?<!\w)[+-]?(?:\d[\d,]*(?:\.\d+)?%?)(?!\w)")
+_COMPOUND_IDENTIFIER = re.compile(r"\b\d+(?:-[a-z]+-\d+)+\b", re.IGNORECASE)
+_PRICE_CONTEXT = re.compile(r"[$₹€£]|\b(?:cost|costs|price|priced)\b", re.IGNORECASE)
+_STOCK_CONTEXT = re.compile(
+    r"\b(?:available|availability|inventory|in stock|out of stock|sold out|stock)\b",
+    re.IGNORECASE,
+)
+_UNAVAILABLE = re.compile(r"\b(?:out of stock|sold out|unavailable)\b", re.IGNORECASE)
+_AVAILABLE = re.compile(r"\b(?:in stock|available)\b", re.IGNORECASE)
 _NEGATIONS = frozenset({"no", "not", "never", "none", "without", "cannot", "can't"})
 _STOPWORDS = frozenset(
     {
@@ -27,6 +36,9 @@ _STOPWORDS = frozenset(
         "at",
         "be",
         "by",
+        "cost",
+        "costs",
+        "currently",
         "for",
         "from",
         "has",
@@ -40,6 +52,7 @@ _STOPWORDS = frozenset(
         "that",
         "the",
         "their",
+        "there",
         "this",
         "to",
         "was",
@@ -49,17 +62,30 @@ _STOPWORDS = frozenset(
 )
 
 
+def _normalize_phrases(value: str) -> str:
+    value = re.sub(r"\b(?:out of stock|sold out)\b", "unavailable", value, flags=re.I)
+    return re.sub(r"\bin stock\b", "available", value, flags=re.I)
+
+
 def split_claims(answer: str) -> list[str]:
     claims = [part.strip(" \t-*•") for part in _CLAIM_BREAK.split(answer)]
     return [claim for claim in claims if len(_TOKEN.findall(claim)) >= 2][:20]
 
 
 def _tokens(value: str) -> set[str]:
-    return {token for token in _TOKEN.findall(value.casefold()) if token not in _STOPWORDS}
+    return {
+        token
+        for token in _TOKEN.findall(_normalize_phrases(value).casefold())
+        if token not in _STOPWORDS
+    }
 
 
 def _token_sequence(value: str) -> list[str]:
-    return [token for token in _TOKEN.findall(value.casefold()) if token not in _STOPWORDS]
+    return [
+        token
+        for token in _TOKEN.findall(_normalize_phrases(value).casefold())
+        if token not in _STOPWORDS
+    ]
 
 
 def _ordered_similarity(claim: str, evidence: str) -> float:
@@ -80,11 +106,50 @@ def _ordered_similarity(claim: str, evidence: str) -> float:
 
 
 def _numbers(value: str) -> set[str]:
-    return {number.replace(",", "") for number in _NUMBER.findall(value)}
+    without_identifiers = _COMPOUND_IDENTIFIER.sub("", value)
+    return {number.replace(",", "") for number in _NUMBER.findall(without_identifiers)}
 
 
 def _has_negation(value: str) -> bool:
     return bool(_tokens(value) & _NEGATIONS)
+
+
+def _numeric_context_kind(value: str) -> str | None:
+    if _PRICE_CONTEXT.search(value):
+        return "price"
+    if _STOCK_CONTEXT.search(value):
+        return "stock"
+    return None
+
+
+def _availability_state(value: str) -> str | None:
+    if _UNAVAILABLE.search(value):
+        return "unavailable"
+    if _AVAILABLE.search(value):
+        return "available"
+    return None
+
+
+def _non_numeric_tokens(value: str) -> set[str]:
+    return {token for token in _tokens(value) if not token.isdigit()}
+
+
+def _relevant_evidence_context(claim: str, evidence: str) -> str:
+    """Choose the most relevant local clause before comparing numbers or polarity."""
+
+    contexts = [part.strip() for part in _CONTEXT_BREAK.split(evidence) if part.strip()]
+    if len(contexts) <= 1:
+        return evidence
+    claim_terms = _non_numeric_tokens(claim)
+    claim_kind = _numeric_context_kind(claim)
+    return max(
+        contexts,
+        key=lambda context: (
+            _numeric_context_kind(context) == claim_kind and claim_kind is not None,
+            len(claim_terms & _non_numeric_tokens(context)),
+            -len(context),
+        ),
+    )
 
 
 def verify_claim(
@@ -107,15 +172,43 @@ def verify_claim(
         )
 
     combined, evidence, coverage = ranked[0]
+    evidence_context = _relevant_evidence_context(claim, evidence.evidence_quote)
     claim_numbers = _numbers(claim)
-    evidence_numbers = _numbers(evidence.evidence_quote)
-    number_conflict = bool(claim_numbers and not claim_numbers <= evidence_numbers)
-    negation_conflict = _has_negation(claim) != _has_negation(evidence.evidence_quote)
+    evidence_numbers = _numbers(evidence_context)
+    shared_context = bool(
+        _non_numeric_tokens(claim) & _non_numeric_tokens(evidence_context)
+    )
+    number_conflict = bool(
+        claim_numbers
+        and evidence_numbers
+        and shared_context
+        and not claim_numbers <= evidence_numbers
+    )
+    negation_conflict = _has_negation(claim) != _has_negation(evidence_context)
+    claim_availability = _availability_state(claim)
+    evidence_availability = _availability_state(evidence_context)
+    availability_conflict = bool(
+        claim_availability
+        and evidence_availability
+        and claim_availability != evidence_availability
+    )
     ordered_similarity = _ordered_similarity(claim, evidence.evidence_quote)
+    ordered_threshold = (
+        0.65
+        if evidence.validation_status == "exact_match"
+        and len(evidence.evidence_quote) <= 200
+        else 0.78
+    )
     confidence = round(min(1.0, combined), 2)
 
-    if coverage >= 0.28 and (number_conflict or negation_conflict):
-        conflict = "numeric values differ" if number_conflict else "negation differs"
+    if coverage >= 0.28 and (number_conflict or negation_conflict or availability_conflict):
+        conflict = (
+            "numeric values differ"
+            if number_conflict
+            else "availability differs"
+            if availability_conflict
+            else "negation differs"
+        )
         return ClaimEvaluationResponse(
             claim=claim,
             verdict="contradicted",
@@ -125,7 +218,7 @@ def verify_claim(
         )
     if (
         coverage >= 0.5
-        and ordered_similarity >= 0.78
+        and ordered_similarity >= ordered_threshold
         and not number_conflict
         and not negation_conflict
     ):

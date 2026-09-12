@@ -301,6 +301,7 @@ def evaluate_interactions(
                 question=observation.question,
                 answer=observation.answer,
                 provider=observation.provider,
+                model_name=observation.model_name,
                 status=observation.status,
                 error_code=observation.error_code,
                 latency_ms=observation.latency_ms,
