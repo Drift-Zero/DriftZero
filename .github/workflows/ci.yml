@@ -147,7 +147,7 @@ jobs:
           docker compose logs --no-color evidence-sync-worker | tee /tmp/evidence-sync-worker.log
           grep --quiet 'evidence_sync.completed' /tmp/evidence-sync-worker.log
           docker compose logs --no-color shop-assist | tee /tmp/shop-assist.log
-          grep --quiet 'shopassist.telemetry.sent' /tmp/shop-assist.log
+          grep --quiet 'shopassist.monitoring.sent' /tmp/shop-assist.log
       - name: Verify single-container deployment
         run: |
           docker run --detach --name driftzero-deploy-test \
