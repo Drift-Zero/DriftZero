@@ -1,8 +1,11 @@
 # DriftZero
 
-**Detect AI reliability degradation early. Diagnose it with evidence. Recover with verification.**
+**AI reliability monitoring platform for deployed LLM applications.**
 
-DriftZero is an early-warning reliability monitoring and recovery platform for deployed AI systems. It turns normalized evaluation telemetry into health scores, forecasts, incidents, diagnoses, controlled recovery workflows, and an auditable record of what happened. The repository currently provides a working, deterministic vertical slice designed for development and demonstration—not a production-ready control plane.
+DriftZero captures real application interactions, checks model responses against approved evidence,
+and turns the resulting reliability signals into Health-v2 scores, degradation alerts, incidents,
+diagnoses, and an auditable recovery lifecycle. The repository provides a working portfolio-scale
+vertical slice designed for development and demonstration—not a production-ready control plane.
 
 ## The problem
 
@@ -12,20 +15,25 @@ DriftZero helps operators detect these changes early, inspect the evidence behin
 
 ## What DriftZero does
 
-DriftZero organizes the reliability lifecycle around a common telemetry contract:
+The verified v1 path starts with the behavior a customer actually sees:
 
 ```text
-AI application
-    → evaluator / telemetry collector
-    → normalized telemetry and redacted trace evidence
-    → DriftZero Telemetry API
-    → Health Score and forecast
-    → incident detection and diagnosis
-    → approved recovery actions
-    → verification against new telemetry
+External LLM application
+    → real model response
+    → raw interaction ingestion
+    → approved evidence retrieval
+    → claim verification
+    → groundedness / quality / reliability / latency metrics
+    → Health-v2
+    → degradation detection
+    → incident creation and diagnosis
 ```
 
-Recovery is a lifecycle rather than a button click. A plan can be recommended, approved or rejected, queued, executed, verified, and rolled back. For observed traffic, verification requires post-execution telemetry that meets configured request and coverage gates; a plan is not marked recovered simply because its actions ran.
+Recovery infrastructure also exists: a plan can be recommended, approved or rejected, queued,
+executed through an adapter, verified, and rolled back. Autonomous real-world recovery is not the
+primary verified v1 demonstration. For observed traffic, verification requires post-execution
+telemetry that meets configured request and coverage gates; a plan is not marked recovered simply
+because its actions ran.
 
 ## Key features
 
@@ -54,12 +62,13 @@ Users
   ↓
 AI application ───────────────→ Hosted, local, or custom model
   ↓
-Evaluator / telemetry collector / connector
+Raw interaction connector
   ↓
 POST /api/v1/models/{model_id}/interactions/evaluate
   ↓
 FastAPI service
-  ├── trace redaction and signal inference
+  ├── approved evidence retrieval and claim verification
+  ├── trace redaction and metric derivation
   ├── Health Score and confidence
   ├── forecast storage and settlement
   ├── incident detection and diagnosis
@@ -141,15 +150,27 @@ The default recovery adapter is clearly marked as simulated. The backend also co
 
 ## Demo and reference application
 
-[`shop-assist/`](shop-assist/) is the current reference application. It is an e-commerce support assistant with deterministic scenarios for stale return policies, inventory mismatch, expired promotions, outdated warranties, conflicting shipping guidance, and recovery. Its presenter console makes these states repeatable for demonstrations.
+[`shop-assist/`](shop-assist/) is the reference application for the verified v1 path. It is an
+e-commerce support assistant whose presenter console can run controlled live-data, unsupported-
+claim, wrong-number, wrong-record, and policy-mismatch tests.
 
 ShopAssist is not the core DriftZero product. It uses a deterministic local fallback and calls Groq through a server-side route when `GROQ_API_KEY` is configured. The key is never sent to browser code. Its server route batches 20 raw interactions and sends them to DriftZero's approved-evidence interaction evaluator; ShopAssist does not supply authoritative quality or groundedness scores. Failed delivery remains buffered without replacing a successful provider answer.
 
 The backend also retains a deterministic CampusGPT knowledge-freshness fixture for API, stability, recovery, and test coverage. Both scenarios are simulations and do not modify a real model deployment.
 
-## Screenshots
+### Validated demo result
 
-Dashboard screenshots and demo visuals will be added once the frontend is finalized.
+The end-to-end demonstration was validated with real `openai/gpt-oss-120b` requests:
+
+| Window | Health-v2 | Key result |
+| --- | ---: | --- |
+| Healthy traffic | **83.9 · HEALTHY** | 20 real interactions; 60 quality, 85.71 groundedness, 100 reliability, and 100 latency health |
+| Controlled Wrong Number fault | **63.4 · CRITICAL** | 20 interactions; quality and groundedness fell to 35 and a HIGH incident remained open |
+
+The faulted answer was intentionally introduced by the ShopAssist presenter controls while Groq
+continued generating the responses. DriftZero labels that window `simulated` for provenance; it
+does not represent the controlled fault as naturally occurring provider degradation. Resetting the
+scenario restored the correct grounded answer.
 
 ## Tech stack
 
@@ -320,7 +341,7 @@ deployment that omits them builds successfully and then fails at runtime against
 
 | Project | Variable | Value |
 | --- | --- | --- |
-| Dashboard | `VITE_API_BASE_URL` | The Render service URL, e.g. `https://driftzero-demo.onrender.com` |
+| Dashboard | `VITE_API_BASE_URL` | The Render service URL, currently `https://driftzero-demo-7jzm.onrender.com` |
 | Dashboard | `VITE_DEMO_MODE` | `false` for live data, `true` for the offline demo |
 | ShopAssist | `DRIFTZERO_API_URL` | The same Render service URL |
 | ShopAssist | `DRIFTZERO_MODEL_ID` | Optional explicit DriftZero model; otherwise the unique `ShopAssist` model is resolved server-side |
@@ -334,6 +355,16 @@ deployment — the Vercel values are the only ones that apply.
 The API's `DRIFTZERO_CORS_ORIGIN_REGEX` in `render.yaml` already allows `https://*.vercel.app`.
 Recovery approval works against that deployment because it sets
 `DRIFTZERO_RECOVERY_ALLOW_LOCAL_IDENTITY=true`; leave `VITE_RECOVERY_API_KEY` unset.
+
+The Render blueprint supplies the non-secret API settings and expects
+`DRIFTZERO_GROQ_API_KEY` (and optional `XAI_API_KEY`) to be entered as server-side secrets in
+Render. Its SQLite database is stored at `/tmp/driftzero.db`, which is intentionally ephemeral:
+restarts and redeploys can erase demo data. Use a managed database before relying on persistence.
+
+ShopAssist's active presenter scenario is also process-local. Vercel may route the presenter
+request and a later chat request to different serverless instances, or discard the instance after
+an idle period. Keep the public ShopAssist deployment healthy and run repeatable fault-injection
+demos locally until the scenario state is moved to a small shared store.
 
 ## Environment variables
 
@@ -389,17 +420,20 @@ Interactive OpenAPI documentation is available at `/docs` when the backend is ru
 
 ## Project status
 
-DriftZero is under active development. The repository implements and tests a substantial end-to-end demo lifecycle: registry and versioning, telemetry and trace storage, health scoring, forecasts, incidents, diagnosis, alerts, recovery command processing, verification, stability evaluation, human feedback, audit history, and a dashboard with independent demo data.
+DriftZero is under active development. The repository implements and tests a substantial end-to-end
+demo lifecycle: real Groq interaction capture, approved-evidence evaluation, telemetry and trace
+storage, health scoring, forecasts, incidents, diagnosis, alerts, recovery command processing,
+verification, stability evaluation, human feedback, audit history, and a live-data dashboard.
 
 Important current boundaries:
 
-- the default evaluator and recovery adapter are deterministic simulations;
+- raw-interaction evaluation uses deterministic evidence checks; the separate stability fixture and default recovery adapter are simulated;
 - ShopAssist is a reference application, not a production commerce assistant;
-- the default database is SQLite and the current service model is intended for a local or single-host demo;
+- the default database is SQLite and the Render demo stores it on an ephemeral filesystem, so data can reset on restart or redeploy;
 - recovery authentication uses local demo identity or interim operator/admin API keys rather than managed OIDC;
 - the alert delivery channel is currently in-application only;
 - direct standalone browser/API development still needs CORS configuration;
-- the single-container Render deployment files should be revalidated against the current Vite frontend build before use.
+- ShopAssist scenario selection is process-local and therefore is not reliable across Vercel serverless instances; use the local demo for repeatable fault injection until that state is moved to a shared store.
 
 Do not attach consequential production credentials or recovery permissions to the demo configuration.
 
