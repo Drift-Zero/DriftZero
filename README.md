@@ -2,461 +2,381 @@
 
 **AI reliability monitoring platform for deployed LLM applications.**
 
-DriftZero captures real application interactions, checks model responses against approved evidence,
-and turns the resulting reliability signals into Health-v2 scores, degradation alerts, incidents,
-diagnoses, and an auditable recovery lifecycle. The repository provides a working portfolio-scale
-vertical slice designed for development and demonstration—not a production-ready control plane.
+DriftZero captures real application interactions, checks model responses against approved
+evidence, calculates transparent reliability metrics and a policy-versioned Health-v2 score,
+and opens incidents when behavior degrades.
+
+The recommended way to evaluate this repository is to clone it and run the complete system
+locally with Docker Compose.
 
 ## The problem
 
-AI applications can degrade without a conventional service outage. Hallucinations, grounding failures, inconsistent outputs, prompt or configuration changes, retrieval and data changes, latency regressions, safety failures, and model or data drift can all reduce reliability while the application remains online.
+LLM applications can remain online while their answers become less reliable. A model may use
+stale information, contradict a trusted source, invent a product detail, return the wrong record,
+or report an incorrect number without producing a conventional service outage.
 
-DriftZero helps operators detect these changes early, inspect the evidence behind them, coordinate a proportionate response, and determine whether the response actually improved observed behavior.
+DriftZero makes those behavioral failures observable. It records what the application actually
+returned, verifies factual claims against evidence the operator approved, stores the resulting
+metrics and traces, and turns material degradation into a health state and incident.
 
-## What DriftZero does
+## Validated demo
 
-The verified v1 path starts with the behavior a customer actually sees:
+[`shop-assist/`](shop-assist/) is the reference application. It is a Next.js commerce assistant
+that calls Groq's `openai/gpt-oss-120b` model through a server-side route and sends batches of 20
+raw interactions to DriftZero.
 
-```text
-External LLM application
-    → real model response
-    → raw interaction ingestion
-    → approved evidence retrieval
-    → claim verification
-    → groundedness / quality / reliability / latency metrics
-    → Health-v2
-    → degradation detection
-    → incident creation and diagnosis
-```
+The following result was validated end to end:
 
-Recovery infrastructure also exists: a plan can be recommended, approved or rejected, queued,
-executed through an adapter, verified, and rolled back. Autonomous real-world recovery is not the
-primary verified v1 demonstration. For observed traffic, verification requires post-execution
-telemetry that meets configured request and coverage gates; a plan is not marked recovered simply
-because its actions ran.
+| Window | Health-v2 | Quality | Groundedness | Samples | Source |
+| --- | ---: | ---: | ---: | ---: | --- |
+| Healthy Groq traffic | **83.9 · HEALTHY** | 60 | 85.71 | 20 | `observed` |
+| Controlled Wrong Number fault | **63.4 · CRITICAL** | 35 | 35 | 20 | `simulated` |
 
-## Key features
-
-- **Model registry and versioning** — register monitored systems, track lifecycle state, and fingerprint model, prompt, tool, corpus, and evaluation-policy versions.
-- **Telemetry ingestion** — accept provider-neutral health dimensions and optional request-level traces through a versioned API.
-- **Owner connector evaluation** — capture interactions from any hosted or local model, verify claims against approved evidence with deterministic rules, and derive auditable health windows.
-- **Live evidence URLs** — fetch public direct data URLs, preserve provenance, detect changes, and require approval before a new version replaces trusted evidence.
-- **Privacy-aware evidence** — redact prompt and response text before storage while retaining hashes, safe trace fields, and configurable retention periods.
-- **Model Health Score** — combine available reliability dimensions into a transparent score with state, confidence, sample size, coverage, policy version, and missing-dimension reporting.
-- **Health history and forecasting** — store health snapshots and short-horizon forecasts, then record forecast outcomes when the horizon passes.
-- **Incident detection and diagnosis** — open incidents from degraded health and generate rule-based probable causes with supporting and contradicting evidence linked to relevant traces.
-- **Alerting** — define threshold, transition, trajectory, coverage, and evaluation-freshness rules with an in-application alert feed and acknowledgement/resolution states.
-- **Recovery lifecycle** — recommend playbooks, enforce approval and role checks, queue idempotent commands, execute through an adapter, record action attempts, and support cancellation and rollback.
-- **Recovery verification** — evaluate new telemetry against health, request-count, coverage, and no-regression checks before resolving an incident.
-- **Stability evaluation** — run semantic and temporal stability tests, preserve evaluator versions, distinguish changed inputs from unexplained drift, and retain claim-level disagreements.
-- **Human review and feedback** — route selected work to a review queue and record human agreement or disagreement with automated judgments.
-- **Audit history** — record model, telemetry, alert, diagnosis, recovery, verification, and governance events.
-- **Dashboard** — explore fleet health, models, model details, incidents, events, recovery state, and deterministic demo controls in a React interface.
-- **Dashboard settings** — set the operator identity used for audited actions, repoint the dashboard at another API and test it before committing, switch between demo and live data, enable background refresh, manage alert rules and per-model retention and lifecycle, tune density, timestamp, and precision formatting, and export, import, or reset the whole configuration.
-- **Groq evaluation workbench** — discover and import a Groq model with a server-owned key, capture real responses, then calculate transparent evidence, safety, stability, reliability, latency, cost, and health metrics locally without an evaluator-model call.
+In the degraded run, the correct AeroBuds price was `$119` and the controlled response reported
+`$129`. The Groq API calls were real; the incorrect context was deliberately injected by the
+ShopAssist Presenter Console. DriftZero therefore labels the faulted window `simulated` and does
+not pretend that Groq failed organically. The critical window opened a HIGH incident.
 
 ## Architecture
 
 ```text
-Users
-  ↓
-AI application ───────────────→ Hosted, local, or custom model
-  ↓
-Raw interaction connector
-  ↓
-POST /api/v1/models/{model_id}/interactions/evaluate
-  ↓
-FastAPI service
-  ├── approved evidence retrieval and claim verification
-  ├── trace redaction and metric derivation
-  ├── Health Score and confidence
-  ├── forecast storage and settlement
-  ├── incident detection and diagnosis
-  ├── alert evaluation
-  └── recovery verification queueing
-  ├──────────────→ SQLAlchemy data layer → SQLite by default
-  │                      ↑                 (PostgreSQL driver optional)
-  │                      │
-  │                Background workers
-  │                  ├── alert evaluation
-  │                  ├── recovery command execution
-  │                  └── trace retention
+Customer
   │
-  └──────────────→ Versioned read/control API ← React dashboard
+  ▼
+ShopAssist (Next.js) ───────────────► Groq openai/gpt-oss-120b
+  │                                      │
+  │                                      └── real model response
+  │
+  └── every 20 interactions
+          │
+          ▼
+POST /api/v1/models/{model_id}/interactions/evaluate
+          │
+          ▼
+DriftZero API (FastAPI)
+  ├── search approved evidence
+  ├── verify response claims
+  ├── derive quality, groundedness, reliability, latency, safety and cost signals
+  ├── redact and persist request traces
+  ├── calculate Health-v2
+  ├── detect degradation and create incidents
+  └── expose health, evidence, incident and audit APIs
+          │
+          ├────────► SQLite named volume
+          │
+          ├────────► alert / recovery / retention workers
+          ├────────► evidence-sync / website workers
+          │
+          └────────► React dashboard
 ```
 
-The Docker Compose stack runs the API, dashboard, alert worker, recovery worker, and retention worker. Nginx serves the Vite production build and proxies same-origin `/api/` requests to FastAPI.
+The local stack contains eight services: the API, dashboard, ShopAssist, alert worker, recovery
+worker, retention worker, evidence-sync worker, and website worker. Docker Compose gives the
+backend services a shared persistent SQLite volume and keeps the Presenter Console and chat route
+inside one ShopAssist process, making the controlled scenario repeatable.
 
-## Model-agnostic design
+## Quick start
 
-DriftZero is designed around the behavior of a monitored application, not a particular model vendor. The monitored system may use a hosted LLM, a local LLM, or another custom AI model. A connector or evaluator maps provider-specific observations into the common telemetry contract and sends them to:
+### Requirements
 
-```http
-POST /api/v1/models/{model_id}/telemetry
-```
+- Git
+- Docker Engine or Docker Desktop
+- Docker Compose v2
+- A Groq API key belonging to the reviewer
+- `curl` for the one-time local model registration command
 
-The owner connector sends raw application observations—not invented scores—to the interaction endpoint. DriftZero verifies factual claims against approved evidence and derives groundedness, quality, reliability, latency, safety, sample size, and coverage. Applications with their own domain evaluator can continue sending normalized `0–100` dimensions directly to the telemetry endpoint.
-
-See [`docs/HEALTH_EVENT_SCHEMA.md`](docs/HEALTH_EVENT_SCHEMA.md) for the current contract.
-See [`docs/CONNECTIONS.md`](docs/CONNECTIONS.md) for GitHub, telemetry, website, and API
-onboarding, credential handling, and connection checks.
-See [`docs/GROQ_EVALUATION.md`](docs/GROQ_EVALUATION.md) for the server-side Groq import and deterministic evaluation flow.
-See [`docs/OWNER_CONNECTOR.md`](docs/OWNER_CONNECTOR.md) for live URL evidence and hosted or local model integration.
-
-## Evaluation layer
-
-The evaluator answers: **How did this model or application behave?**
-
-DriftZero answers: **Is that behavior degrading over time, what evidence points to the cause, and did recovery work?**
-
-Upstream evaluators can combine deterministic task measurements, latency and error signals, grounding checks, safety results, drift statistics, task-specific tests, and optional model-based judgments. They are responsible for normalizing those observations before ingestion. When groundedness or drift is omitted but suitable trace evidence is present, the backend can infer those two dimensions from stored trace signals and historical windows.
-
-The built-in semantic and temporal stability evaluator is a deterministic simulated adapter for the repository's demo scenario. It generates paraphrases or controlled re-runs, extracts material claims, compares agreement, versions its judgments, and records confidence. It does not call an external model. The adapter boundary is intended to support real evaluators later without coupling DriftZero's reliability pipeline to one provider.
-
-## Model Health
-
-The Model Health Score is a policy-versioned summary of available signals, not an objective statement about a model. The current `health-v2` policy uses these dimensions, where higher always means healthier:
-
-- quality
-- groundedness
-- semantic stability
-- safety
-- operational reliability
-- latency health
-- cost health
-
-The backend calculates a weighted score from the dimensions that are present and reports missing dimensions explicitly. It also derives confidence from traffic coverage, sample size, and available dimension coverage. By default, fewer than 20 samples, less than 30% traffic coverage, or insufficient dimension weight produces an `insufficient_data` state instead of a misleading score.
-
-The published weights are quality 25%, groundedness 20%, reliability 20%, semantic consistency 15%, safety 10%, latency 5%, and cost efficiency 5%. Temporal stability and drift remain available diagnostic signals but are not inputs to the `health-v2` aggregate.
-
-Health snapshots preserve the evidence window and scoring policy. The current forecast is an inspectable short-horizon slope projection with a variability-based interval; it is a baseline forecast, not a guarantee of a future incident.
-
-## Incident → recovery → verification
-
-```text
-Healthy
-  → degradation detected
-  → incident opened
-  → diagnosis generated with evidence
-  → recovery plan recommended
-  → approval and durable execution
-  → verification against post-action telemetry
-  → recovered, failed, or rolled back
-```
-
-Diagnosis is currently deterministic and rule-based. It can identify supported patterns such as knowledge freshness failures, safety regressions, operational reliability failures, and semantic or temporal instability; otherwise it reports insufficient evidence.
-
-The default recovery adapter is clearly marked as simulated. The backend also contains an optional HTTPS control-plane adapter, disabled unless server-side configuration is supplied. Recovery commands are persisted before execution, claimed by a worker, retried with stable idempotency keys, and audited. Verification checks a healthy threshold, evidence volume, coverage, and material regressions in quality, safety, latency, reliability, and cost.
-
-## Demo and reference application
-
-[`shop-assist/`](shop-assist/) is the reference application for the verified v1 path. It is an
-e-commerce support assistant whose presenter console can run controlled live-data, unsupported-
-claim, wrong-number, wrong-record, and policy-mismatch tests.
-
-ShopAssist is not the core DriftZero product. It uses a deterministic local fallback and calls Groq through a server-side route when `GROQ_API_KEY` is configured. The key is never sent to browser code. Its server route batches 20 raw interactions and sends them to DriftZero's approved-evidence interaction evaluator; ShopAssist does not supply authoritative quality or groundedness scores. Failed delivery remains buffered without replacing a successful provider answer.
-
-The backend also retains a deterministic CampusGPT knowledge-freshness fixture for API, stability, recovery, and test coverage. Both scenarios are simulations and do not modify a real model deployment.
-
-### Validated demo result
-
-The end-to-end demonstration was validated with real `openai/gpt-oss-120b` requests:
-
-| Window | Health-v2 | Key result |
-| --- | ---: | --- |
-| Healthy traffic | **83.9 · HEALTHY** | 20 real interactions; 60 quality, 85.71 groundedness, 100 reliability, and 100 latency health |
-| Controlled Wrong Number fault | **63.4 · CRITICAL** | 20 interactions; quality and groundedness fell to 35 and a HIGH incident remained open |
-
-The faulted answer was intentionally introduced by the ShopAssist presenter controls while Groq
-continued generating the responses. DriftZero labels that window `simulated` for provenance; it
-does not represent the controlled fault as naturally occurring provider degradation. Resetting the
-scenario restored the correct grounded answer.
-
-## Tech stack
-
-- **Backend:** Python 3.12+, FastAPI, Pydantic, SQLAlchemy, Alembic, Uvicorn
-- **Data:** SQLite for the zero-setup demo; optional PostgreSQL driver support
-- **Dashboard:** React, TypeScript, Vite, React Router, Recharts, Lucide React
-- **Reference app:** Next.js, React, TypeScript, Tailwind CSS, optional server-side Groq request path
-- **Quality:** Pytest, Ruff, ESLint, TypeScript compiler, Node test runner
-- **Deployment:** Docker, Docker Compose, Nginx, background worker processes
-
-## Repository structure
-
-```text
-DriftZero/
-├── backend/        FastAPI service, data layer, workers, migrations, and tests
-├── frontend/       React/Vite operations dashboard and Nginx configuration
-├── shop-assist/    Deterministic e-commerce reference application
-├── examples/       Provider-neutral connector example
-├── docs/           Product, schema, data-model, demo, and operations documentation
-├── scripts/        End-to-end smoke-test tooling
-├── deploy/         Single-container demo deployment files
-├── .github/        Continuous-integration workflow
-├── compose.yaml    Local multi-service stack
-└── render.yaml     Render demo blueprint
-```
-
-## Getting started
-
-### Clone the repository
+### 1. Clone the repository
 
 ```bash
 git clone https://github.com/Drift-Zero/DriftZero.git
 cd DriftZero
 ```
 
-### Run the full local stack with Docker
-
-Requirements: Docker Engine and Docker Compose v2.
+### 2. Create the local environment file
 
 ```bash
 cp .env.example .env
+```
+
+Open the root `.env` file in your editor and set these two server-side variables to your own Groq
+key:
+
+```dotenv
+GROQ_API_KEY=your_groq_key_here
+DRIFTZERO_GROQ_API_KEY=your_groq_key_here
+```
+
+`GROQ_API_KEY` enables real ShopAssist answers. `DRIFTZERO_GROQ_API_KEY` enables backend Groq
+features such as optional webpage structuring. The same Groq key can be used for both. JSON
+evidence in the walkthrough below is parsed deterministically and does not require an evaluator
+model.
+
+The root `.env` file is gitignored. Never commit it, paste a real key into documentation, or expose
+the key through a `NEXT_PUBLIC_` or `VITE_` variable.
+
+### 3. Start the complete stack
+
+```bash
 docker compose up --build
 ```
 
-Open the dashboard at <http://localhost:3000>, ShopAssist at
-<http://localhost:3100>, and the API documentation at <http://localhost:8000/docs>.
-
-Run the deterministic end-to-end recovery smoke test:
+Wait until the API and web services report healthy. In another terminal, you can check them with:
 
 ```bash
-python3 scripts/smoke_test.py
+docker compose ps
 ```
 
-Stop the stack without deleting its database:
+### 4. Register ShopAssist once
+
+A fresh database intentionally starts empty. Register the monitored application before sending
+interactions:
+
+```bash
+curl --fail --silent --show-error \
+  --output /dev/null \
+  --request POST http://localhost:8000/api/v1/models \
+  --header 'Content-Type: application/json' \
+  --data '{
+    "name": "ShopAssist",
+    "provider": "groq",
+    "environment": "local-demo",
+    "description": "Local ShopAssist reliability demonstration",
+    "initial_version": {
+      "label": "shopassist-groq-demo",
+      "model_identifier": "openai/gpt-oss-120b",
+      "prompt_version": "shopassist-grounded-v1",
+      "corpus_version": "shopassist-local-evidence",
+      "evaluation_policy_version": "health-v2",
+      "actor": "local-reviewer"
+    },
+    "actor": "local-reviewer"
+  }'
+```
+
+Run this only for a fresh database. ShopAssist resolves the unique model named `ShopAssist`
+automatically, so `DRIFTZERO_MODEL_ID` can remain empty.
+
+### 5. Approve the local evidence fixtures
+
+Open the dashboard's **Evidence** page at <http://localhost:3000/evidence>. Select `ShopAssist`,
+upload each file below, and choose **Use as truth** after every import:
+
+- [`examples/evidence/shopassist-inventory-orders.json`](examples/evidence/shopassist-inventory-orders.json)
+- [`examples/evidence/shopassist-policies.json`](examples/evidence/shopassist-policies.json)
+- [`examples/evidence/shopassist-catalog.json`](examples/evidence/shopassist-catalog.json)
+
+These files contain the product, inventory, order, and policy facts used by the local reference
+application. They keep the primary demo self-contained instead of depending on a public website.
+
+### Local URLs
+
+| Service | URL |
+| --- | --- |
+| DriftZero dashboard | <http://localhost:3000> |
+| ShopAssist | <http://localhost:3100> |
+| Presenter Console | <http://localhost:3100/demo> |
+| DriftZero backend | <http://localhost:8000> |
+| Interactive API docs | <http://localhost:8000/docs> |
+
+If the dashboard says **Demo data**, open **Settings → Connection**, select the live API mode, and
+use `http://127.0.0.1:8000` as the API base URL. A fresh Docker browser session normally starts in
+live mode.
+
+## Full local demo walkthrough
+
+Each completed ShopAssist response counts as one interaction. DriftZero receives a health window
+when ShopAssist has buffered 20 interactions.
+
+1. Open the [Presenter Console](http://localhost:3100/demo) and confirm that the current agent
+   state says **Running normally**.
+2. Open [ShopAssist](http://localhost:3100) in another tab.
+3. Ask factual questions such as `What is the price of AeroBuds?`, `How many AeroBuds are in
+   stock?`, or `What is the return policy for electronics?`.
+4. Confirm the source row beneath the answer identifies `openai/gpt-oss-120b`, not
+   `Local grounded fallback`.
+5. Complete 20 healthy interactions. The twentieth response flushes the batch to DriftZero.
+6. Reload the [dashboard](http://localhost:3000) and open the ShopAssist model. Inspect the latest
+   Health-v2 window and its evidence-derived metrics.
+7. Return to the [Presenter Console](http://localhost:3100/demo), select **Wrong Number**, and
+   choose **Run Selected Tests**.
+8. Ask `What is the price of AeroBuds?` and confirm the controlled response differs from the
+   trusted `$119` value while still identifying the real Groq model.
+9. Complete another 20 interactions with Wrong Number active.
+10. Reload the DriftZero dashboard. Inspect the fall in quality and groundedness and the resulting
+    critical Health-v2 state.
+11. Open [Incidents](http://localhost:3000/incidents) and inspect the HIGH incident linked to the
+    degraded window.
+12. Return to the Presenter Console, choose **Apply recovery**, and then choose **Reset baseline**.
+    Ask the AeroBuds price again and confirm normal `$119` behavior returns.
+
+The validated `83.9` and `63.4` scores above are reference results from one completed run. Groq is
+a live external model, so wording, latency, evidence coverage, and the precise score can vary
+slightly between runs. The expected invariant is the direction of change: the deliberate wrong
+number reduces evidence support and should lower quality, groundedness, and Health-v2.
+
+To watch the interaction batch reach the backend without exposing request content or credentials:
+
+```bash
+docker compose logs --follow shop-assist api
+```
+
+A successful flush includes the structured event `shopassist.monitoring.sent` with a sample size
+of 20.
+
+Stop the stack while preserving its database volume:
 
 ```bash
 docker compose down
 ```
 
-See [`docs/DEVOPS_RUNBOOK.md`](docs/DEVOPS_RUNBOOK.md) for service wiring, logs, troubleshooting, and deployment notes.
+## How evidence-backed evaluation works
 
-### Run the full local stack without Docker
+ShopAssist sends raw observations rather than precomputed reliability scores. Each observation can
+include the question, answer, provider/model identifiers, request status, latency, token counts,
+safety flags, and whether the behavior was deliberately simulated.
 
-Requirements: Python 3.12 or newer with the backend dependencies installed, and Node.js with
-`frontend/node_modules` present (see the two sections below for the one-time setup).
+For every batch, DriftZero:
 
-```bash
-python scripts/run_local.py
+1. extracts factual claims from each answer;
+2. searches only evidence sources whose status is `approved`;
+3. classifies claims as supported, contradicted, or unverified;
+4. calculates groundedness from decided claims and quality from all extracted claims;
+5. derives operational reliability, latency, safety, and optional cost signals;
+6. redacts stored question and answer text while retaining safe trace metadata and hashes; and
+7. persists one auditable health snapshot.
+
+The main ingestion endpoint is:
+
+```http
+POST /api/v1/models/{model_id}/interactions/evaluate
 ```
 
-That starts seven processes and shuts them all down together on Ctrl+C:
+JSON and GeoJSON evidence use deterministic parsing. Uploaded files and URL sources remain outside
+the scoring trust boundary until an operator approves them. Unstructured webpage/PDF/text
+structuring can use Groq, but generated facts still have to pass source and exact-quote validation.
 
-| Service | URL | Role |
-| --- | --- | --- |
-| API | <http://127.0.0.1:8000> | REST surface, OpenAPI docs at `/docs` |
-| Recovery worker | — | Applies approved recovery plans and records verification |
-| Alert worker | — | Evaluates alert rules |
-| Retention worker | — | Removes traces beyond each model's retention window |
-| Evidence sync worker | — | Rechecks opted-in URL sources and versions changed content |
-| Dashboard | <http://localhost:5173> | Operator view: health, incidents, recovery |
-| ShopAssist | <http://localhost:3000> | The monitored chatbot; presenter controls at `/demo` |
+More detail:
 
-It also seeds the deterministic ShopAssist scenario, writes `frontend/.env.local` so the
-dashboard talks to the API it just started, and sets `DRIFTZERO_API_URL` for ShopAssist so its
-telemetry flows back to that same API. Every twenty chat interactions become one health
-snapshot, which is what drives the dashboard's incidents.
+- [Owner connector contract](docs/OWNER_CONNECTOR.md)
+- [Health event schema](docs/HEALTH_EVENT_SCHEMA.md)
+- [Connections and evidence](docs/CONNECTIONS.md)
+- [Website synchronization](docs/WEBSITE_SYNC.md)
+- [Groq evaluation](docs/GROQ_EVALUATION.md)
 
-The recovery worker is what makes **Approve & apply recovery** complete. Approving a plan only
-queues a command, so an API running on its own leaves every recovery stuck in `queued`.
+## Health-v2 and incident detection
 
-ShopAssist needs no model credentials — without `GROQ_API_KEY` it answers from its local
-grounded fallback, with citations. Set the key in `shop-assist/.env.local` to route through Groq
-instead.
+Health-v2 calculates a weighted mean over the dimensions that are actually present:
 
-Useful flags:
+| Dimension | Weight |
+| --- | ---: |
+| Quality | 25% |
+| Groundedness | 20% |
+| Operational reliability | 20% |
+| Semantic stability | 15% |
+| Safety | 10% |
+| Latency health | 5% |
+| Cost efficiency | 5% |
 
-| Flag | Purpose |
+The score is withheld as `insufficient_data` when the window has fewer than 20 samples, less than
+30% evidence coverage, or less than 50% of the configured dimension weight. Scored windows are
+classified as:
+
+- **Healthy:** 80 or higher
+- **Warning:** 65–79.9
+- **Critical:** below 65
+
+A warning snapshot opens a MEDIUM incident; a critical snapshot opens or escalates a HIGH
+incident. The incident records the opening snapshot, last healthy baseline when available, and
+lowest observed score. Diagnosis and recovery infrastructure exists, but the default recovery
+adapter is simulated and autonomous real-world recovery is not the primary verified v1 demo.
+
+## Tests and validation
+
+Latest verified results:
+
+| Area | Result |
 | --- | --- |
-| `--api-port` / `--dashboard-port` / `--shop-assist-port` | Move off the 8000 / 5173 / 3000 defaults when they are taken. |
-| `--no-seed` | Keep the existing database instead of reseeding the demo scenario. |
-| `--no-dashboard` / `--no-shop-assist` | Leave one of the web apps out. |
-| `--database` | Point at a different SQLAlchemy URL. |
+| Backend | 342 Pytest tests passed; Ruff passed |
+| ShopAssist | 46 Node tests passed; Oxlint and production build passed |
+| Dashboard | ESLint, TypeScript, and production build passed |
+| Containers | Compose validation/build, both smoke flows, service-log checks, and single-container verification passed |
 
-Next.js allows only one dev server per project directory, so stop any existing
-`shop-assist` dev server before starting this one.
-
-
-### Run the backend directly
-
-Requires Python 3.12 or newer.
+Useful local commands:
 
 ```bash
-cd backend
-python -m venv .venv
-source .venv/bin/activate
-python -m pip install -e ".[dev]"
-uvicorn app.main:app --reload
+# Compose configuration without printing resolved secret values
+docker compose config --quiet
+
+# Deterministic dashboard/recovery smoke flow
+python3 scripts/smoke_test.py --base-url http://localhost:3000
+
+# ShopAssist → DriftZero 20-interaction telemetry flow
+python3 scripts/smoke_shop_assist.py
 ```
 
-The API starts at <http://127.0.0.1:8000>. For the complete asynchronous lifecycle, run `python -m app.alert_worker`, `python -m app.recovery_worker`, and `python -m app.retention_worker` in separate backend terminals as needed.
+The complete CI workflow is defined in [`.github/workflows/ci.yml`](.github/workflows/ci.yml).
 
-### Run the dashboard directly
+## Tech stack
 
-```bash
-cd frontend
-npm install
-npm run dev
+- **Backend:** Python 3.12+, FastAPI, Pydantic, SQLAlchemy, Alembic, Uvicorn
+- **Data:** SQLite for the local demo; optional PostgreSQL driver support
+- **Dashboard:** React, TypeScript, Vite, React Router, Recharts, Nginx
+- **Reference application:** Next.js, React, TypeScript, Tailwind CSS, Groq
+- **Workers:** alert evaluation, recovery commands, retention, evidence synchronization, website refresh
+- **Quality:** Pytest, Ruff, ESLint, Oxlint, TypeScript, Node test runner
+- **Infrastructure:** Docker, Docker Compose, GitHub Actions; optional Render/Vercel configuration
+
+## Project structure
+
+```text
+DriftZero/
+├── backend/          FastAPI service, SQLAlchemy data layer, migrations, workers and tests
+├── frontend/         React/Vite reliability dashboard and Nginx proxy configuration
+├── shop-assist/      Next.js reference LLM application and Presenter Console
+├── examples/         Local evidence fixtures and connector examples
+├── docs/             Product, API, evidence, architecture and operations documentation
+├── scripts/          Local runner and end-to-end smoke tests
+├── deploy/           Optional single-container deployment supervisor
+├── .github/          CI workflow
+├── compose.yaml      Recommended complete local demonstration
+└── render.yaml       Optional Render blueprint
 ```
 
-The frontend defaults to its deterministic demo mode. Copy [`frontend/.env.example`](frontend/.env.example) to `frontend/.env.local` to change the mode or API base URL. The Docker stack avoids CORS through its same-origin Nginx proxy. Running Vite against FastAPI directly is cross-origin, so the backend allows `localhost:5173` and `127.0.0.1:5173` outside production; set `DRIFTZERO_CORS_ORIGINS` for any other port. Privileged recovery actions also need a credential — either run the API with `DRIFTZERO_RECOVERY_ALLOW_LOCAL_IDENTITY=true` or set `VITE_RECOVERY_API_KEY`. `scripts/run_local.py` configures both for you.
+## Optional deployment architecture
 
-### Run ShopAssist
+The repository retains deployment configuration for a Render backend and separate Vercel
+dashboard and ShopAssist projects. Hosted deployment is optional and is not the recommended way to
+judge the complete controlled-degradation experience.
 
-ShopAssist requires the Node version declared in its package configuration.
+The ShopAssist scenario state is process-local. A serverless host may send the Presenter Console
+request and the later chat request to different instances, causing the selected fault to disappear.
+The local Docker stack keeps those requests in one process and is therefore the reliable demo path.
 
-```bash
-cd shop-assist
-npm install
-npm run dev
-```
+A production deployment would replace process-local scenario state with shared storage such as
+Redis, replace ephemeral/local SQLite with managed PostgreSQL, narrow CORS, enable production
+authentication, and operate workers as independently scalable services. Existing deployment files
+remain useful reference implementations; see [the DevOps runbook](docs/DEVOPS_RUNBOOK.md).
 
-Open <http://localhost:3000> for the customer experience or <http://localhost:3000/demo> for presenter controls. See [`shop-assist/README.md`](shop-assist/README.md) for its current behavior and telemetry setup.
+## Current limitations
 
-### Send sample telemetry
+- This is a portfolio-scale reference system, not a production SaaS control plane.
+- Real Groq runs require the reviewer's network access, account quota, and API key.
+- Live model wording and latency can vary, so exact scores may vary around the validated result.
+- Fault injection is deliberate and clearly labeled `simulated`; it is not organic provider drift.
+- Scenario selection is process-local and intended for the single-process local demonstration.
+- The local database is SQLite and the default recovery adapter is simulated.
+- DriftZero derives safety from supplied flags in this path; it does not claim independent
+  safety-model evaluation.
+- External alert delivery, managed identity, horizontal workers, and production recovery controls
+  are outside the verified v1 scope.
 
-With the backend running:
+## Project summary
 
-```bash
-python3 examples/connectors/send_sample_telemetry.py --base-url http://localhost:8000
-```
-
-The example registers a synthetic model and submits one normalized health window. It requires no model-provider API key.
-
-## Deploying to Vercel
-
-Both web apps ship a `vercel.json`, and neither is a repository-root project, so each needs its
-own Vercel project with **Root Directory** set:
-
-| Vercel project | Root Directory | Framework |
-| --- | --- | --- |
-| Dashboard | `frontend` | Vite |
-| ShopAssist | `shop-assist` | Next.js |
-
-The API is not deployed to Vercel; it runs on Render from [`render.yaml`](render.yaml).
-
-Set these in each project's environment variables. Both default to `127.0.0.1` in code, so a
-deployment that omits them builds successfully and then fails at runtime against localhost:
-
-| Project | Variable | Value |
-| --- | --- | --- |
-| Dashboard | `VITE_API_BASE_URL` | The Render service URL, currently `https://driftzero-demo-7jzm.onrender.com` |
-| Dashboard | `VITE_DEMO_MODE` | `false` for live data, `true` for the offline demo |
-| ShopAssist | `DRIFTZERO_API_URL` | The same Render service URL |
-| ShopAssist | `DRIFTZERO_MODEL_ID` | Optional explicit DriftZero model; otherwise the unique `ShopAssist` model is resolved server-side |
-| ShopAssist | `DRIFTZERO_INGEST_KEY` | Required only for a protected telemetry connection |
-| ShopAssist | `GROQ_API_KEY` | Optional; without it ShopAssist uses its local grounded fallback |
-| ShopAssist | `SHOPASSIST_PUBLIC_URL` | The public ShopAssist origin used for social metadata |
-
-`frontend/.env.local` is gitignored, so whatever the local stack writes there does not reach a
-deployment — the Vercel values are the only ones that apply.
-
-The API's `DRIFTZERO_CORS_ORIGIN_REGEX` in `render.yaml` already allows `https://*.vercel.app`.
-Recovery approval works against that deployment because it sets
-`DRIFTZERO_RECOVERY_ALLOW_LOCAL_IDENTITY=true`; leave `VITE_RECOVERY_API_KEY` unset.
-
-The Render blueprint supplies the non-secret API settings and expects
-`DRIFTZERO_GROQ_API_KEY` (and optional `XAI_API_KEY`) to be entered as server-side secrets in
-Render. Its SQLite database is stored at `/tmp/driftzero.db`, which is intentionally ephemeral:
-restarts and redeploys can erase demo data. Use a managed database before relying on persistence.
-
-ShopAssist's active presenter scenario is also process-local. Vercel may route the presenter
-request and a later chat request to different serverless instances, or discard the instance after
-an idle period. Keep the public ShopAssist deployment healthy and run repeatable fault-injection
-demos locally until the scenario state is moved to a small shared store.
-
-## Environment variables
-
-Copy the relevant example file before changing local configuration. Never commit real credentials.
-
-- **Root Docker stack:** `DRIFTZERO_DASHBOARD_PORT`, `DRIFTZERO_API_PORT`, `DRIFTZERO_DATABASE_URL`, `DRIFTZERO_API_PREFIX`, `DRIFTZERO_ENVIRONMENT`
-- **API security:** `DRIFTZERO_API_REQUIRE_AUTH`, `DRIFTZERO_API_VIEWER_KEY`, `DRIFTZERO_API_OPERATOR_KEY`, `DRIFTZERO_API_ADMIN_KEY`, `DRIFTZERO_API_RATE_LIMIT_PER_MINUTE`, `DRIFTZERO_API_MAX_REQUEST_BYTES`, `DRIFTZERO_TRUSTED_HOSTS`, `DRIFTZERO_DOCS_ENABLED`
-- **Scoring and workers:** `DRIFTZERO_MINIMUM_SAMPLE_SIZE`, `DRIFTZERO_MINIMUM_COVERAGE`, `DRIFTZERO_FORECAST_HORIZON_MINUTES`, `DRIFTZERO_ALERT_EVALUATION_INTERVAL_SECONDS`, `DRIFTZERO_RECOVERY_WORKER_INTERVAL_SECONDS`, `DRIFTZERO_RETENTION_INTERVAL_SECONDS`
-- **Recovery:** `DRIFTZERO_RECOVERY_ALLOW_LOCAL_IDENTITY`, `DRIFTZERO_RECOVERY_OPERATOR_API_KEY`, `DRIFTZERO_RECOVERY_ADMIN_API_KEY`, `DRIFTZERO_RECOVERY_CONTROL_URL`, `DRIFTZERO_RECOVERY_CONTROL_TOKEN`
-- **Connections:** `DRIFTZERO_CONNECTION_SECRET_KEY`, `DRIFTZERO_CONNECTION_CHECK_TIMEOUT_SECONDS`
-- **Evidence ingestion:** `DRIFTZERO_EVIDENCE_MAX_FILE_BYTES`, `DRIFTZERO_EVIDENCE_LLM_PROVIDER`, `DRIFTZERO_EVIDENCE_LLM_MODEL`, `DRIFTZERO_EVIDENCE_LLM_TIMEOUT_SECONDS`, plus server-only `GEMINI_API_KEY` or `DRIFTZERO_GROQ_API_KEY`
-- **Observability:** `DRIFTZERO_LOG_LEVEL`, `DRIFTZERO_OTEL_ENABLED`, `OTEL_EXPORTER_OTLP_ENDPOINT`
-- **Dashboard:** `VITE_API_BASE_URL`, `VITE_DEMO_MODE`, `VITE_RECOVERY_API_KEY`, `VITE_RECOVERY_ACTOR`, `VITE_RECOVERY_ROLE`
-- **ShopAssist:** `DRIFTZERO_API_URL`, optional `DRIFTZERO_MODEL_ID`, optional `DRIFTZERO_INGEST_KEY`, `SHOPASSIST_PUBLIC_URL`, `GROQ_API_KEY`; `GEMINI_API_KEY` may also be used server-side by the evidence-ingestion service
-
-`GROQ_API_KEY` and DriftZero recovery credentials are server-side secrets. They must not be
-exposed through `NEXT_PUBLIC_` variables or committed environment files. Note that every
-`VITE_` variable is inlined into the dashboard's public bundle at build time, so
-`VITE_RECOVERY_API_KEY` is readable by anyone who loads the page: prefer running the API
-with `DRIFTZERO_RECOVERY_ALLOW_LOCAL_IDENTITY=true`, which needs no key.
-
-Production API behavior is fail-closed: every management route requires a configured
-viewer, operator, or administrator Bearer key, interactive API docs are disabled, telemetry
-must have a registered ingestion connection, and untrusted host headers are rejected. Viewer
-keys are read-only, operator keys may mutate but not delete, and administrator keys may delete
-or reset demo state. Never put these management keys in a browser bundle; place a real user-auth
-gateway or backend-for-frontend in front of DriftZero for a multi-user deployment. The
-`hackathon-demo` environment remains explicitly keyless so the public demonstration works.
-
-For multi-user deployments, DriftZero also provides `POST /api/v1/auth/register`,
-`/login`, `/logout`, and `/me`. Passwords are Argon2id hashes; browser sessions are opaque,
-revocable, `HttpOnly`, `SameSite=Lax` cookies; and every cookie-authenticated mutation requires
-an in-memory `X-CSRF-Token`. Registration creates an isolated tenant and administrator membership.
-Production registration requires `DRIFTZERO_AUTH_REGISTRATION_TOKEN`. Dashboard health projections
-are cached only in tenant-namespaced, short-lived server memory and are invalidated on telemetry
-writes; credentials, tokens, and passwords are never cacheable.
-
-## API overview
-
-The FastAPI service exposes versioned groups for:
-
-- model registry, lifecycle, and controlled versions
-- telemetry ingestion, traces, health timelines, and forecast history
-- incidents and evidence-backed diagnoses
-- alert rules, alert evaluation, and the in-application notification feed
-- recovery plans, approval decisions, durable commands, execution, verification, cancellation, and rollback
-- review queues and evaluation feedback
-- semantic and temporal stability tests
-- per-model audit history
-- deterministic demo reset
-
-Interactive OpenAPI documentation is available at `/docs` when the backend is running, normally <http://127.0.0.1:8000/docs>. The API prefix defaults to `/api/v1`; service readiness is exposed separately at `/healthz`.
-
-## Project status
-
-DriftZero is under active development. The repository implements and tests a substantial end-to-end
-demo lifecycle: real Groq interaction capture, approved-evidence evaluation, telemetry and trace
-storage, health scoring, forecasts, incidents, diagnosis, alerts, recovery command processing,
-verification, stability evaluation, human feedback, audit history, and a live-data dashboard.
-
-Important current boundaries:
-
-- raw-interaction evaluation uses deterministic evidence checks; the separate stability fixture and default recovery adapter are simulated;
-- ShopAssist is a reference application, not a production commerce assistant;
-- the default database is SQLite and the Render demo stores it on an ephemeral filesystem, so data can reset on restart or redeploy;
-- recovery authentication uses local demo identity or interim operator/admin API keys rather than managed OIDC;
-- the alert delivery channel is currently in-application only;
-- direct standalone browser/API development still needs CORS configuration;
-- ShopAssist scenario selection is process-local and therefore is not reliable across Vercel serverless instances; use the local demo for repeatable fault injection until that state is moved to a shared store.
-
-Do not attach consequential production credentials or recovery permissions to the demo configuration.
-
-Website reference sources can also be refreshed into source-verifiable JSON on a schedule, with
-optional xAI/Grok structuring. See [`docs/WEBSITE_SYNC.md`](docs/WEBSITE_SYNC.md) for the trust
-boundary, configuration, API, and worker behavior.
-
-## Roadmap
-
-- Add production evaluator and model/provider connectors behind the existing adapter boundaries.
-- Provide SDK instrumentation for common application and agent frameworks.
-- Make health and evaluation policies configurable per monitored system.
-- Expand task-specific and model-assisted evaluator strategies with calibration and replay.
-- Add authenticated external alert delivery and observability integrations.
-- Replace demo authentication with managed identity and tenant-scoped authorization.
-- Support managed PostgreSQL, horizontally scalable workers, and production deployment patterns.
-- Improve team workflows, collaboration, and operational reporting.
-
-## Team
-
-Built by the DriftZero team.
-
-<!-- Add team member names and roles here -->
+DriftZero demonstrates an end-to-end AI reliability pipeline: real Groq responses, provider-neutral
+raw interaction capture, approved-evidence claim verification, transparent metric derivation,
+Health-v2 scoring, degradation detection, incident creation, diagnosis, and an auditable recovery
+lifecycle. ShopAssist provides a repeatable local experiment that makes the healthy and degraded
+states visible from the user response through the backend and dashboard.
 
 ## License
 
