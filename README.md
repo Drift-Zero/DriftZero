@@ -25,12 +25,16 @@ metrics and traces, and turns material degradation into a health state and incid
 that calls Groq's `openai/gpt-oss-120b` model through a server-side route and sends batches of 20
 raw interactions to DriftZero.
 
+![ShopAssist showing a real Groq response](docs/Images/shopassist-real-groq-answer.png)
+
 The following result was validated end to end:
 
 | Window | Health-v2 | Quality | Groundedness | Samples | Source |
 | --- | ---: | ---: | ---: | ---: | --- |
 | Healthy Groq traffic | **83.9 · HEALTHY** | 60 | 85.71 | 20 | `observed` |
 | Controlled Wrong Number fault | **63.4 · CRITICAL** | 35 | 35 | 20 | `simulated` |
+
+![DriftZero healthy Health-v2 overview](docs/Images/driftzero-health-overview-healthy.png)
 
 In the degraded run, the correct AeroBuds price was `$119` and the controlled response reported
 `$129`. The Groq API calls were real; the incorrect context was deliberately injected by the
@@ -199,6 +203,9 @@ when ShopAssist has buffered 20 interactions.
    Health-v2 window and its evidence-derived metrics.
 7. Return to the [Presenter Console](http://localhost:3100/demo), select **Wrong Number**, and
    choose **Run Selected Tests**.
+
+   ![ShopAssist Presenter Console with Wrong Number enabled](docs/Images/shopassist-presenter-wrong-number.png)
+
 8. Ask `What is the price of AeroBuds?` and confirm the controlled response differs from the
    trusted `$119` value while still identifying the real Groq model.
 9. Complete another 20 interactions with Wrong Number active.
@@ -206,6 +213,9 @@ when ShopAssist has buffered 20 interactions.
     critical Health-v2 state.
 11. Open [Incidents](http://localhost:3000/incidents) and inspect the HIGH incident linked to the
     degraded window.
+
+    ![DriftZero HIGH incident from controlled degradation](docs/Images/driftzero-incident-high.png)
+
 12. Return to the Presenter Console, choose **Apply recovery**, and then choose **Reset baseline**.
     Ask the AeroBuds price again and confirm normal `$119` behavior returns.
 
@@ -254,6 +264,8 @@ POST /api/v1/models/{model_id}/interactions/evaluate
 JSON and GeoJSON evidence use deterministic parsing. Uploaded files and URL sources remain outside
 the scoring trust boundary until an operator approves them. Unstructured webpage/PDF/text
 structuring can use Groq, but generated facts still have to pass source and exact-quote validation.
+
+![Approved ShopAssist evidence in DriftZero](docs/Images/driftzero-evidence-approved-shopassist.png)
 
 More detail:
 
