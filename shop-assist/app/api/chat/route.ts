@@ -4,12 +4,8 @@ import {
   type ConversationContext,
 } from '../../../lib/assistant.ts';
 import { products } from '../../../data/catalog.ts';
-import {
-  DEFAULT_SCENARIO,
-  isScenarioId,
-  normalizeScenarios,
-} from '../../../lib/demo-state.ts';
 import { buildDetectionReport } from '../../../lib/detection.ts';
+import { getActiveScenarios } from '../../../lib/server-scenario-state.ts';
 import {
   buildGroundedPrompt,
   groundedResponseSchema,
@@ -23,8 +19,6 @@ import { recordInteraction } from '../../../lib/telemetry.ts';
 type ChatRequest = {
   message?: unknown;
   history?: unknown;
-  scenario?: unknown;
-  scenarios?: unknown;
 };
 
 function readHistory(value: unknown): ChatHistoryEntry[] | null {
@@ -121,23 +115,7 @@ export async function POST(request: Request): Promise<Response> {
     );
   }
 
-  const rawScenarios = body.scenarios ?? body.scenario ?? DEFAULT_SCENARIO;
-  const scenarioValues = Array.isArray(rawScenarios)
-    ? rawScenarios
-    : [rawScenarios];
-  if (
-    !scenarioValues.length ||
-    scenarioValues.some((scenario) => !isScenarioId(scenario))
-  ) {
-    return Response.json(
-      {
-        error: 'invalid_scenario',
-        detail: 'One or more selected demo scenarios are not valid.',
-      },
-      { status: 400 },
-    );
-  }
-  const scenarios = normalizeScenarios(scenarioValues);
+  const scenarios = getActiveScenarios();
 
   const apiKey = process.env.GROQ_API_KEY;
   const startedAt = Date.now();
@@ -191,6 +169,7 @@ export async function POST(request: Request): Promise<Response> {
       answer: reference.text,
       model: 'Local grounded fallback',
       status: 'completed',
+      scenarios,
       sources: reference.citations,
       telemetry,
       detection: detect(
@@ -219,6 +198,7 @@ export async function POST(request: Request): Promise<Response> {
     return Response.json({
       ...reply,
       answer: grounded.answer,
+      scenarios,
       sources: resolveGroundingSources(grounded.sourceIds),
       telemetry,
       detection: detect(grounded.answer, grounded.sourceIds),

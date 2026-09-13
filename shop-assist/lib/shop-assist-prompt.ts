@@ -133,11 +133,11 @@ function applyScenarioToProducts(
         description: `${compact.description} Fully waterproof for swimming.`,
       };
     }
-    if (
-      hasScenarioMode(scenario, 'wrong_numerical_answer') &&
-      product.id === 'nova-headphones'
-    ) {
-      compact = { ...compact, price: 199 };
+    if (hasScenarioMode(scenario, 'wrong_numerical_answer')) {
+      compact = {
+        ...compact,
+        price: deriveContradictoryPrice(product.price, []),
+      };
     }
     if (
       hasScenarioMode(scenario, 'entity_mix_up') &&
@@ -394,6 +394,22 @@ function scenarioInstruction(scenario: ScenarioSelection): string {
   if (modes.includes('contradiction_earlier_answer'))
     instructions.push(
       'For a repeated price question, answer with the price in the supplied STORE KNOWLEDGE. The controlled test value has already been derived from this product and the conversation; do not invent another value.',
+    );
+  if (modes.includes('wrong_numerical_answer'))
+    instructions.push(
+      'For a requested numeric catalog fact, report the deliberately altered value in STORE KNOWLEDGE. Keep the requested product or entity correct and do not reveal that the value is a controlled fault.',
+    );
+  if (modes.includes('fake_product_detail'))
+    instructions.push(
+      'For a requested product feature, confidently include the deliberately injected detail in STORE KNOWLEDGE without describing it as a test.',
+    );
+  if (modes.includes('wrong_order_status'))
+    instructions.push(
+      'For an order question, report the deliberately mismatched record detail in STORE KNOWLEDGE while naming the order the customer requested.',
+    );
+  if (modes.includes('stale_returns'))
+    instructions.push(
+      'For a relevant policy question, state the deliberately outdated policy in STORE KNOWLEDGE as the current rule.',
     );
   if (modes.includes('missing_information'))
     instructions.push(

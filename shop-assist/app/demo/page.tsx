@@ -20,7 +20,6 @@ import { Button } from '../../components/ui/button';
 import { Link000, Link005 } from '../../components/ui/skiper-ui/skiper40';
 import {
   isScenarioId,
-  readScenarios,
   scenarios,
   writeScenarios,
   type HallucinationTestId,
@@ -86,9 +85,22 @@ export default function DemoConsole() {
   const isNormal = activeIds.length === 1 && activeIds[0] === 'healthy';
   const isRecovered = activeIds.length === 1 && activeIds[0] === 'recovered';
 
-  function setActive(values: ScenarioId[]) {
-    writeScenarios(values);
-    setActiveIds(values);
+  async function setActive(values: ScenarioId[]) {
+    const response = await fetch('/api/demo-scenarios', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ scenarios: values }),
+    });
+    const payload = (await response.json()) as { scenarios?: unknown };
+    if (
+      !response.ok ||
+      !Array.isArray(payload.scenarios) ||
+      payload.scenarios.some((scenario) => !isScenarioId(scenario))
+    )
+      throw new Error('Could not update the ShopAssist demo state.');
+    const active = payload.scenarios as ScenarioId[];
+    writeScenarios(active);
+    setActiveIds(active);
   }
 
   function toggleTest(id: HallucinationTestId) {
@@ -107,24 +119,36 @@ export default function DemoConsole() {
     setSelectedIds(ids);
   }
 
-  function runSelectedTests() {
+  async function runSelectedTests() {
     if (!selectedIds.length) return;
     clearDetectionReport();
     setDetection(null);
-    setActive(selectedIds);
+    await setActive(selectedIds);
   }
 
   useEffect(() => {
-    queueMicrotask(() => {
-      const saved = readScenarios();
-      setActiveIds(saved);
-      setSelectedIds(
-        saved.filter((id): id is HallucinationTestId =>
-          scenarios.some((scenario) => scenario.id === id),
-        ),
-      );
-      setDetection(readDetectionReport());
-    });
+    void fetch('/api/demo-scenarios')
+      .then(async (response) => {
+        if (!response.ok) throw new Error('Could not read demo state.');
+        return (await response.json()) as { scenarios?: unknown };
+      })
+      .then((payload) => {
+        if (
+          !Array.isArray(payload.scenarios) ||
+          payload.scenarios.some((scenario) => !isScenarioId(scenario))
+        )
+          throw new Error('Invalid demo state response.');
+        const active = payload.scenarios as ScenarioId[];
+        writeScenarios(active);
+        setActiveIds(active);
+        setSelectedIds(
+          active.filter((id): id is HallucinationTestId =>
+            scenarios.some((scenario) => scenario.id === id),
+          ),
+        );
+        setDetection(readDetectionReport());
+      })
+      .catch(() => undefined);
     const updateDetection = (event: Event) => {
       const detail = (event as CustomEvent<DetectionReport | null>).detail;
       setDetection(detail ?? readDetectionReport());
@@ -161,7 +185,7 @@ export default function DemoConsole() {
           additionalProperties: false,
         },
         annotations: { readOnlyHint: false, untrustedContentHint: false },
-        execute(input) {
+        async execute(input) {
           const values = (input as { scenarios?: unknown }).scenarios;
           if (
             !Array.isArray(values) ||
@@ -172,7 +196,7 @@ export default function DemoConsole() {
           const ids = values as ScenarioId[];
           clearDetectionReport();
           setDetection(null);
-          setActive(ids);
+          await setActive(ids);
           setSelectedIds(ids as HallucinationTestId[]);
           return { scenarios: ids, status: 'active' };
         },
@@ -458,14 +482,17 @@ export default function DemoConsole() {
           {!isNormal && !isRecovered && (
             <Button
               className="recovery-button"
-              onClick={() => setActive(['recovered'])}
+              onClick={() => void setActive(['recovered'])}
             >
               <ShieldCheck size={16} />
               Apply recovery
             </Button>
           )}
           {isRecovered && (
-            <Button variant="outline" onClick={() => setActive(['healthy'])}>
+            <Button
+              variant="outline"
+              onClick={() => void setActive(['healthy'])}
+            >
               <RotateCcw size={16} />
               Reset baseline
             </Button>

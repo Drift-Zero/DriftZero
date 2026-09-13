@@ -6,12 +6,18 @@ stock checks, demo-order tracking, shipping, returns, refunds, warranties, and p
 
 The presenter console at `/demo` supports these controlled scenarios:
 
-- stale returns policy;
-- inventory mismatch;
-- expired promotion;
-- outdated warranty;
-- conflicting shipping guides;
+- live data change;
+- made-up detail;
+- wrong number;
+- wrong record;
+- policy mismatch;
 - recovered and healthy baseline states.
+
+Presenter selections are written to a server-authoritative, process-local state
+through `/api/demo-scenarios`. The chat route reads that state and does not trust
+the customer request body to select faults. This is intentionally demo-only:
+the state resets to healthy when the ShopAssist process restarts and is not
+shared across multiple application instances.
 
 ## Run locally
 
