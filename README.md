@@ -190,6 +190,13 @@ application. They keep the primary demo self-contained instead of depending on a
 | DriftZero backend | <http://localhost:8000> |
 | Interactive API docs | <http://localhost:8000/docs> |
 
+These URLs use the default host ports in `compose.yaml`. If you override
+`DRIFTZERO_DASHBOARD_PORT`, `SHOP_ASSIST_PORT`, or `DRIFTZERO_API_PORT` in `.env`,
+use the corresponding port in your browser and dashboard connection settings.
+Keep `SHOPASSIST_PUBLIC_URL` consistent with the ShopAssist browser URL.
+Container-to-container traffic still uses `http://api:8000`; `api` is a
+Compose service hostname and is not the browser API address.
+
 If the dashboard says **Demo data**, open **Settings → Connection**, select the live API mode, and
 use `http://127.0.0.1:8000` as the API base URL. A fresh Docker browser session normally starts in
 live mode.
