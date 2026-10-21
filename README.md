@@ -9,6 +9,14 @@ and opens incidents when behavior degrades.
 The recommended way to evaluate this repository is to clone it and run the complete system
 locally with Docker Compose.
 
+## Documentation
+
+- [Backend development](backend/README.md)
+- [Dashboard development](frontend/README.md)
+- [ShopAssist demo walkthrough](docs/SHOP_ASSIST_DEMO.md)
+- [Evidence ingestion](docs/EVIDENCE_INGESTION.md)
+- [Operations and deployment runbook](docs/DEVOPS_RUNBOOK.md)
+
 ## The problem
 
 LLM applications can remain online while their answers become less reliable. A model may use
