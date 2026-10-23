@@ -50,6 +50,19 @@ it does not start the backend or the background workers.
 Environment values are read when Vite starts, and act as the defaults a fresh browser begins
 with. Restart the development server after changing them.
 
+### When an environment change seems ignored
+
+Saved browser settings take precedence over the environment defaults.
+If a restarted build still uses an old API URL or Demo mode, open
+**Settings → Connection** and inspect the active mode and base URL.
+**Settings → Advanced → Diagnostics** shows both the active API base URL
+and the build-time API base for comparison.
+
+Update only the connection fields when that is all you need to change.
+**Restore defaults** also resets workspace, appearance, and notification
+preferences to this build's defaults; it does not delete API models or
+alert rules. Export your settings first if you want to keep those choices.
+
 ## Settings
 
 The Settings screen (`/settings`) overrides those defaults at runtime and stores the result in
