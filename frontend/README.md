@@ -4,12 +4,22 @@ React, Vite, and TypeScript dashboard for DriftZero's model reliability lifecycl
 
 ## Start locally
 
+From the repository root, enter the dashboard directory:
+
 ```bash
+cd frontend
 npm install
 npm run dev
 ```
 
-Copy `.env.example` to `.env.local` when you want to change the defaults.
+Vite is configured to start on port `5173`; open the local URL printed in
+the terminal, normally <http://localhost:5173>. This starts the dashboard
+development server. Live API mode also requires the
+[backend](../backend/README.md#run-locally) to be running.
+
+While in `frontend/`, copy `.env.example` to `.env.local` when you want to change
+the defaults. The [root quick start](../README.md#quick-start) runs the complete
+system with Docker Compose instead.
 
 ## Modes
 
