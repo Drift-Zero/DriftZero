@@ -72,10 +72,13 @@ format was parsed.
 
 1. Register or seed ShopAssist.
 2. Open **Evidence**, select ShopAssist, and upload
-   `examples/evidence/shopassist-catalog.json` or
-   `examples/evidence/shopassist-policies.md`.
+   [`examples/evidence/shopassist-catalog.json`](../examples/evidence/shopassist-catalog.json).
 3. Inspect the extracted JSON paths, then approve the source.
-4. Search for `AeroFit price`; the result shows the exact catalogue record and
-   corpus version.
+4. Search for `Nova ANC Headphones price`. The supplied catalogue contains
+   that product with `price_usd: 149`; inspect the returned quote, source
+   location, and corpus version. The fixture does not contain `AeroFit`.
+
+   For policy questions, import and separately approve
+   [`shopassist-policies.md`](../examples/evidence/shopassist-policies.md).
 5. Feed those hits to the claim-verification stage. Do not calculate a
    groundedness score when no approved evidence is returned.
