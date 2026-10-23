@@ -11,17 +11,26 @@ modify an external model deployment.
 
 ## Run locally
 
-Requires Python 3.12 or newer.
+Requires Python 3.12 or newer. From the repository root, enter `backend/`
+before creating the environment or running the commands below:
 
 ```bash
+cd backend
 python -m venv .venv
 # Windows: .venv\Scripts\activate
 # macOS/Linux: source .venv/bin/activate
 python -m pip install -e ".[dev]"
+python -m app.migrations
 uvicorn app.main:app --reload
 ```
 
 Open `http://127.0.0.1:8000/docs` for the interactive OpenAPI documentation.
+
+`python -m app.migrations` applies the current Alembic migrations to the
+database selected by the backend environment. The Docker entrypoint runs the
+same step before Uvicorn; run it explicitly for this manual startup path.
+Use the [root quick start](../README.md#quick-start) to launch the complete
+dashboard, ShopAssist, API, and worker stack with Docker Compose.
 
 `production` and `prod` environments automatically protect management endpoints.
 Configure distinct `DRIFTZERO_API_VIEWER_KEY`, `DRIFTZERO_API_OPERATOR_KEY`, and
