@@ -264,6 +264,24 @@ Copy `.env.example` values into the deployment environment. Environment variable
 the `DRIFTZERO_` prefix. SQLite is the zero-setup default; set `DRIFTZERO_DATABASE_URL` to another
 SQLAlchemy-compatible database URL for a persistent deployment.
 
+For the manual Uvicorn path above, `Settings.from_env()` reads the process
+environment. Merely placing values in a `.env` file does not load them into
+that command. Export the values in the shell that starts the API and run
+workers with the same database configuration. For example, in PowerShell
+from `backend/` after activating the virtual environment:
+
+```powershell
+$env:DRIFTZERO_DATABASE_URL = "sqlite:///./driftzero.db"
+$env:DRIFTZERO_LOG_LEVEL = "INFO"
+python -m app.migrations
+uvicorn app.main:app --reload
+```
+
+This SQLite path is relative to the process working directory. In the
+Docker Compose workflow, the root `.env` supplies substitutions for
+[`compose.yaml`](../compose.yaml); the API and workers share the configured
+database volume. These are separate configuration-loading paths.
+
 To enable the Groq model workbench, set `DRIFTZERO_GROQ_API_KEY` on the backend.
 The key is used only for model discovery and inference and is never returned to
 the dashboard. DriftZero evaluates the resulting responses with deterministic
