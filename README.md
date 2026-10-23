@@ -248,11 +248,27 @@ docker compose logs --follow shop-assist api
 A successful flush includes the structured event `shopassist.monitoring.sent` with a sample size
 of 20.
 
+### Stop and resume the local stack
+
 Stop the stack while preserving its database volume:
 
 ```bash
 docker compose down
 ```
+
+Start the same Compose project again from this repository directory:
+
+```bash
+docker compose up --build
+```
+
+The default SQLite database lives in the `driftzero-data` named volume,
+shared by the API and workers. With the same project and volume, stored
+model registrations, approved evidence, and history remain available.
+ShopAssist's in-memory interaction buffer and selected scenario are
+process-local and do not persist across restarts. Avoid volume removal
+when you intend to preserve the database; a container restart is not a
+fresh-data demo.
 
 ## How evidence-backed evaluation works
 
