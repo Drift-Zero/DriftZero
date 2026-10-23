@@ -317,6 +317,27 @@ incident. The incident records the opening snapshot, last healthy baseline when 
 lowest observed score. Diagnosis and recovery infrastructure exists, but the default recovery
 adapter is simulated and autonomous real-world recovery is not the primary verified v1 demo.
 
+## Local service troubleshooting
+
+From the repository root, inspect container state and recent service logs:
+
+```bash
+docker compose ps
+docker compose logs --tail 50 api dashboard shop-assist
+```
+
+For the default host ports, check API and dashboard readiness independently:
+
+```bash
+curl --fail http://localhost:8000/healthz
+curl --fail http://localhost:3000/healthz
+```
+
+Adjust the URLs for any host-port overrides. A readiness response confirms
+the corresponding service is reachable; it does not establish that Groq
+responses, evidence approval, or 20-interaction delivery are working. Use
+the full demo walkthrough above for those checks.
+
 ## Tests and validation
 
 Latest verified results:
