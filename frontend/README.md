@@ -21,6 +21,26 @@ While in `frontend/`, copy `.env.example` to `.env.local` when you want to chang
 the defaults. The [root quick start](../README.md#quick-start) runs the complete
 system with Docker Compose instead.
 
+## Check and preview a build
+
+Run these checks from `frontend/`:
+
+```bash
+npm run lint
+npm run build
+```
+
+`lint` runs ESLint. `build` runs the TypeScript project build before
+creating the Vite production bundle. After a successful build, inspect it
+locally with:
+
+```bash
+npm run preview
+```
+
+Open the preview URL printed by Vite. Preview serves the built dashboard;
+it does not start the backend or the background workers.
+
 ## Modes
 
 - Demo mode: `VITE_DEMO_MODE=true`
