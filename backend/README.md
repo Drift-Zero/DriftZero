@@ -181,6 +181,21 @@ Omit `--once` to loop. Retention deletes traces older than a model's
 `DRIFTZERO_RETENTION_INTERVAL_SECONDS` (default 3600). Both workers open an
 existing database and do not create the schema, so run migrations first.
 
+### Evidence synchronization worker
+
+To refresh due synchronized evidence URL sources from `backend/`, using
+the same activated environment and database configuration as the API:
+
+```bash
+python -m app.evidence_sync_worker --once
+```
+
+This performs one synchronization pass and exits. Omit `--once` for the
+looping service; `DRIFTZERO_EVIDENCE_SYNC_INTERVAL_SECONDS` controls the
+wait between passes. The worker emits `evidence_sync.completed` summaries.
+It performs network and database work, so it is not a read-only status check.
+The Compose stack already starts this worker as a separate service.
+
 ## Health-score policy
 
 All dimensions are normalized to `0–100`, where higher is healthier. The `health-v2` policy uses
