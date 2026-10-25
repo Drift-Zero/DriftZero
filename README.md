@@ -438,6 +438,31 @@ DriftZero/
 └── render.yaml       Optional Render blueprint
 ```
 
+## Optional Python local supervisor
+
+[`scripts/run_local.py`](scripts/run_local.py) is an alternative local
+supervisor for an already installed backend environment and Node app
+dependencies. Docker Compose remains the recommended complete demo path.
+
+From the repository root, the following skips the demo-reset seed request:
+
+```bash
+python scripts/run_local.py --no-seed
+```
+
+The helper still runs migrations and starts the API plus recovery, alert,
+retention, website, and evidence-sync workers. It uses development settings
+and local recovery identity. When the dashboard is enabled it overwrites
+`frontend/.env.local` with the selected API URL and live mode, so preserve
+any custom file before using it. `--no-seed` does not disable worker writes
+or retention deletion.
+
+Its default ports are API `8000`, dashboard `5173`, and ShopAssist `3000`;
+these differ from the Compose frontend ports. Use `--api-port`,
+`--dashboard-port`, and `--shop-assist-port` to change them, or
+`--no-dashboard` / `--no-shop-assist` to omit the corresponding Node app.
+Ctrl+C stops the supervised processes.
+
 ## Optional deployment architecture
 
 The repository retains deployment configuration for a Render backend and separate Vercel
