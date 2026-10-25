@@ -378,6 +378,20 @@ python3 scripts/smoke_test.py --base-url http://localhost:3000
 python3 scripts/smoke_shop_assist.py
 ```
 
+### Legacy ShopAssist telemetry smoke check
+
+`scripts/smoke_shop_assist.py` sends up to 40 chat requests, stopping when
+the response reports `telemetry: sent`. It accepts `--shop-url` and
+`--api-url` for non-default ports and requires a registered ShopAssist model.
+
+The script currently requests the `stale_returns` scenario and asserts an
+`observed` snapshot with 20 samples and groundedness below 80. Those are
+legacy scenario-specific assertions, not the acceptance contract for the
+current Wrong Number demonstration with explicit `simulated` labeling.
+Inspect them before interpreting a failure or presenting the script as
+evidence that the primary live demo passed. It sends real HTTP requests
+and can create stored telemetry and consume provider quota.
+
 ### Deterministic recovery smoke check
 
 `scripts/smoke_test.py` is a mutating demo integration check. It calls
