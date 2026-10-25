@@ -63,6 +63,19 @@ Update only the connection fields when that is all you need to change.
 preferences to this build's defaults; it does not delete API models or
 alert rules. Export your settings first if you want to keep those choices.
 
+## Recovery key configuration
+
+A key entered in **Settings → Connection** is stored separately from the
+ordinary settings in `sessionStorage`. It is excluded from settings export
+and import. The key remains browser-accessible; this storage choice is not
+a server-side secret vault.
+
+`VITE_RECOVERY_API_KEY`, if supplied at build time, is compiled into the
+public dashboard JavaScript. Leave it blank for a shared build and configure
+the runtime connection only for your intended local or controlled workflow.
+Follow the [backend authentication guidance](../backend/README.md#run-locally)
+for the appropriate server-side role and access configuration.
+
 ## Move settings between browsers
 
 Open **Settings → Advanced → Export and import** and choose **Download JSON**
