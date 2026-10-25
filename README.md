@@ -378,6 +378,24 @@ python3 scripts/smoke_test.py --base-url http://localhost:3000
 python3 scripts/smoke_shop_assist.py
 ```
 
+### Deterministic recovery smoke check
+
+`scripts/smoke_test.py` is a mutating demo integration check. It calls
+`POST /api/v1/demo/reset`, submits a telemetry window, approves a recovery
+plan, queues execution, and polls for a recovered result. Use a disposable
+local demo database and keep the recovery worker running.
+
+From the repository root, with the stack already running:
+
+```bash
+python scripts/smoke_test.py --base-url http://localhost:3000 --timeout 90
+```
+
+The base URL must serve both `/healthz` and `/api/v1/` routes; the Compose
+dashboard proxy does so. For configured authentication, the script accepts
+`DRIFTZERO_RECOVERY_API_KEY` from its process environment. Passing this
+deterministic scenario does not validate the separate live Groq walkthrough.
+
 The complete CI workflow is defined in [`.github/workflows/ci.yml`](.github/workflows/ci.yml).
 
 ## Tech stack
