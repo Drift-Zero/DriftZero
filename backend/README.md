@@ -196,6 +196,22 @@ wait between passes. The worker emits `evidence_sync.completed` summaries.
 It performs network and database work, so it is not a read-only status check.
 The Compose stack already starts this worker as a separate service.
 
+### Website refresh worker
+
+Website connections have their own refresh worker. From `backend/`, run:
+
+```bash
+python -m app.website_worker --once
+```
+
+It considers non-paused website connections, refreshes those whose schedule
+is due, and reports refreshed and failed counts in
+`website_refresh.completed`. Individual refresh errors produce
+`website_refresh.failed` events. Omit `--once` to loop; the polling interval
+is `DRIFTZERO_WEBSITE_REFRESH_INTERVAL_SECONDS`. Initialize the database
+with migrations first and use the API's database configuration. This is
+a refresh operation that can fetch remote content and persist evidence.
+
 ## Health-score policy
 
 All dimensions are normalized to `0–100`, where higher is healthier. The `health-v2` policy uses
