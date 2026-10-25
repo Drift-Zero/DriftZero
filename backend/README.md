@@ -181,6 +181,14 @@ Omit `--once` to loop. Retention deletes traces older than a model's
 `DRIFTZERO_RETENTION_INTERVAL_SECONDS` (default 3600). Both workers open an
 existing database and do not create the schema, so run migrations first.
 
+The current retention worker selects active models in `DEFAULT_TENANT_ID`.
+Paused or retired models and other tenants are outside that selection.
+`--once` still performs deletion; it is not a dry run. Inspect
+`retention.completed` for `evaluated_models`, `removed_traces`, and
+`failed_models`, and `retention.failed` for per-model failures. This
+documents the implemented scope rather than claiming tenant-wide retention
+coverage for every deployment.
+
 ### Evidence synchronization worker
 
 To refresh due synchronized evidence URL sources from `backend/`, using
