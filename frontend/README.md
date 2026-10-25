@@ -63,6 +63,19 @@ Update only the connection fields when that is all you need to change.
 preferences to this build's defaults; it does not delete API models or
 alert rules. Export your settings first if you want to keep those choices.
 
+## Move settings between browsers
+
+Open **Settings → Advanced → Export and import** and choose **Download JSON**
+or **Copy to clipboard**. The downloaded file is `driftzero-settings.json`.
+In the destination browser, paste the JSON into the import field and choose
+**Import settings**.
+
+Import replaces the settings object; it does not merge selected fields.
+Missing or unsupported values return to this build's defaults, and malformed
+JSON is rejected. Export the destination settings first if you need to keep
+them. The file contains dashboard preferences, not backend models, alert
+rules, evidence, telemetry, or the session-held recovery API key.
+
 ## Settings
 
 The Settings screen (`/settings`) overrides those defaults at runtime and stores the result in
