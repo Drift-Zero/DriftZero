@@ -6,8 +6,13 @@ FastAPI service implementing DriftZero's first vertical slice:
 telemetry → health trajectory → diagnosis → recovery approval → execution → verification
 ```
 
-The included recovery adapter and ShopAssist scenario are deterministic simulations. They never
-modify an external model deployment.
+The default recovery adapter and legacy `/api/v1/demo/reset` scenario are
+deterministic simulations; the default adapter does not modify an external
+model deployment. The recommended
+[ShopAssist walkthrough](../README.md#full-local-demo-walkthrough) instead
+uses real Groq responses and backend evidence verification. Deliberately
+injected faults remain labeled `simulated`, and live response monitoring
+does not imply that recovery actions control the provider deployment.
 
 ## Run locally
 
