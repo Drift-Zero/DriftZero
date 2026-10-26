@@ -69,7 +69,7 @@ recovery plan.
 
 | Method | Path | Purpose |
 | --- | --- | --- |
-| `GET` | `/healthz` | Service readiness |
+| `GET` | `/healthz` | API liveness and configured environment |
 | `POST` | `/api/v1/models` | Register a monitored AI system |
 | `POST` | `/api/v1/shopassist/telemetry` | Legacy simulated-demo telemetry window (minimum 20 samples) |
 | `POST` | `/api/v1/models/{model_id}/interactions/evaluate` | Evaluate raw interactions against approved evidence and record Health-v2 telemetry |
@@ -105,6 +105,12 @@ recovery plan.
 | `GET` | `/api/v1/recovery/{id}/verification` | Read the latest verification verdict |
 | `GET` | `/api/v1/recovery-commands/{id}` | Poll a queued command |
 | `GET` | `/api/v1/models/{id}/audit` | Read the model's audit history |
+
+`GET /healthz` returns `status: "ok"` and the configured `environment`.
+The handler itself does not query the database, contact Groq, or check the
+background workers. A successful response confirms that the API can serve
+that route; use the relevant model, evidence, and worker operations to
+assess those separate dependencies.
 
 ### User-session endpoints
 
