@@ -47,6 +47,12 @@ it does not start the backend or the background workers.
 - Live API mode: `VITE_DEMO_MODE=false`
 - Backend origin: `VITE_API_BASE_URL=http://127.0.0.1:8000`
 
+Use the backend origin as the base URL, without an `/api/v1` suffix. The
+client appends routes such as `/healthz` and `/api/v1/models` itself. For
+example, `http://127.0.0.1:8000/api/v1` would produce an incorrect duplicated
+prefix for model requests. A reverse proxy may supply a common deployment
+path prefix, but it must expose both health and API routes beneath it.
+
 Environment values are read when Vite starts, and act as the defaults a fresh browser begins
 with. Restart the development server after changing them.
 
