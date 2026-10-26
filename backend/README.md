@@ -106,6 +106,22 @@ recovery plan.
 | `GET` | `/api/v1/recovery-commands/{id}` | Poll a queued command |
 | `GET` | `/api/v1/models/{id}/audit` | Read the model's audit history |
 
+### User-session endpoints
+
+With the default `/api/v1` prefix, the authentication router exposes:
+
+| Method | Path | Result |
+| --- | --- | --- |
+| POST | `/api/v1/auth/register` | Creates a user session; returns 201 on success |
+| POST | `/api/v1/auth/login` | Creates a session for valid credentials |
+| GET | `/api/v1/auth/me` | Returns the current user identity; requires a user session |
+| POST | `/api/v1/auth/logout` | Revokes the current session and clears its cookie; returns 204 |
+
+Registration and login set an HttpOnly session cookie and return a response
+containing the user, a CSRF token, and the session expiry. Cookies are marked
+Secure in `production` / `prod`. These user sessions are separate from the
+server-configured management and recovery API keys described above.
+
 ## Register a model
 
 Registration can create the model identity and its first controlled version in
