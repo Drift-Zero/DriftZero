@@ -153,6 +153,13 @@ SQLite is the zero-setup default. The schema is portable, so pointing
 `DRIFTZERO_DATABASE_URL` at PostgreSQL requires no model changes; install the
 driver with `python -m pip install -e ".[postgres]"`.
 
+The database layer normalizes URLs beginning with `postgres://` or
+`postgresql://` to `postgresql+psycopg://`, selecting psycopg 3. An explicit
+driver-qualified URL is retained. Installing the PostgreSQL extra supplies
+the psycopg driver; setting a URL alone does not install it or provision a
+database. Run migrations against the intended database and give the API
+and workers the same connection configuration.
+
 ```bash
 alembic upgrade head                              # apply migrations
 alembic revision --autogenerate -m "describe it"  # after changing a model
