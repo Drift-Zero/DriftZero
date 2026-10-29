@@ -74,11 +74,18 @@ giving DriftZero the model provider's API key.
 
 ## ShopAssist adapter
 
-ShopAssist evaluates answers inside its `/api/chat` server route and keeps a
-server-side buffer. Every complete 20-interaction batch is normalized into this
-contract and sent to the legacy `POST /api/v1/shopassist/telemetry` simulated-demo route using the server-only
-`DRIFTZERO_API_URL`. Browser JavaScript never reads provider keys or the API URL.
+The current server-side `recordInteraction` path buffers raw observations
+and sends each complete 20-interaction batch to
+`POST /api/v1/models/{model_id}/interactions/evaluate`. The backend derives
+scores from approved evidence. `DRIFTZERO_API_URL` and the optional
+`DRIFTZERO_INGEST_KEY` are server-only values; the key is sent as
+`X-DriftZero-Ingest-Key`.
 
-The window uses `source: "observed"` because its scores are derived from the 20
-actual ShopAssist responses. Individual traces retain `is_simulated: true` for
-controlled failure scenarios and `false` for healthy or recovered scenarios.
+A batch is labeled `simulated` if any interaction has `isSimulated: true`;
+otherwise it is labeled `observed`. The payload also retains each
+interaction's `is_simulated` flag. This preserves deliberate fault provenance
+even when provider calls themselves were real.
+
+The legacy `/api/v1/shopassist/telemetry` route and deterministic scoring
+helpers remain available for explicit simulation fixtures. They are not
+the current raw-interaction delivery path.
