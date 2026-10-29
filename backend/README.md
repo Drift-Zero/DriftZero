@@ -133,6 +133,16 @@ containing the user, a CSRF token, and the session expiry. Cookies are marked
 Secure in `production` / `prod`. These user sessions are separate from the
 server-configured management and recovery API keys described above.
 
+For protected API requests authenticated through a user-session cookie,
+methods other than GET and HEAD also require the matching `X-CSRF-Token`.
+Use the `csrf_token` returned by registration or login. A missing or
+mismatched token returns 403 with `A valid CSRF token is required.`
+The logout POST follows this session-mutation check as well.
+
+The dashboard client includes cookies with its requests and adds its
+in-memory CSRF value to mutations. Session authorization still enforces
+role restrictions; supplying a CSRF token does not elevate the user's role.
+
 ## Register a model
 
 Registration can create the model identity and its first controlled version in
