@@ -383,6 +383,20 @@ headers, including `X-CSRF-Token`. Changing an API URL in the dashboard
 does not update the server's origin list. An origin is the dashboard
 address making the request, not the target API URL.
 
+### Request throttling
+
+`DRIFTZERO_API_RATE_LIMIT_PER_MINUTE` defaults to 300. The limiter counts
+requests in a 60-second process-local window and returns 429 with
+`error: rate_limit_exceeded` and `Retry-After: 60` when the bucket exceeds
+the configured limit. `/healthz` is exempt, and setting the limit to zero
+disables this built-in limiter.
+
+A supplied Authorization header, or otherwise an ingestion-key header,
+defines the bucket identity. Without either header, it uses the client
+address; cookie-only sessions from that address therefore share a bucket.
+Separate processes do not share counters. Use a shared gateway limit
+when deploying multiple API instances.
+
 ### Request and upload sizes
 
 The default `DRIFTZERO_API_MAX_REQUEST_BYTES` is 8,388,608 bytes (8 MiB)
