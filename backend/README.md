@@ -360,6 +360,21 @@ are deliberately not claimed until authenticated delivery adapters exist.
 
 ## Configuration
 
+### Browser origins
+
+`DRIFTZERO_CORS_ORIGINS` accepts a comma-separated list of browser origins,
+including each scheme and port. `DRIFTZERO_CORS_ORIGIN_REGEX` is a separate
+optional matching rule. With no explicit origin list outside production,
+the API defaults to localhost and 127.0.0.1 on ports 5173 and 3000.
+Production has no such fallback; configure the intended dashboard origins.
+
+The middleware permits credentials and the documented API methods and
+headers, including `X-CSRF-Token`. Changing an API URL in the dashboard
+does not update the server's origin list. An origin is the dashboard
+address making the request, not the target API URL.
+
+### Process environment
+
 Copy `.env.example` values into the deployment environment. Environment variables are read using
 the `DRIFTZERO_` prefix. SQLite is the zero-setup default; set `DRIFTZERO_DATABASE_URL` to another
 SQLAlchemy-compatible database URL for a persistent deployment.
