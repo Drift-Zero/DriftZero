@@ -283,6 +283,15 @@ coverage indicator, not a calibrated probability of correctness.
 The MVP forecast uses the most recent observed slope with a variability-based interval. This is an
 inspectable baseline, not a guarantee that an incident will occur.
 
+The forecast sorts scored snapshots by timestamp and retains the latest
+six. It returns no forecast with fewer than two points or a non-positive
+time gap between the latest two. Their score difference over elapsed
+minutes supplies the projected slope; the default horizon is 30 minutes.
+Prediction and interval bounds are clamped to `0–100`. The interval uses
+a minimum half-width of three score points, expanded by observed slope
+variability when available. Rounded change per hour classifies direction:
+`<= -2` is deteriorating, `>= 2` is improving, and values between are stable.
+
 ## Alert rules
 
 DriftZero supports five rule strategies:
