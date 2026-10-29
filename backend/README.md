@@ -383,6 +383,18 @@ headers, including `X-CSRF-Token`. Changing an API URL in the dashboard
 does not update the server's origin list. An origin is the dashboard
 address making the request, not the target API URL.
 
+### Request and upload sizes
+
+The default `DRIFTZERO_API_MAX_REQUEST_BYTES` is 8,388,608 bytes (8 MiB)
+for the complete HTTP body. The middleware checks Content-Length when
+present and counts streamed bytes; an oversized body returns 413 with
+`error: request_too_large`. An invalid Content-Length returns 400.
+
+The separate `DRIFTZERO_EVIDENCE_MAX_FILE_BYTES` default is 5,242,880 bytes
+(5 MiB) for the uploaded evidence file. Base64 encoding expands that file
+by roughly one third before JSON metadata is added. Increasing only the
+file-size setting does not increase the enclosing request-body limit.
+
 ### Process environment
 
 Copy `.env.example` values into the deployment environment. Environment variables are read using
