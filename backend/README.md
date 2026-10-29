@@ -262,6 +262,24 @@ instead of a score when sample size, request coverage, or weighted dimension cov
 Every snapshot retains its policy version, confidence, sample size, coverage, missing dimensions,
 and whether the signal was observed, inferred, or simulated.
 
+The default scoring gates require `sample_size >= 20`, `coverage >= 0.30`,
+and at least `0.50` of the configured dimension weight. The sample and
+coverage gates can be configured with `DRIFTZERO_MINIMUM_SAMPLE_SIZE` and
+`DRIFTZERO_MINIMUM_COVERAGE`; the dimension-weight gate is fixed in the scorer.
+Failing any gate returns `score: null` and `insufficient_data`. Otherwise
+the weighted mean is rounded to one decimal place and classified as:
+
+| Score | State |
+| --- | --- |
+| 80 or higher | `healthy` |
+| 65 through 79.9 | `warning` |
+| Below 65 | `critical` |
+
+Confidence is `clamp(coverage, 0, 1) * min(1, sample_size / 100) *
+dimension_coverage`, rounded to two decimals. Here `dimension_coverage`
+is the fraction of configured weight present. It is a deterministic
+coverage indicator, not a calibrated probability of correctness.
+
 The MVP forecast uses the most recent observed slope with a variability-based interval. This is an
 inspectable baseline, not a guarantee that an incident will occur.
 
