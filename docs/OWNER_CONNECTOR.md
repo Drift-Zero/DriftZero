@@ -92,8 +92,15 @@ The evaluator uses no judge model and does not manufacture an answer when eviden
   supplies both per-interaction costs and a target.
 - Safety = interactions without owner-supplied safety flags / all interactions × 100.
 
-The normal `health-v1` weighted policy combines available dimensions. Fewer than 20 interactions,
-under 30% evidence coverage, or too few dimensions produces `insufficient_data` instead of a score.
+The current `health-v2` policy combines available weighted dimensions. Its
+weights are quality 25%, groundedness 20%, reliability 20%, semantic
+stability 15%, safety 10%, latency 5%, and cost 5%. Missing dimensions are
+omitted and the remaining weights are renormalized.
+
+With the default gates, fewer than 20 interactions, under 30% evidence
+coverage, or less than 50% of the configured dimension weight produces
+`insufficient_data` instead of a score. These gates depend on dimension
+weight, not merely the number of populated fields.
 
 ## URL synchronization and trust
 
